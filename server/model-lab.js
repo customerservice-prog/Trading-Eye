@@ -108,7 +108,39 @@ function edgeFromProbs(p){
 function classIndex(name){
   return name==="UP"?0:name==="DOWN"?2:1;
 }
-function liveMetrics(rows){
+function sessionBucket(ts){
+  const d=new Date(ts);
+  const parts=Object.fromEntries(
+    new Intl.DateTimeFormat("en-US",{
+      timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"
+    }).formatToParts(d).filter(x=>x.type!=="literal").map(x=>[x.type,x.value])
+  );
+  const minute=Number(parts.hour)*60+Number(parts.minute);
+  if(minute<10*60) return "OPENING_30M";
+  if(minute<11*60+30) return "MORNING";
+  if(minute<14*60) return "MIDDAY";
+  if(minute<15*60) return "AFTERNOON";
+  return "POWER_HOUR";
+}
+
+function groupedLiveMetrics(rows){
+  const groups={confidence:{},session:{}};
+  const add=(bucket,key,row)=>{
+    if(!bucket[key]) bucket[key]=[];
+    bucket[key].push(row);
+  };
+  for(const row of rows){
+    const conf=Number(row.confidence)||0;
+    add(groups.confidence,conf>=.70?"HIGH":conf>=.55?"MEDIUM":"LOW",row);
+    add(groups.session,sessionBucket(row.created_at),row);
+  }
+  const summarize=obj=>Object.fromEntries(
+    Object.entries(obj).map(([k,v])=>[k,liveMetrics(v,false)])
+  );
+  return {confidence:summarize(groups.confidence),session:summarize(groups.session)};
+}
+
+function liveMetrics(rows,includeBreakdown=true){
   if(!rows.length) return {samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
   let correct=0,brier=0,logLoss=0;
   const buckets=Array.from({length:10},()=>({n:0,conf:0,correct:0}));
@@ -132,13 +164,15 @@ function liveMetrics(rows){
     const avg=b.conf/b.n,acc=b.correct/b.n;
     ece+=(b.n/rows.length)*Math.abs(avg-acc);
   }
-  return {
+  const out={
     samples:rows.length,
     accuracy:correct/rows.length,
     brier:brier/rows.length,
     logLoss:logLoss/rows.length,
     ece
   };
+  if(includeBreakdown) out.breakdown=groupedLiveMetrics(rows);
+  return out;
 }
 
 export class ModelLab {
@@ -403,7 +437,7 @@ export class ModelLab {
   async refreshLiveShadowMetrics(){
     if(this.productionRecord?.model_id){
       const prod=await this.db.pool.query(`
-        SELECT p_up,p_flat,p_down,actual_direction
+        SELECT p_up,p_flat,p_down,actual_direction,confidence,created_at
         FROM predictions
         WHERE model_id=$1 AND status='SCORED'
         ORDER BY created_at
@@ -416,7 +450,7 @@ export class ModelLab {
     const map={};
     for(const item of this.shadowModels){
       const q=await this.db.pool.query(`
-        SELECT p_up,p_flat,p_down,actual_direction
+        SELECT p_up,p_flat,p_down,actual_direction,confidence,created_at
         FROM model_shadow_predictions
         WHERE model_id=$1 AND status='SCORED'
         ORDER BY created_at
