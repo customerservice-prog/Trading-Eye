@@ -24,11 +24,14 @@
         </div>
       </div>
 
-      <div class="symbol-command">
-        <span class="search-icon" aria-hidden="true">⌕</span>
-        <input id="symbolInput" value="QQQ" aria-label="Symbol" maxlength="8" autocomplete="off" spellcheck="false" />
-        <kbd>ENTER</kbd>
-        <button id="loadSymbolBtn" class="ghost-btn">Load</button>
+      <div class="symbol-search-wrap">
+        <div class="symbol-command">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="symbolInput" value="QQQ" aria-label="Symbol or company" maxlength="40" autocomplete="off" spellcheck="false" />
+          <kbd>ENTER</kbd>
+          <button id="loadSymbolBtn" class="ghost-btn">Load</button>
+        </div>
+        <div id="symbolResults" class="symbol-results hidden"></div>
       </div>
 
       <div class="timeframes" id="timeframes" aria-label="Timeframes">
@@ -68,10 +71,10 @@
       <aside class="watchlist-panel panel">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">Your market</span>
-            <h2>Watchlist</h2>
+            <span class="eyebrow">Live stream</span>
+            <h2>Hot Set</h2>
           </div>
-          <span class="tiny-status"><i></i> PROVIDER DATA</span>
+          <span class="tiny-status"><i></i> ALL STOCKS SEARCHABLE</span>
         </div>
 
         <div class="watchlist-columns" aria-hidden="true">
