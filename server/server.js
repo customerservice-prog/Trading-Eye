@@ -7,6 +7,7 @@ import { RealMarketEngine } from "./engine.js";
 import { DeepStudyEngine } from "./deep-study.js";
 import { AssetUniverse } from "./universe.js";
 import { explainAttention } from "./regime.js";
+import { fingerprintFromFeatures, patternProbabilities } from "./patterns.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -112,7 +113,32 @@ app.get("/api/snapshot/:symbol",async(req,res)=>{
   if (!engine.hotSymbols().includes(symbol)) return res.status(404).json({error:"Symbol is not active in the live hot set"});
   const snap=engine.snapshot(symbol);
   const predictions=await db.recentPredictions({symbol,limit:80});
-  res.json({...snap,predictions});
+
+  let patternInsight=snap.patternInsight||null;
+  if (!patternInsight && snap.features && snap.bars?.length) {
+    const ts=snap.bars.at(-1)?.ts||Date.now();
+    const fingerprint=fingerprintFromFeatures(snap.features,ts);
+    if (fingerprint) {
+      const row=await db.getPattern(symbol,fingerprint,15);
+      const memory=patternProbabilities(row);
+      if (memory) {
+        patternInsight={
+          fingerprint,
+          sampleCount:memory.sampleCount,
+          upRate:memory.up,
+          flatRate:memory.flat,
+          downRate:memory.down,
+          avgReturn:memory.avgReturn,
+          avgAbsReturn:memory.avgAbsReturn,
+          avgMfe:memory.avgMfe,
+          avgMae:memory.avgMae,
+          patternWeight:0
+        };
+      }
+    }
+  }
+
+  res.json({...snap,patternInsight,predictions});
 });
 
 app.get("/api/watchlist",async(req,res)=>{
