@@ -71,6 +71,43 @@
       </div>
     </div>
 
+    <section class="beginner-command-center" id="beginnerCommandCenter">
+      <div class="beginner-command-copy">
+        <span class="eyebrow">Beginner command center</span>
+        <strong id="beginnerCommandTitle">Trading Eye is watching the market</strong>
+        <span id="beginnerCommandSubtitle">You should never have to guess what the AI is doing.</span>
+      </div>
+
+      <div class="beginner-command-grid">
+        <div class="beginner-command-item">
+          <span>Market right now</span>
+          <strong id="beginnerSession">—</strong>
+          <small id="beginnerSessionDetail">Checking U.S. market session…</small>
+        </div>
+        <div class="beginner-command-item action">
+          <span>AI paper action</span>
+          <strong id="beginnerAction">WAIT</strong>
+          <small id="beginnerActionDetail">Waiting for a real edge.</small>
+        </div>
+        <div class="beginner-command-item">
+          <span>Real market data</span>
+          <strong id="beginnerDataAge">—</strong>
+          <small id="beginnerDataDetail">Checking latest provider update…</small>
+        </div>
+        <div class="beginner-command-item research">
+          <span>AI research</span>
+          <strong id="beginnerResearchState">WORKING</strong>
+          <small id="beginnerResearchDetail">Loading the current research job…</small>
+        </div>
+      </div>
+
+      <button id="beginnerResearchBtn" class="beginner-research-btn" type="button">
+        <span class="research-top-dot"></span>
+        <span>Watch AI Research Full Screen</span>
+        <b>→</b>
+      </button>
+    </section>
+
     <main class="workspace">
       <aside class="watchlist-panel panel">
         <div class="panel-head">
@@ -387,9 +424,12 @@
                   </div>
                   <p id="researchCurrentTask">Waiting for the server research worker.</p>
                 </div>
-                <div class="research-heartbeat">
-                  <span>Last heartbeat</span>
-                  <strong id="researchHeartbeat">—</strong>
+                <div class="research-hero-actions">
+                  <div class="research-heartbeat">
+                    <span>Last heartbeat</span>
+                    <strong id="researchHeartbeat">—</strong>
+                  </div>
+                  <button id="researchCloseBtn" class="research-close-btn" type="button">← Back to Terminal</button>
                 </div>
               </section>
 
