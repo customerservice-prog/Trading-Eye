@@ -881,3 +881,75 @@ body[data-data-state="missing"] #marketChart { opacity:.28; }
   font-size:13px;
   text-transform:capitalize;
 }
+
+.memory-card {
+  margin:7px 11px 11px;
+  padding:11px;
+  border:1px solid rgba(88,216,255,.16);
+  background:linear-gradient(145deg,rgba(88,216,255,.055),rgba(20,31,46,.55));
+  border-radius:9px;
+}
+.memory-head {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:10px;
+}
+.memory-head strong {
+  display:block;
+  margin-top:2px;
+  font-size:9px;
+  color:var(--text-2);
+}
+.memory-count {
+  padding:4px 7px;
+  border:1px solid rgba(88,216,255,.18);
+  background:rgba(88,216,255,.06);
+  border-radius:999px;
+  color:var(--cyan);
+  font-size:7px;
+  font-weight:850;
+  white-space:nowrap;
+}
+.memory-probs {
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:5px;
+  margin-top:9px;
+}
+.memory-probs div,
+.memory-stats div {
+  padding:7px;
+  border:1px solid rgba(25,37,54,.75);
+  border-radius:6px;
+  background:#08101a;
+}
+.memory-probs span,
+.memory-stats span {
+  display:block;
+  color:var(--muted);
+  font-size:6px;
+  font-weight:800;
+}
+.memory-probs strong,
+.memory-stats strong {
+  display:block;
+  margin-top:2px;
+  color:var(--text-2);
+  font-size:10px;
+  font-variant-numeric:tabular-nums;
+}
+.memory-probs div:first-child strong { color:var(--green); }
+.memory-probs div:last-child strong { color:var(--red); }
+.memory-stats {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:5px;
+  margin-top:5px;
+}
+.memory-card p {
+  margin:8px 0 0;
+  color:var(--muted-2);
+  font-size:7px;
+  line-height:1.5;
+}
