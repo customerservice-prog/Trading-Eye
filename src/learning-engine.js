@@ -88,7 +88,8 @@ export class LearningEngine {
   }
 
   observe({ symbol, features, price, time }) {
-    this.step += 1;
+    const symbolStep = (this.symbolSteps[symbol] || 0) + 1;
+    this.symbolSteps[symbol] = symbolStep;
     const scored = [];
 
     for (const p of this.pending.filter(x => x.symbol === symbol && symbolStep - x.step >= this.horizonSteps)) {
