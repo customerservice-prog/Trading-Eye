@@ -1,6 +1,6 @@
-import { MarketClient } from "./market-client.js?v=20260928-1830";
-import { MarketChart } from "./chart.js?v=20260928-1830";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1830";
+import { MarketClient } from "./market-client.js?v=20260928-1905";
+import { MarketChart } from "./chart.js?v=20260928-1905";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1905";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
@@ -26,6 +26,8 @@ let snapshot={bars:[],quote:null,trades:[],analysis:null,features:null,predictio
 let watchlist={rows:[],provider:"alpaca",feed:"iex"};
 let predictionData={rows:[],stats:null,legacyModel:null,modelLab:null};
 let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:false,positions:[],fills:[]};
+let explorationData={enabled:true,startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:true,positions:[],fills:[]};
+let mistakeData={enabled:true,running:false,lastError:null,lastAnalysis:null};
 let modelLabData={enabled:true,training:false,production:null,latestRun:null};
 let readinessData={
   status:"LOCKED",reviewEligible:false,liveTradingEnabled:false,
@@ -628,6 +630,84 @@ function renderPaper() {
   }
 }
 
+function renderExploration() {
+  if (!$("explorationEquity")) return;
+  const p=explorationData||{};
+  const starting=Number(p.startingCash)||100000;
+  const equity=Number.isFinite(Number(p.equity))?Number(p.equity):starting;
+  const pnl=equity-starting;
+  const positions=Array.isArray(p.positions)?p.positions:[];
+
+  $("explorationEquity").textContent=money(equity);
+  $("explorationPnl").textContent=(pnl>0?"+":"")+money(pnl);
+  $("explorationPnl").className=pnl>0?"positive":pnl<0?"negative":"neutral";
+  $("explorationPositions").textContent=num(positions.length);
+  $("explorationFills").textContent=num(p.fillCount||0);
+  $("explorationState").textContent=p.autopilotEnabled?"LEARNING LIVE":"PAUSED";
+  $("explorationState").className="soft-badge "+(p.autopilotEnabled?"positive":"neutral");
+
+  $("explorationExplanation").textContent=positions.length
+    ?"This practice account currently has fake positions open. It deliberately tests marginal setups that the strict proof account may reject."
+    :"This practice account waits for directional setups, but uses looser fake-money thresholds than the proof account. Its results never count toward real-money readiness.";
+
+  $("explorationPositionList").innerHTML=positions.length
+    ? positions.map(pos=>`
+      <div class="exploration-position">
+        <strong>${pos.symbol} · ${Number(pos.qty)>0?"LONG":"SHORT"}</strong>
+        <span>${Math.abs(Number(pos.qty)||0)} shares</span>
+        <span class="${Number(pos.pnl)>0?"positive":Number(pos.pnl)<0?"negative":"neutral"}">${money(pos.pnl)}</span>
+      </div>`).join("")
+    : '<div class="exploration-empty">No exploration trade is open this second.</div>';
+}
+
+function renderMistakeLab() {
+  if (!$("mistakeGuardTitle")) return;
+  const m=mistakeData?.lastAnalysis||{};
+  const guard=m.guard||modelLabData?.mistakeGuard||{};
+  const level=String(guard.level||"INSUFFICIENT").toUpperCase();
+  const samples=Number(m.scoredSamples)||0;
+  const mistakes=Number(m.mistakes)||0;
+
+  $("mistakeGuardTitle").textContent=level==="ALERT"
+    ?"ALERT — strict entries are blocked"
+    : level==="WARN"
+      ?"WATCHING — recent mistakes increased"
+      : level==="STABLE"
+        ?"STABLE — learning from mistakes"
+        :"COLLECTING FUTURE OUTCOMES";
+  $("mistakeGuardTitle").className=level==="ALERT"?"negative":level==="WARN"?"neutral":"positive";
+  $("mistakeGuardDetail").textContent=guard.reason||"Mistake Lab is waiting for enough scored future predictions.";
+  $("mistakeSamples").textContent=num(samples);
+  $("mistakeCount").textContent=num(mistakes);
+  $("mistakeHighConf").textContent=num(m.highConfMistakes||0);
+  $("mistakeMissedMoves").textContent=num(m.missedMoves||0);
+  $("mistakeAnalyzedAt").textContent=m.analyzedAt?"analyzed "+ageText(m.analyzedAt):"Waiting for first analysis";
+
+  const lessons=Array.isArray(m.lessons)?m.lessons:[];
+  $("mistakeLessons").innerHTML=lessons.length
+    ? lessons.map(x=>`
+      <div class="mistake-lesson ${String(x.severity||"LOW").toLowerCase()}">
+        <span>${x.severity||"LOW"}</span>
+        <div><strong>${x.title||"Lesson"}</strong><p>${x.text||""}</p></div>
+      </div>`).join("")
+    : '<div class="mistake-lesson low"><span>WAIT</span><div><strong>No lesson yet</strong><p>The lab needs scored future outcomes before it can diagnose mistakes.</p></div></div>';
+
+  const rows=Array.isArray(m.latestMistakes)?m.latestMistakes:[];
+  $("mistakeTableBody").innerHTML=rows.length
+    ? rows.map(x=>`
+      <tr>
+        <td>${safeTime(x.createdAt)}</td>
+        <td><strong>${x.symbol}</strong></td>
+        <td class="${x.predicted==="UP"?"positive":x.predicted==="DOWN"?"negative":"neutral"}">${x.predicted}</td>
+        <td class="${x.actual==="UP"?"positive":x.actual==="DOWN"?"negative":"neutral"}">${x.actual}</td>
+        <td>${Math.round(Number(x.confidence||0)*100)}%</td>
+        <td class="${Number(x.resultReturn)>0?"positive":Number(x.resultReturn)<0?"negative":"neutral"}">${(Number(x.resultReturn||0)*100).toFixed(2)}%</td>
+        <td>${x.modelId||"legacy"}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="7">No wrong future predictions recorded in the current Mistake Lab window yet.</td></tr>';
+}
+
+
 function renderLearning() {
   const s=predictionData.stats;
   const production=modelLabData?.production||predictionData.modelLab?.production||null;
@@ -981,6 +1061,8 @@ function renderAll() {
   renderChart();
   renderTapeAndBook();
   renderPaper();
+  renderExploration();
+  renderMistakeLab();
   renderLearning();
   renderPatternLab();
   renderScanner();
@@ -990,12 +1072,14 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,lab,research,readiness]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,lab,research,readiness]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research(),client.readiness()
+      client.studies(10),client.scanner(50),client.paper(),client.explorationPaper(),client.mistakes(),
+      client.modelLab(),client.research(),client.readiness()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; modelLabData=lab; researchData=research; readinessData=readiness;
+    paperData=paperState; explorationData=exploreState; mistakeData=mistakes;
+    modelLabData=lab; researchData=research; readinessData=readiness;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -1106,6 +1190,12 @@ function applyRealtime(event) {
   if (event.type==="research_status") {
     researchData={...researchData,...event.data};
     renderResearchBrain();
+    return;
+  }
+  if (event.type==="mistake_lab") {
+    mistakeData={...mistakeData,lastAnalysis:event.data};
+    renderMistakeLab();
+    renderLearning();
     return;
   }
   renderChart(); renderTapeAndBook(); renderPaper();
@@ -1267,15 +1357,27 @@ clearInterval(refreshTimer);
 refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
 clearInterval(researchTimer);
 researchTimer=setInterval(()=>{
-  client.research()
-    .then(r=>{researchData=r;renderResearchBrain();renderBeginnerCommandCenter();})
+  Promise.all([client.research(),client.mistakes()])
+    .then(([r,m])=>{
+      researchData=r;
+      mistakeData=m;
+      renderResearchBrain();
+      renderMistakeLab();
+      renderBeginnerCommandCenter();
+    })
     .catch(()=>{});
 },10000);
 
 clearInterval(paperTimer);
 paperTimer=setInterval(()=>{
-  client.paper()
-    .then(p=>{paperData=p;renderPaper();renderBeginnerCommandCenter();})
+  Promise.all([client.paper(),client.explorationPaper()])
+    .then(([p,e])=>{
+      paperData=p;
+      explorationData=e;
+      renderPaper();
+      renderExploration();
+      renderBeginnerCommandCenter();
+    })
     .catch(()=>{});
 },3000);
 
@@ -1291,5 +1393,7 @@ window.TradingEye=Object.freeze({
   status:()=>status,
   activeSymbol:()=>activeSymbol,
   paperAccount:()=>paperData,
+  explorationAccount:()=>explorationData,
+  mistakes:()=>mistakeData,
   modelLab:()=>modelLabData
 });
