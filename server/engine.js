@@ -12,6 +12,7 @@ export class RealMarketEngine extends EventEmitter {
     this.provider=provider;
     this.enabled=enabled;
     this.coreSymbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))];
+    this.pinnedSymbols=new Set(this.coreSymbols);
     this.symbols=[...this.coreSymbols];
     this.hotLastUsed=new Map(this.symbols.map(s=>[s,Date.now()]));
     this.backfillDays=backfillDays;
@@ -72,17 +73,18 @@ export class RealMarketEngine extends EventEmitter {
     return [...this.symbols];
   }
 
-  async activateSymbol(symbol,{backfill=true}={}) {
+  async activateSymbol(symbol,{backfill=true,pin=true}={}) {
     symbol=String(symbol||"").trim().toUpperCase();
     if (!symbol) throw new Error("Symbol required");
     this.hotLastUsed.set(symbol,Date.now());
+    if (pin) this.pinnedSymbols.add(symbol);
 
     if (!this.symbols.includes(symbol)) {
       if (this.symbols.length>=30) {
         const removable=this.symbols
-          .filter(s=>!this.coreSymbols.includes(s))
+          .filter(s=>!this.pinnedSymbols.has(s))
           .sort((a,b)=>(this.hotLastUsed.get(a)||0)-(this.hotLastUsed.get(b)||0));
-        const drop=removable[0] || this.symbols.find(s=>!this.coreSymbols.includes(s));
+        const drop=removable[0];
         if (!drop) throw new Error("Live hot set is full");
         this.symbols=this.symbols.filter(s=>s!==drop);
         this.histories.delete(drop);
@@ -101,7 +103,59 @@ export class RealMarketEngine extends EventEmitter {
     if (backfill && existing.length<120) {
       this.#backfillSymbol(symbol).catch(err=>this.#recordError("symbol_backfill",err));
     }
-    return {symbol,hotSymbols:this.hotSymbols()};
+    return {symbol,hotSymbols:this.hotSymbols(),pinned:[...this.pinnedSymbols]};
+  }
+
+  async setAutoCandidates(candidates,{backfillDays=3}={}) {
+    const unique=[...new Set((candidates||[]).map(s=>String(s).toUpperCase()).filter(Boolean))];
+    const pinned=[...this.pinnedSymbols];
+    const target=[...pinned];
+    for (const symbol of unique) {
+      if (target.length>=30) break;
+      if (!target.includes(symbol)) target.push(symbol);
+    }
+    this.symbols=target.slice(0,30);
+    for (const symbol of this.symbols) {
+      if (!this.histories.has(symbol)) this.histories.set(symbol,[]);
+      if (!this.barCounters.has(symbol)) this.barCounters.set(symbol,0);
+      this.hotLastUsed.set(symbol,this.hotLastUsed.get(symbol)||Date.now());
+    }
+    this.provider.setSymbols(this.symbols);
+    await this.#backfillSymbols(this.symbols.filter(s=>(this.histories.get(s)||[]).length<120),backfillDays);
+    console.log(JSON.stringify({event:"auto_hot_set_updated",symbols:this.symbols}));
+    return this.hotSymbols();
+  }
+
+  async #backfillSymbols(symbols,days=3) {
+    const requested=[...new Set((symbols||[]).filter(Boolean))];
+    if (!requested.length) return;
+    const end=new Date(Date.now()-20*60*1000);
+    const start=new Date(end.getTime()-Math.max(1,Math.min(10,days))*24*60*60*1000);
+    const collected=new Map(requested.map(s=>[s,[]]));
+    await this.provider.historicalBarsForSymbols({
+      symbols:requested,start,end,timeframe:"1Min",
+      onPage:async barsBySymbol=>{
+        const batch=[];
+        for (const [symbol,rows] of Object.entries(barsBySymbol)) {
+          for (const r of rows) {
+            const bar={
+              provider:"alpaca",feed:this.provider.historicalFeed||"iex",symbol,ts:new Date(r.t),
+              open:r.o,high:r.h,low:r.l,close:r.c,volume:r.v,
+              tradeCount:r.n??null,vwap:r.vw??null,source:"historical"
+            };
+            batch.push(bar);
+            if (!collected.has(symbol)) collected.set(symbol,[]);
+            collected.get(symbol).push(bar);
+          }
+        }
+        for(let i=0;i<batch.length;i+=700) await this.db.upsertBarsBatch(batch.slice(i,i+700));
+      }
+    });
+    for (const [symbol,rows] of collected.entries()) {
+      if (!rows.length) continue;
+      rows.sort((a,b)=>+a.ts-+b.ts);
+      this.histories.set(symbol,rows.slice(-this.historyRetention));
+    }
   }
 
   async #backfillSymbol(symbol) {
@@ -448,6 +502,7 @@ export class RealMarketEngine extends EventEmitter {
       provider:this.providerStatus,
       symbols:this.symbols,
       coreSymbols:this.coreSymbols,
+      pinnedSymbols:[...this.pinnedSymbols],
       lastEventAt:this.lastEventAt,
       lastBarAt:this.lastBarAt,
       backfill:this.backfill,
