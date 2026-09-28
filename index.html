@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#070b11" />
+  <meta name="theme-color" content="#050810" />
   <title>Trading Eye — AI Market Terminal</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -11,16 +11,23 @@
   <div id="app" class="terminal-shell">
     <header class="topbar">
       <div class="brand-wrap">
-        <div class="brand-mark">TE</div>
-        <div>
-          <div class="brand">Trading Eye</div>
-          <div class="brand-sub">AI market terminal</div>
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="23" height="23" fill="none">
+            <path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="1.7"/>
+            <circle cx="12" cy="12" r="3.1" stroke="currentColor" stroke-width="1.7"/>
+            <circle cx="12" cy="12" r="1" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <div class="brand-line"><span class="brand">Trading Eye</span><span class="version-pill">ALPHA</span></div>
+          <div class="brand-sub">AI market intelligence terminal</div>
         </div>
       </div>
 
       <div class="symbol-command">
-        <span class="search-icon">⌕</span>
-        <input id="symbolInput" value="QQQ" aria-label="Symbol" maxlength="8" />
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="symbolInput" value="QQQ" aria-label="Symbol" maxlength="8" autocomplete="off" spellcheck="false" />
+        <kbd>ENTER</kbd>
         <button id="loadSymbolBtn" class="ghost-btn">Load</button>
       </div>
 
@@ -33,39 +40,81 @@
       </div>
 
       <div class="status-strip">
-        <div><span class="dot dot-green"></span><span id="feedStatus">Demo feed running</span></div>
-        <div class="paper-pill">PAPER ONLY</div>
-        <button id="pauseBtn" class="icon-btn" title="Pause demo feed">Ⅱ</button>
+        <div class="feed-state"><span class="dot dot-green"></span><span id="feedStatus">Demo feed running</span></div>
+        <div class="paper-pill">PAPER MODE</div>
+        <button id="helpBtn" class="top-action" type="button" aria-label="Explain this screen">?</button>
+        <button id="pauseBtn" class="top-action" type="button" title="Pause demo feed" aria-label="Pause demo feed">Ⅱ</button>
       </div>
     </header>
+
+    <div class="mode-banner">
+      <div class="mode-banner-main">
+        <span class="mode-icon">🧠</span>
+        <div>
+          <strong>AI is learning in simulation</strong>
+          <span>Every prediction is locked, scored, and used to update the model. No real money is connected.</span>
+        </div>
+      </div>
+      <div class="mode-steps">
+        <span class="step active"><b>1</b> Observe</span>
+        <span class="step active"><b>2</b> Predict</span>
+        <span class="step active"><b>3</b> Score</span>
+        <span class="step"><b>4</b> Prove</span>
+        <span class="step locked"><b>5</b> Real money 🔒</span>
+      </div>
+    </div>
 
     <main class="workspace">
       <aside class="watchlist-panel panel">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">Markets</span>
+            <span class="eyebrow">Your market</span>
             <h2>Watchlist</h2>
           </div>
-          <span class="tiny-muted">DEMO</span>
+          <span class="tiny-status"><i></i> SIMULATED</span>
+        </div>
+
+        <div class="watchlist-columns" aria-hidden="true">
+          <span>Symbol</span><span>Last / Day</span>
         </div>
         <div id="watchlist" class="watchlist"></div>
 
-        <div class="market-pulse">
+        <section class="market-pulse">
           <div class="section-title-row">
             <span>Market pulse</span>
             <span id="marketRegimeBadge" class="soft-badge">Neutral</span>
           </div>
-          <div class="pulse-row"><span>Technology</span><strong id="techPulse">—</strong></div>
-          <div class="pulse-row"><span>Breadth</span><strong id="breadthPulse">—</strong></div>
-          <div class="pulse-row"><span>Volatility</span><strong id="volPulse">—</strong></div>
-        </div>
+          <div class="pulse-row">
+            <span><i class="pulse-icon tech"></i>Technology</span>
+            <strong id="techPulse">—</strong>
+          </div>
+          <div class="pulse-row">
+            <span><i class="pulse-icon breadth"></i>Breadth</span>
+            <strong id="breadthPulse">—</strong>
+          </div>
+          <div class="pulse-row">
+            <span><i class="pulse-icon vol"></i>Volatility</span>
+            <strong id="volPulse">—</strong>
+          </div>
+        </section>
+
+        <section class="beginner-hint">
+          <div class="hint-icon">i</div>
+          <div>
+            <strong>Beginner mode</strong>
+            <span>Green = buyers stronger. Red = sellers stronger. Yellow = unclear.</span>
+          </div>
+        </section>
       </aside>
 
       <section class="chart-panel panel">
         <div class="chart-toolbar">
           <div class="instrument">
-            <div>
-              <span id="symbolName" class="symbol-name">QQQ</span>
+            <div class="instrument-name">
+              <div>
+                <span id="symbolName" class="symbol-name">QQQ</span>
+                <span class="market-tag">NASDAQ</span>
+              </div>
               <span id="symbolDescription" class="symbol-desc">Nasdaq 100 ETF · demo</span>
             </div>
             <div class="quote-line">
@@ -75,23 +124,31 @@
           </div>
 
           <div class="chart-actions">
-            <button class="toolbar-btn active" id="candlesBtn">Candles</button>
-            <button class="toolbar-btn" id="predictionToggle">AI forecast on</button>
-            <button class="toolbar-btn" id="beginnerToggle">Beginner labels on</button>
+            <span class="chart-mode-label">Candles</span>
+            <button class="toolbar-btn active" id="predictionToggle" type="button"><span class="toolbar-dot ai"></span>AI forecast on</button>
+            <button class="toolbar-btn active" id="beginnerToggle" type="button"><span class="toolbar-dot beginner"></span>Beginner labels on</button>
           </div>
         </div>
 
         <div class="chart-stage" id="chartStage">
           <canvas id="marketChart"></canvas>
+          <div class="chart-top-overlay">
+            <span>LIVE SIMULATION</span>
+            <span>•</span>
+            <span>Prediction horizon ≈ 15 min</span>
+          </div>
           <div id="chartTooltip" class="chart-tooltip hidden"></div>
           <div id="aiChartCallout" class="chart-callout">
-            <span class="callout-kicker">AI VIEW</span>
+            <div class="callout-head">
+              <span class="callout-kicker">TRADING EYE</span>
+              <span class="callout-live"><i></i> WATCHING</span>
+            </div>
             <strong id="chartCalloutTitle">Watching</strong>
             <span id="chartCalloutBody">Waiting for enough evidence.</span>
           </div>
           <div class="chart-legend">
             <span><i class="legend-line price"></i>Price</span>
-            <span><i class="legend-box forecast"></i>AI expected area</span>
+            <span><i class="legend-box forecast"></i>AI probability zone</span>
             <span><i class="legend-dot prediction"></i>Locked prediction</span>
           </div>
         </div>
@@ -100,7 +157,8 @@
           <div><span>VWAP</span><strong id="vwapValue">—</strong></div>
           <div><span>Volume</span><strong id="volumeValue">—</strong></div>
           <div><span>Spread</span><strong id="spreadValue">—</strong></div>
-          <div><span>AI horizon</span><strong>~15 min</strong></div>
+          <div><span>Prediction horizon</span><strong>~15 min</strong></div>
+          <div class="model-state"><span>Model</span><strong><i></i> Learning</strong></div>
         </div>
       </section>
 
@@ -110,64 +168,88 @@
             <span class="eyebrow">Built-in intelligence</span>
             <h2>AI Market Brain</h2>
           </div>
-          <span id="brainStateBadge" class="brain-badge">LEARNING</span>
+          <span id="brainStateBadge" class="brain-badge"><i></i> LEARNING</span>
         </div>
 
         <section class="decision-card" id="decisionCard">
           <div class="decision-top">
-            <div>
-              <span class="tiny-muted">RIGHT NOW</span>
+            <div class="decision-heading">
+              <span class="tiny-muted">WHAT IT THINKS RIGHT NOW</span>
               <h3 id="decisionTitle">Watching</h3>
             </div>
-            <div id="confidenceRing" class="confidence-ring">
-              <span id="confidenceValue">50%</span>
+            <div id="confidenceRing" class="confidence-ring" aria-label="AI confidence">
+              <div class="confidence-core">
+                <span id="confidenceValue">50%</span>
+                <small>confidence</small>
+              </div>
             </div>
           </div>
           <p id="decisionSummary">The model is collecting evidence before taking a side.</p>
-          <div class="prob-grid">
-            <div><span>UP</span><strong id="probUp">—</strong></div>
-            <div><span>FLAT</span><strong id="probFlat">—</strong></div>
-            <div><span>DOWN</span><strong id="probDown">—</strong></div>
+
+          <div class="probability-stack">
+            <div class="prob-row up">
+              <div class="prob-copy"><span>↑ UP</span><strong id="probUp">—</strong></div>
+              <div class="prob-track"><i id="probUpBar"></i></div>
+            </div>
+            <div class="prob-row flat">
+              <div class="prob-copy"><span>→ FLAT</span><strong id="probFlat">—</strong></div>
+              <div class="prob-track"><i id="probFlatBar"></i></div>
+            </div>
+            <div class="prob-row down">
+              <div class="prob-copy"><span>↓ DOWN</span><strong id="probDown">—</strong></div>
+              <div class="prob-track"><i id="probDownBar"></i></div>
+            </div>
           </div>
         </section>
 
         <section class="why-section">
           <div class="section-title-row">
-            <span>Why the AI thinks this</span>
-            <button id="simplifyBtn" class="text-btn">Simplify</button>
+            <span>What the AI is seeing</span>
+            <button id="simplifyBtn" class="text-btn" type="button">Explain simply</button>
           </div>
           <div id="reasonList" class="reason-list"></div>
         </section>
 
         <section class="beginner-card">
-          <span class="eyebrow">Explain it like I’m new</span>
+          <div class="beginner-card-head">
+            <span class="beginner-icon">✦</span>
+            <div>
+              <span class="eyebrow">Plain English</span>
+              <strong>What this means for you</strong>
+            </div>
+          </div>
           <p id="beginnerExplanation">The AI is comparing buying pressure, trend, volume and the broader market before making a prediction.</p>
         </section>
 
         <section class="paper-controls">
           <div class="section-title-row">
-            <span>Paper trade controls</span>
+            <div>
+              <span>Paper trade controls</span>
+              <small>Fake money only</small>
+            </div>
             <label class="switch-label">
               <input type="checkbox" id="autopilotToggle" />
+              <span class="switch-ui"></span>
               <span>AI autopilot</span>
             </label>
           </div>
+
           <div class="paper-buttons">
-            <button id="paperBuyBtn" class="trade-btn buy">Paper buy</button>
-            <button id="paperSellBtn" class="trade-btn sell">Paper sell</button>
-            <button id="flattenBtn" class="trade-btn flat">Flatten</button>
+            <button id="paperBuyBtn" class="trade-btn buy" type="button"><span>▲</span>Paper Buy</button>
+            <button id="paperSellBtn" class="trade-btn sell" type="button"><span>▼</span>Paper Sell</button>
+            <button id="flattenBtn" class="trade-btn flat" type="button"><span>■</span>Flatten</button>
           </div>
-          <div class="lock-note">🔒 Real-money execution is not connected in this build.</div>
+          <div class="lock-note"><span>🔒</span><div><strong>Real-money trading locked</strong><br>Trading Eye must prove itself in paper mode first.</div></div>
         </section>
       </aside>
 
       <section class="lower-panel panel">
         <div class="lower-tabs" id="lowerTabs">
-          <button class="active" data-tab="tape">Time & Sales</button>
-          <button data-tab="level2">Level II</button>
-          <button data-tab="paper">Paper Account</button>
-          <button data-tab="learning">AI Learning</button>
-          <button data-tab="predictions">Predictions</button>
+          <button class="active" data-tab="tape" type="button"><span class="tab-icon">↕</span><span>Time & Sales</span></button>
+          <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Level II</span></button>
+          <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
+          <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
+          <button data-tab="predictions" type="button"><span class="tab-icon">✦</span><span>Predictions</span></button>
         </div>
 
         <div class="lower-content">
@@ -183,11 +265,11 @@
           <div class="tab-pane" id="tab-level2">
             <div class="level2-grid">
               <div>
-                <div class="book-head bid">BIDS</div>
+                <div class="book-head bid"><span>BIDS</span><span>Price / Size / Orders</span></div>
                 <div id="bidBook"></div>
               </div>
               <div>
-                <div class="book-head ask">ASKS</div>
+                <div class="book-head ask"><span>ASKS</span><span>Price / Size / Orders</span></div>
                 <div id="askBook"></div>
               </div>
             </div>
@@ -196,7 +278,7 @@
           <div class="tab-pane" id="tab-paper">
             <div class="metric-grid">
               <div class="metric"><span>Starting balance</span><strong>$100,000.00</strong></div>
-              <div class="metric"><span>Equity</span><strong id="paperEquity">—</strong></div>
+              <div class="metric highlight"><span>Equity</span><strong id="paperEquity">—</strong></div>
               <div class="metric"><span>Cash</span><strong id="paperCash">—</strong></div>
               <div class="metric"><span>Open P/L</span><strong id="openPnl">—</strong></div>
               <div class="metric"><span>Realized P/L</span><strong id="realizedPnl">—</strong></div>
@@ -208,18 +290,19 @@
           <div class="tab-pane" id="tab-learning">
             <div class="learning-layout">
               <div class="learning-score">
-                <span class="eyebrow">Proof, not hype</span>
+                <span class="eyebrow">Verified score</span>
                 <div class="score-big" id="accuracyValue">—</div>
                 <span>scored prediction accuracy</span>
               </div>
               <div class="metric-grid compact">
-                <div class="metric"><span>Predictions</span><strong id="predictionCount">0</strong></div>
+                <div class="metric"><span>Predictions made</span><strong id="predictionCount">0</strong></div>
                 <div class="metric"><span>Scored</span><strong id="scoredCount">0</strong></div>
                 <div class="metric"><span>High-confidence accuracy</span><strong id="highConfidenceAccuracy">—</strong></div>
                 <div class="metric"><span>Learning updates</span><strong id="learningUpdates">0</strong></div>
               </div>
               <div class="learning-explainer">
-                Every forecast is locked before its result is known. When the horizon expires, Trading Eye scores the forecast and nudges its model weights toward what actually happened.
+                <span class="learning-icon">◎</span>
+                <div><strong>No hindsight allowed.</strong><br>Every forecast is locked before its result is known. After the horizon expires, Trading Eye grades itself and updates its model from the mistake or success.</div>
               </div>
             </div>
           </div>
@@ -235,6 +318,47 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="tourPanel" class="tour-panel hidden" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+    <div class="tour-backdrop" data-tour-close></div>
+    <section class="tour-card">
+      <div class="tour-head">
+        <div>
+          <span class="eyebrow">Beginner guide</span>
+          <h2 id="tourTitle">How to read Trading Eye</h2>
+        </div>
+        <button id="tourCloseBtn" class="tour-close" type="button" aria-label="Close guide">×</button>
+      </div>
+
+      <div class="tour-grid">
+        <div class="tour-step">
+          <span class="tour-number">1</span>
+          <div><strong>Start with the chart</strong><p>The candles show price. The shaded area on the right is where the AI thinks price is most likely to travel—not a guarantee.</p></div>
+        </div>
+        <div class="tour-step">
+          <span class="tour-number">2</span>
+          <div><strong>Check the AI Market Brain</strong><p>UP, FLAT, and DOWN are probabilities. Confidence tells you how strongly the model believes its current read.</p></div>
+        </div>
+        <div class="tour-step">
+          <span class="tour-number">3</span>
+          <div><strong>Read the reasons</strong><p>Trading Eye translates trend, volume, order flow, breadth and VWAP into plain English so you know why the model thinks what it thinks.</p></div>
+        </div>
+        <div class="tour-step">
+          <span class="tour-number">4</span>
+          <div><strong>Watch AI Learning</strong><p>The learning tab is the proof. Predictions are locked first, then graded later. You can see whether accuracy is actually improving.</p></div>
+        </div>
+        <div class="tour-step">
+          <span class="tour-number">5</span>
+          <div><strong>Keep it paper-only</strong><p>The Buy/Sell buttons use simulated money. Real execution is intentionally unavailable until the system earns trust over a long test period.</p></div>
+        </div>
+      </div>
+
+      <div class="tour-footer">
+        <span>Nothing on this screen guarantees a market outcome.</span>
+        <button id="tourDoneBtn" type="button">Got it — show me the terminal</button>
+      </div>
+    </section>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
