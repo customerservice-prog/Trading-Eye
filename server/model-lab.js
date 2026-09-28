@@ -324,7 +324,7 @@ export class ModelLab {
     const rows=this.marketEngine.histories.get(String(symbol).toUpperCase())||[];
     if(rows.length<50) return null;
     const last=rows.at(-1);
-    const context=this.factory.contextAt(this.marketEngine.histories,last?.ts||Date.now());
+    const context=this.factory.contextAt(this.marketEngine.histories,last?.ts||Date.now(),String(symbol).toUpperCase());
     return this.factory.extract(rows,rows.length-1,context);
   }
 
@@ -571,7 +571,9 @@ export class ModelLab {
     const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
     const ranked=scanDate?await this.db.topUniverseCandidates(scanDate,{limit:28}):[];
     const wanted=[...new Set([
-      "SPY","QQQ","AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
+      "SPY","QQQ","DIA","IWM",
+      "XLK","XLF","XLE","XLV","XLY","XLP","XLI","XLB","XLU","XLRE","XLC",
+      "AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
       ...ranked.map(x=>x.symbol)
     ])].slice(0,24);
 
