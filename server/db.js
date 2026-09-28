@@ -428,6 +428,18 @@ export class Database {
     ]);
   }
 
+  async getPattern(symbol,fingerprint,horizonMinutes) {
+    if (!this.ready) return null;
+    const q=await this.pool.query(`
+      SELECT symbol,fingerprint,horizon_minutes,sample_count,up_count,flat_count,down_count,
+             avg_return,avg_abs_return,avg_mfe,avg_mae,last_seen,context
+      FROM pattern_memory
+      WHERE symbol=$1 AND fingerprint=$2 AND horizon_minutes=$3
+      LIMIT 1
+    `,[symbol,fingerprint,horizonMinutes]);
+    return q.rows[0]||null;
+  }
+
   async topPatterns({symbol=null,minSamples=12,limit=30}={}) {
     if (!this.ready) return [];
     const params=[minSamples];
