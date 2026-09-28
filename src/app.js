@@ -36,6 +36,7 @@ let researchData={
 };
 let refreshTimer=null;
 let researchTimer=null;
+let commandTimer=null;
 let symbolSearchTimer=null;
 let lastSymbolResults=[];
 
@@ -60,6 +61,170 @@ function ageText(value) {
   if (ms<60000) return Math.max(0,Math.floor(ms/1000))+"s ago";
   if (ms<3600000) return Math.floor(ms/60000)+"m ago";
   return Math.floor(ms/3600000)+"h ago";
+}
+
+function marketSessionET() {
+  const parts=Object.fromEntries(
+    new Intl.DateTimeFormat("en-US",{
+      timeZone:"America/New_York",
+      weekday:"short",
+      hour:"2-digit",
+      minute:"2-digit",
+      hourCycle:"h23"
+    }).formatToParts(new Date()).filter(p=>p.type!=="literal").map(p=>[p.type,p.value])
+  );
+  const day={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[parts.weekday];
+  const minute=Number(parts.hour)*60+Number(parts.minute);
+  if (day===6) return {key:"CLOSED",label:"CLOSED",detail:"U.S. stocks are closed Saturday."};
+  if (day===0) {
+    return minute>=20*60
+      ? {key:"OVERNIGHT",label:"OVERNIGHT",detail:"Sunday overnight session is active."}
+      : {key:"CLOSED",label:"CLOSED",detail:"U.S. stocks reopen Sunday at 8:00 PM ET for overnight trading."};
+  }
+  if (day===5 && minute>=20*60) return {key:"CLOSED",label:"CLOSED",detail:"Regular U.S. trading has ended for the week."};
+  if (minute<4*60) return {key:"OVERNIGHT",label:"OVERNIGHT",detail:"Overnight session · thinner trading than regular hours."};
+  if (minute<9*60+30) return {key:"PREMARKET",label:"PREMARKET",detail:"Regular market opens at 9:30 AM ET."};
+  if (minute<16*60) return {key:"OPEN",label:"MARKET OPEN",detail:"Regular U.S. session · 9:30 AM–4:00 PM ET."};
+  if (minute<20*60) return {key:"AFTER_HOURS",label:"AFTER HOURS",detail:"Regular session ended; after-hours trading is active."};
+  return {key:"OVERNIGHT",label:"OVERNIGHT",detail:"Overnight session is active."};
+}
+
+function latestSelectedMarketTs() {
+  const values=[
+    snapshot.quote?.ts,
+    snapshot.trades?.[0]?.ts,
+    snapshot.bars?.at(-1)?.ts,
+    status?.lastBarAt,
+    status?.lastEventAt
+  ].map(v=>v?+new Date(v):NaN).filter(Number.isFinite);
+  return values.length?Math.max(...values):null;
+}
+
+function readinessSummary() {
+  const production=modelLabData?.production||predictionData.modelLab?.production||null;
+  const live=production?.liveMetrics||{};
+  const liveSamples=Number(live.samples)||0;
+  const brier=live.brier==null?null:Number(live.brier);
+  const ece=live.ece==null?null:Number(live.ece);
+  const closed=Number(paperData?.closedOutcomes)||0;
+  const pf=paperData?.profitFactor==null?null:Number(paperData.profitFactor);
+  const dd=paperData?.maxDrawdown==null?null:Number(paperData.maxDrawdown);
+  const realized=Number(paperData?.realizedPnl)||0;
+
+  if (!production) {
+    return {label:"LOCKED",detail:"No production model has completed the proof pipeline yet.",review:false};
+  }
+  if (liveSamples<500) {
+    return {label:"PROVING",detail:`${num(liveSamples)} future live samples collected · target is much more evidence before review.`,review:false};
+  }
+  if (closed<100) {
+    return {label:"PROVING",detail:`${num(closed)} closed paper outcomes · paper execution still needs a larger sample.`,review:false};
+  }
+  if ((brier!=null&&brier>.22)||(ece!=null&&ece>.08)||realized<=0||(pf!=null&&pf<=1)||(dd!=null&&dd<-.10)) {
+    return {label:"NOT READY",detail:"The current live/paper evidence has not earned a real-money review.",review:false};
+  }
+  return {
+    label:"REVIEW ELIGIBLE",
+    detail:"Evidence gates passed for manual review only. Real money remains locked until you deliberately approve a tiny live test.",
+    review:true
+  };
+}
+
+function renderBeginnerCommandCenter() {
+  if (!$("beginnerCommandTitle")) return;
+  const session=marketSessionET();
+  const a=normalizeAnalysis(snapshot.analysis);
+  const latestTs=latestSelectedMarketTs();
+  const ageMs=latestTs==null?null:Date.now()-latestTs;
+  const age=latestTs==null?"NO UPDATE YET":ageText(latestTs);
+
+  $("beginnerSession").textContent=session.label;
+  $("beginnerSessionDetail").textContent=session.detail;
+
+  const actionEl=$("beginnerAction");
+  const actionBox=actionEl?.closest(".beginner-command-item");
+  actionBox?.classList.remove("positive","negative");
+
+  if (!a) {
+    actionEl.textContent="WAIT";
+    $("beginnerActionDetail").textContent="The AI does not have enough real evidence yet.";
+  } else if (a.noTrade || a.confidence<.46 || a.edge<.055) {
+    actionEl.textContent="WAIT — NO EDGE";
+    $("beginnerActionDetail").textContent=
+      `UP ${Math.round(a.probabilities.up*100)}% · FLAT ${Math.round(a.probabilities.flat*100)}% · DOWN ${Math.round(a.probabilities.down*100)}%. That is too close to call.`;
+  } else if (a.direction==="UP") {
+    actionBox?.classList.add("positive");
+    actionEl.textContent="PAPER: UP SETUP";
+    $("beginnerActionDetail").textContent=
+      `The model sees ${Math.round(a.probabilities.up*100)}% UP probability. Paper-only while it proves itself.`;
+  } else if (a.direction==="DOWN") {
+    actionBox?.classList.add("negative");
+    actionEl.textContent="PAPER: DOWN SETUP";
+    $("beginnerActionDetail").textContent=
+      `The model sees ${Math.round(a.probabilities.down*100)}% DOWN probability. Paper-only while it proves itself.`;
+  } else {
+    actionEl.textContent="WAIT — SIDEWAYS";
+    $("beginnerActionDetail").textContent="The model currently expects no strong directional move.";
+  }
+
+  $("beginnerDataAge").textContent=age;
+  if (!providerConnected()) {
+    $("beginnerDataDetail").textContent="Provider is reconnecting or unavailable. Trading Eye will not invent prices.";
+  } else if (latestTs==null) {
+    $("beginnerDataDetail").textContent=`${sourceName()} is connected, but this symbol has not produced a new real update yet.`;
+  } else if (session.key==="CLOSED") {
+    $("beginnerDataDetail").textContent=`${sourceName()} · last selected-symbol update ${age}.`;
+  } else if (ageMs!=null && ageMs>5*60*1000) {
+    $("beginnerDataDetail").textContent=`${sourceName()} connected · selected stock has been quiet for ${age}.`;
+  } else {
+    $("beginnerDataDetail").textContent=`${sourceName()} · selected-symbol data is current.`;
+  }
+
+  const jobs=Array.isArray(researchData.jobs)?researchData.jobs:[];
+  const running=jobs.filter(j=>j.status==="RUNNING");
+  const current=
+    running.find(j=>j.job_key==="long-history-1999-present") ||
+    running.find(j=>j.job_type==="PATTERN_MINING") ||
+    running.find(j=>j.job_type==="MODEL_RESEARCH") ||
+    running.find(j=>j.job_key!=="research-brain-heartbeat-orchestrator"&&!String(j.job_key||"").startsWith("research-brain-heartbeat")) ||
+    running[0] || null;
+
+  if (current) {
+    $("beginnerResearchState").textContent="WORKING NOW";
+    const item=Number(current.items_done)||0;
+    const total=current.items_total==null?null:Number(current.items_total);
+    const bars=Number(current.bars_processed)||0;
+    $("beginnerResearchDetail").textContent=
+      `${String(current.phase||current.job_type||"research").replaceAll("_"," ")} · ${bars?num(bars)+" bars":""}${total?" · "+num(item)+"/"+num(total)+" items":""}`.replace(/ · $/,"");
+  } else {
+    $("beginnerResearchState").textContent="MONITORING";
+    $("beginnerResearchDetail").textContent="No heavy job this second; live observation and shadow scoring continue.";
+  }
+
+  const ready=readinessSummary();
+  $("beginnerReadiness").textContent=ready.label;
+  $("beginnerReadinessDetail").textContent=ready.detail;
+  $("beginnerReadiness")?.closest(".beginner-command-item")?.classList.toggle("review",ready.review);
+
+  const actionLabel=actionEl?.textContent||"WAIT";
+  $("beginnerCommandTitle").textContent=`${activeSymbol}: ${actionLabel}`;
+  $("beginnerCommandSubtitle").textContent=
+    session.key==="OPEN"
+      ?"The market is open. Trading Eye is watching real data and will stay out when the edge is weak."
+      :`${session.label}. Trading Eye is still researching; paper entries only happen when the model has enough edge.`;
+}
+
+function openResearchFocus() {
+  const btn=document.querySelector('#lowerTabs button[data-tab="research"]');
+  if (btn) btn.click();
+  document.body.classList.add("research-focus");
+  document.body.style.overflow="hidden";
+  renderResearchBrain();
+}
+
+function closeResearchFocus() {
+  document.body.classList.remove("research-focus");
+  document.body.style.overflow="";
 }
 
 function activeFeed() {
@@ -734,6 +899,7 @@ function renderDeepStudy() {
 
 function renderAll() {
   renderStatus();
+  renderBeginnerCommandCenter();
   renderWatchlist();
   renderAI();
   renderChart();
@@ -817,7 +983,7 @@ async function loadSymbol() {
 function applyRealtime(event) {
   if (event.type==="status") {
     status={...(status||{}),...event.data};
-    renderStatus(); renderAI();
+    renderStatus(); renderBeginnerCommandCenter(); renderAI();
     return;
   }
   const d=event.data;
@@ -855,6 +1021,7 @@ function applyRealtime(event) {
     researchData.events=[...(researchData.events||[]).filter(x=>x.id!==ev?.id),ev].filter(Boolean).slice(-180);
     researchData.lastResearchEventAt=ev?.event_ts||new Date().toISOString();
     renderResearchBrain();
+    renderBeginnerCommandCenter();
     return;
   }
   if (event.type==="research_status") {
@@ -873,11 +1040,9 @@ function setTour(open,markSeen=false) {
   if (markSeen) try { localStorage.setItem("trading-eye-tour-seen-real","1"); } catch {}
 }
 
-$("researchTopBtn")?.addEventListener("click",()=>{
-  const btn=document.querySelector('#lowerTabs button[data-tab="research"]');
-  if (btn) btn.click();
-  $("tab-research")?.scrollIntoView({behavior:"smooth",block:"start"});
-});
+$("researchTopBtn")?.addEventListener("click",openResearchFocus);
+$("beginnerResearchBtn")?.addEventListener("click",openResearchFocus);
+$("researchCloseBtn")?.addEventListener("click",closeResearchFocus);
 $("loadSymbolBtn").addEventListener("click",loadSymbol);
 $("symbolInput").addEventListener("keydown",e=>{
   if(e.key==="Enter") loadSymbol();
@@ -1000,7 +1165,11 @@ $("helpBtn").addEventListener("click",()=>setTour(true));
 $("tourCloseBtn").addEventListener("click",()=>setTour(false,true));
 $("tourDoneBtn").addEventListener("click",()=>setTour(false,true));
 document.querySelectorAll("[data-tour-close]").forEach(el=>el.addEventListener("click",()=>setTour(false,true)));
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("tourPanel").classList.contains("hidden"))setTour(false,true);});
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  if(document.body.classList.contains("research-focus")) return closeResearchFocus();
+  if(!$("tourPanel").classList.contains("hidden")) setTour(false,true);
+});
 
 client.on(applyRealtime);
 client.connect();
@@ -1010,9 +1179,11 @@ refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
 clearInterval(researchTimer);
 researchTimer=setInterval(()=>{
   client.research()
-    .then(r=>{researchData=r;renderResearchBrain();})
+    .then(r=>{researchData=r;renderResearchBrain();renderBeginnerCommandCenter();})
     .catch(()=>{});
 },10000);
+clearInterval(commandTimer);
+commandTimer=setInterval(renderBeginnerCommandCenter,1000);
 
 try {
   if (!localStorage.getItem("trading-eye-tour-seen-real")) setTimeout(()=>setTour(true),700);
