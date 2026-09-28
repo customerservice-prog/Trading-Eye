@@ -472,6 +472,89 @@ export class ModelLab {
     return null;
   }
 
+  async #ensureTrainingCoverage(){
+    const existing=await this.db.listSymbolsWithMinuteHistory({minBars:4000,limit:80});
+    const totalExisting=existing.reduce((s,x)=>s+Number(x.bars||0),0);
+    if(existing.length>=12 && totalExisting>=60000){
+      return {backfilled:false,symbols:existing.length,bars:totalExisting};
+    }
+
+    const provider=this.marketEngine.provider;
+    if(!provider?.configured?.()){
+      throw new Error(
+        `Model Lab training coverage is insufficient (${existing.length} symbols / ${totalExisting} minute bars) and the research worker has no historical-data credentials.`
+      );
+    }
+
+    const latest=await this.db.latestUniverseScan();
+    const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
+    const ranked=scanDate?await this.db.topUniverseCandidates(scanDate,{limit:28}):[];
+    const wanted=[...new Set([
+      "SPY","QQQ","AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
+      ...ranked.map(x=>x.symbol)
+    ])].slice(0,24);
+
+    const counts=new Map(existing.map(x=>[x.symbol,Number(x.bars)||0]));
+    const needs=wanted.filter(s=>(counts.get(s)||0)<4000);
+    if(!needs.length){
+      return {backfilled:false,symbols:existing.length,bars:totalExisting};
+    }
+
+    const end=new Date(Date.now()-20*60*1000);
+    const start=new Date(end.getTime()-70*24*60*60*1000);
+    let barsAdded=0;
+
+    console.log(JSON.stringify({
+      event:"model_lab_backfill_started",
+      symbols:needs,
+      start:start.toISOString(),
+      end:end.toISOString()
+    }));
+
+    for(let offset=0;offset<needs.length;offset+=6){
+      const chunk=needs.slice(offset,offset+6);
+      await provider.historicalBarsForSymbols({
+        symbols:chunk,start,end,timeframe:"1Min",limit:10000,
+        onPage:async barsBySymbol=>{
+          const batch=[];
+          for(const [symbol,rows] of Object.entries(barsBySymbol||{})){
+            for(const r of rows||[]){
+              batch.push({
+                provider:"alpaca",
+                feed:provider.historicalFeed||"sip",
+                symbol,
+                ts:new Date(r.t),
+                open:r.o,high:r.h,low:r.l,close:r.c,volume:r.v,
+                tradeCount:r.n??null,vwap:r.vw??null,source:"ml_training_backfill"
+              });
+            }
+          }
+          for(let i=0;i<batch.length;i+=700){
+            await this.db.upsertBarsBatch(batch.slice(i,i+700));
+          }
+          barsAdded+=batch.length;
+        }
+      });
+      console.log(JSON.stringify({
+        event:"model_lab_backfill_progress",
+        completedSymbols:Math.min(offset+chunk.length,needs.length),
+        totalSymbols:needs.length,
+        barsAdded
+      }));
+      await sleepTick();
+    }
+
+    const refreshed=await this.db.listSymbolsWithMinuteHistory({minBars:4000,limit:80});
+    const total=refreshed.reduce((s,x)=>s+Number(x.bars||0),0);
+    console.log(JSON.stringify({
+      event:"model_lab_backfill_complete",
+      symbols:refreshed.length,
+      bars:total,
+      barsAdded
+    }));
+    return {backfilled:true,symbols:refreshed.length,bars:total,barsAdded};
+  }
+
   async #trainingHistories(){
     const meta=await this.db.listSymbolsWithMinuteHistory({minBars:600,limit:64});
     const histories=new Map();
@@ -645,6 +728,7 @@ export class ModelLab {
     `,[runId,this.horizonMinutes]);
 
     try{
+      const coverage=await this.#ensureTrainingCoverage();
       const trainingHistories=await this.#trainingHistories();
       const usableSymbols=[...trainingHistories.keys()];
       const dataset=this.factory.buildDataset(trainingHistories,{
@@ -655,6 +739,7 @@ export class ModelLab {
       const splits=splitChronologically(dataset);
       const datasetSummary={
         reason,
+        coverage,
         symbols:usableSymbols,
         total:dataset.length,
         train:splits.train.length,
