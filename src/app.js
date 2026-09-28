@@ -327,6 +327,8 @@ function renderLearning() {
   $("predictionCount").textContent=num(s?.predictions||0);
   $("scoredCount").textContent=num(scored);
   $("highConfidenceAccuracy").textContent=hiScored?pct(hiCorrect/hiScored):"Not enough yet";
+  const historicalHoldout=predictionData.model?.stats?.historicalHoldoutAccuracy;
+  $("historicalHoldoutAccuracy").textContent=historicalHoldout==null?"Not trained yet":pct(historicalHoldout);
   $("learningUpdates").textContent=num(predictionData.model?.stats?.learningUpdates||0);
 
   const rows=predictionData.rows||[];
