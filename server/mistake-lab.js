@@ -21,6 +21,7 @@ function ratio(n,d){ return d?Number(n)/Number(d):0; }
 export class MistakeLab extends EventEmitter {
   constructor({
     db,modelLab,enabled=true,
+    explorationAccountId="TE_PAPER_EXPLORATION_V1",
     analysisEveryMs=2*60*1000,
     retrainCooldownMs=6*60*60*1000
   }={}){
@@ -28,6 +29,7 @@ export class MistakeLab extends EventEmitter {
     this.db=db;
     this.modelLab=modelLab;
     this.enabled=Boolean(enabled);
+    this.explorationAccountId=String(explorationAccountId||"TE_PAPER_EXPLORATION_V1");
     this.analysisEveryMs=analysisEveryMs;
     this.retrainCooldownMs=retrainCooldownMs;
     this.timer=null;
@@ -85,16 +87,30 @@ export class MistakeLab extends EventEmitter {
     this.running=true;
     this.lastError=null;
     try{
-      const q=await this.db.pool.query(`
-        SELECT
-          id,symbol,created_at,direction,confidence,p_up,p_flat,p_down,
-          result_return,actual_direction,correct,features,model_id,model_details
-        FROM predictions
-        WHERE status='SCORED'
-        ORDER BY created_at DESC
-        LIMIT 1200
-      `);
+      const [q,exploreQ]=await Promise.all([
+        this.db.pool.query(`
+          SELECT
+            id,symbol,created_at,direction,confidence,p_up,p_flat,p_down,
+            result_return,actual_direction,correct,features,model_id,model_details
+          FROM predictions
+          WHERE status='SCORED'
+          ORDER BY created_at DESC
+          LIMIT 1200
+        `),
+        this.db.pool.query(`
+          SELECT
+            f.symbol,f.realized_pnl,f.created_at,f.fill_price,
+            o.source,o.model_id
+          FROM paper_fills f
+          LEFT JOIN paper_orders o ON o.order_id=f.order_id
+          WHERE f.account_id=$1
+            AND ABS(f.realized_pnl) > 0.0000001
+          ORDER BY f.created_at DESC
+          LIMIT 300
+        `,[this.explorationAccountId])
+      ]);
       const rows=q.rows||[];
+      const explorationClosed=exploreQ.rows||[];
       const recent=rows.slice(0,Math.min(250,rows.length));
       const baseline=rows.slice(250,Math.min(1000,rows.length));
 
@@ -110,6 +126,16 @@ export class MistakeLab extends EventEmitter {
         (r.direction==="UP"&&r.actual_direction==="DOWN") ||
         (r.direction==="DOWN"&&r.actual_direction==="UP")
       );
+
+      const explorationWins=explorationClosed.filter(r=>Number(r.realized_pnl)>0);
+      const explorationLosses=explorationClosed.filter(r=>Number(r.realized_pnl)<0);
+      const explorationGrossProfit=explorationWins.reduce((sum,r)=>sum+(Number(r.realized_pnl)||0),0);
+      const explorationGrossLoss=Math.abs(explorationLosses.reduce((sum,r)=>sum+(Number(r.realized_pnl)||0),0));
+      const explorationProfitFactor=explorationGrossLoss
+        ? explorationGrossProfit/explorationGrossLoss
+        : explorationGrossProfit>0?Infinity:null;
+      const explorationStops=explorationClosed.filter(r=>String(r.source||"").endsWith("_STOP"));
+      const explorationTimeouts=explorationClosed.filter(r=>String(r.source||"").endsWith("_TIME_EXIT"));
 
       const errorRate=ratio(mistakes.length,recent.length);
       const baselineErrorRate=ratio(baseline.filter(r=>r.correct===false).length,baseline.length);
@@ -209,6 +235,28 @@ export class MistakeLab extends EventEmitter {
         });
       }
 
+      if(explorationClosed.length>=10 && ratio(explorationLosses.length,explorationClosed.length)>=.60){
+        lessons.push({
+          key:"exploration_loss_cluster",severity:"MEDIUM",
+          title:"Exploration trades are finding a weak zone",
+          text:`${explorationLosses.length} of ${explorationClosed.length} recent closed exploration trades lost money. That is useful failure data; the strict proof account remains isolated from it.`
+        });
+      }
+      if(explorationStops.length>=5){
+        lessons.push({
+          key:"exploration_stops",severity:"MEDIUM",
+          title:"Too many exploration trades are hitting the stop",
+          text:`${explorationStops.length} recent exploration positions reached the paper stop. Mistake Lab will compare those entries with successful setups during challenger retraining.`
+        });
+      }
+      if(explorationTimeouts.length>=5){
+        lessons.push({
+          key:"exploration_timeouts",severity:"LOW",
+          title:"Some experimental signals are not moving fast enough",
+          text:`${explorationTimeouts.length} exploration trades aged out without reaching target or stop. Time-to-move is a useful filter for future challengers.`
+        });
+      }
+
       if(!lessons.length){
         lessons.push({
           key:"stable",severity:"LOW",
@@ -249,6 +297,18 @@ export class MistakeLab extends EventEmitter {
         bySymbol,
         byTime,
         byCall,
+        exploration:{
+          accountId:this.explorationAccountId,
+          closedOutcomes:explorationClosed.length,
+          wins:explorationWins.length,
+          losses:explorationLosses.length,
+          winRate:ratio(explorationWins.length,explorationClosed.length),
+          grossProfit:explorationGrossProfit,
+          grossLoss:explorationGrossLoss,
+          profitFactor:explorationProfitFactor,
+          stops:explorationStops.length,
+          timeouts:explorationTimeouts.length
+        },
         latestMistakes:mistakes.slice(0,30).map(r=>({
           id:r.id,symbol:r.symbol,createdAt:r.created_at,
           predicted:r.direction,actual:r.actual_direction,
@@ -283,6 +343,8 @@ export class MistakeLab extends EventEmitter {
         mistakes:mistakes.length,
         highConfMistakes:highConfMistakes.length,
         missedMoves:missedMoves.length,
+        explorationClosed:explorationClosed.length,
+        explorationLosses:explorationLosses.length,
         level,
         blockStrictEntries:guard.blockStrictEntries
       }));
