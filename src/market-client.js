@@ -62,6 +62,28 @@ export class MarketClient {
     return r.json();
   }
 
+  async research() {
+    const r=await fetch("/api/research",{cache:"no-store"});
+    if (!r.ok) throw new Error("Research Brain request failed: "+r.status);
+    return r.json();
+  }
+
+  async researchEvents(afterId=null,limit=120) {
+    const qs=new URLSearchParams({limit:String(limit)});
+    if (afterId!=null) qs.set("afterId",String(afterId));
+    const r=await fetch("/api/research/events?"+qs.toString(),{cache:"no-store"});
+    if (!r.ok) throw new Error("Research events request failed: "+r.status);
+    return r.json();
+  }
+
+  async researchFindings(limit=80,status=null) {
+    const qs=new URLSearchParams({limit:String(limit)});
+    if (status) qs.set("status",status);
+    const r=await fetch("/api/research/findings?"+qs.toString(),{cache:"no-store"});
+    if (!r.ok) throw new Error("Research findings request failed: "+r.status);
+    return r.json();
+  }
+
   async paper() {
     const r=await fetch("/api/paper",{cache:"no-store"});
     if (!r.ok) throw new Error("Paper account request failed: "+r.status);
