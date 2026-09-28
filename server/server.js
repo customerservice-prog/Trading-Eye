@@ -7,7 +7,7 @@ import { RealMarketEngine } from "./engine.js";
 import { DeepStudyEngine } from "./deep-study.js";
 import { AssetUniverse } from "./universe.js";
 import { explainAttention } from "./regime.js";
-import { fingerprintFromFeatures, patternProbabilities } from "./patterns.js";
+import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } from "./patterns.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -122,6 +122,7 @@ app.get("/api/snapshot/:symbol",async(req,res)=>{
       const row=await db.getPattern(symbol,fingerprint,15);
       const memory=patternProbabilities(row);
       if (memory) {
+        const blended=snap.analysis?blendProbabilities(snap.analysis,memory):null;
         patternInsight={
           fingerprint,
           sampleCount:memory.sampleCount,
@@ -132,7 +133,7 @@ app.get("/api/snapshot/:symbol",async(req,res)=>{
           avgAbsReturn:memory.avgAbsReturn,
           avgMfe:memory.avgMfe,
           avgMae:memory.avgMae,
-          patternWeight:0
+          patternWeight:blended?.patternWeight||0
         };
       }
     }
