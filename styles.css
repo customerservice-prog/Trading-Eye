@@ -1663,3 +1663,8 @@ body.research-focus .research-brain-layout {
     width:100%;
   }
 }
+
+.research-findings-panel tr.validated td:first-child { color:var(--cyan); }
+.research-findings-panel tr.rejected_validation td:first-child,
+.research-findings-panel tr.rejected_holdout td:first-child { color:var(--red); }
+.research-findings-panel tr.legacy_unvalidated td:first-child { color:var(--muted); }
