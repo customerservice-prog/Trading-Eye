@@ -93,6 +93,8 @@ export class ResearchBrain extends EventEmitter {
     this.role=String(role||"all").toLowerCase();
     this.longHistoryRetryAfter=0;
     this.longHistoryAuthNoticeSent=false;
+    this.githubMirrorManifest=null;
+    this.githubMirrorCursor=0;
     this.timer=null;
     this.heartbeatTimer=null;
     this.longHistoryRunning=false;
@@ -184,14 +186,12 @@ export class ResearchBrain extends EventEmitter {
     const coverage=await this.db.researchCoverage();
     if(this.role!=="orchestrator" && this.longHistoryEnabled && !this.longHistoryRunning){
       if(!this.longHistoryApiKey){
-        if(this.symbolFallbackEnabled){
-          if(Date.now()<this.longHistoryRetryAfter) return;
-          this.longHistoryRunning=true;
-          this.#syncLongHistoryPerSymbol()
-            .catch(err=>this.#error("long_history",err))
-            .finally(()=>{this.longHistoryRunning=false;});
-          return;
-        }
+        if(Date.now()<this.longHistoryRetryAfter) return;
+        this.longHistoryRunning=true;
+        this.#syncGithubMirrorBatch()
+          .catch(err=>this.#error("long_history",err))
+          .finally(()=>{this.longHistoryRunning=false;});
+        return;
         if(!this.longHistoryAuthNoticeSent){
           this.longHistoryAuthNoticeSent=true;
           await this.#event({
@@ -365,6 +365,204 @@ export class ResearchBrain extends EventEmitter {
       }
     });
     this.emit("status",{heartbeatAt:this.lastHeartbeatAt});
+  }
+
+  #githubRawUrl(repo,path,ref="main"){
+    const encoded=String(path).split("/").map(encodeURIComponent).join("/");
+    return `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(ref)}/${encoded}`;
+  }
+
+  async #loadGithubMirrorManifest(){
+    if(this.githubMirrorManifest?.length) return this.githubMirrorManifest;
+    const repo="ARKMD/stooq";
+    const base="d_us_txt/data/daily/us";
+    const res=await fetch(`https://api.github.com/repos/${repo}/contents/${base.split("/").map(encodeURIComponent).join("/")}`,{
+      headers:{
+        "user-agent":"Trading-Eye-Research/1.0",
+        "accept":"application/vnd.github+json"
+      }
+    });
+    if(!res.ok) throw new Error(`GitHub mirror root HTTP ${res.status}`);
+    const dirs=await res.json();
+    const files=[];
+    for(const dir of dirs.filter(x=>x.type==="dir")){
+      const treeUrl=String(dir.git_url||"")+(String(dir.git_url||"").includes("?")?"&":"?")+"recursive=1";
+      const tr=await fetch(treeUrl,{
+        headers:{
+          "user-agent":"Trading-Eye-Research/1.0",
+          "accept":"application/vnd.github+json"
+        }
+      });
+      if(!tr.ok) throw new Error(`GitHub mirror tree HTTP ${tr.status}`);
+      const tree=await tr.json();
+      for(const item of tree.tree||[]){
+        if(item.type!=="blob"||!/\.us\.txt$/i.test(item.path||"")) continue;
+        const name=path.basename(item.path).replace(/\.us\.txt$/i,"").toUpperCase();
+        if(!/^[A-Z0-9.\-]{1,20}$/.test(name)) continue;
+        files.push({
+          symbol:name,
+          path:`${base}/${dir.name}/${item.path}`,
+          size:Number(item.size)||0,
+          sha:item.sha||null
+        });
+      }
+    }
+    const dedup=new Map();
+    for(const file of files){
+      const prev=dedup.get(file.symbol);
+      if(!prev||file.size>prev.size) dedup.set(file.symbol,file);
+    }
+    const priority=["SPY","QQQ","DIA","IWM","AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA"];
+    const ordered=[
+      ...priority.map(s=>dedup.get(s)).filter(Boolean),
+      ...[...dedup.values()].filter(x=>!priority.includes(x.symbol)).sort((a,b)=>a.symbol.localeCompare(b.symbol))
+    ];
+    this.githubMirrorManifest=ordered;
+    return ordered;
+  }
+
+  #parseGithubMirrorFile(symbol,text){
+    const lines=String(text||"").replace(/\r/g,"").split("\n").filter(Boolean);
+    if(lines.length<2) return [];
+    const header=lines[0].split(",").map(x=>x.trim().replace(/[<>]/g,"").toUpperCase());
+    const idx=name=>header.indexOf(name);
+    const dateIdx=idx("DATE");
+    const openIdx=idx("OPEN");
+    const highIdx=idx("HIGH");
+    const lowIdx=idx("LOW");
+    const closeIdx=idx("CLOSE");
+    const volIdx=idx("VOL");
+    if(dateIdx<0||openIdx<0||highIdx<0||lowIdx<0||closeIdx<0) return [];
+    const out=[];
+    for(let i=1;i<lines.length;i++){
+      const cols=lines[i].split(",");
+      const day=parseDay(cols[dateIdx]);
+      if(!day||day<this.longHistoryStart) continue;
+      const open=num(cols[openIdx]),high=num(cols[highIdx]),low=num(cols[lowIdx]),close=num(cols[closeIdx]);
+      const volume=volIdx>=0?num(cols[volIdx])||0:0;
+      if(![open,high,low,close].every(x=>x!=null&&x>0)) continue;
+      out.push({
+        provider:"stooq_github_mirror",
+        symbol,day,open,high,low,close,volume
+      });
+    }
+    return out;
+  }
+
+  async #syncGithubMirrorBatch(){
+    const jobKey="long-history-1999-present";
+    const manifest=await this.#loadGithubMirrorManifest();
+    const existing=new Set((await this.db.longHistorySymbols({limit:50000})).map(x=>x.symbol));
+    const pending=manifest.filter(x=>!existing.has(x.symbol));
+    const batch=pending.slice(0,40);
+
+    if(!batch.length){
+      const coverage=await this.db.researchCoverage();
+      await this.db.upsertResearchJob({
+        jobKey,jobType:"LONG_HISTORY_INGEST",status:"COMPLETE",phase:"MIRROR_READY",
+        provider:"stooq_github_mirror",progress:1,itemsDone:manifest.length,itemsTotal:manifest.length,
+        barsProcessed:Number(coverage.longHistory?.bars)||0,
+        completedAt:new Date().toISOString(),
+        details:{
+          sourceRepo:"ARKMD/stooq",
+          mirrorSnapshot:"2025-01-10-ish",
+          coverage:coverage.longHistory,
+          updateLayer:"Alpaca"
+        }
+      });
+      return;
+    }
+
+    await this.db.upsertResearchJob({
+      jobKey,jobType:"LONG_HISTORY_INGEST",status:"RUNNING",phase:"GITHUB_MIRROR",
+      provider:"stooq_github_mirror",
+      progress:manifest.length?existing.size/manifest.length:0,
+      itemsDone:existing.size,itemsTotal:manifest.length,
+      barsProcessed:Number((await this.db.researchCoverage()).longHistory?.bars)||0,
+      details:{
+        sourceRepo:"ARKMD/stooq",
+        batch:batch.map(x=>x.symbol),
+        targetStart:this.longHistoryStart
+      }
+    });
+
+    if(!this.longHistoryAuthNoticeSent){
+      this.longHistoryAuthNoticeSent=true;
+      await this.#event({
+        category:"DATA",
+        jobKey,
+        level:"IMPORTANT",
+        title:"1999+ GitHub mirror bootstrap started",
+        message:"Trading Eye found a public Stooq GitHub mirror and is bootstrapping long daily history from it without requiring your CAPTCHA/API key. Newer/live data remains sourced separately from Alpaca.",
+        details:{repo:"ARKMD/stooq",files:manifest.length,targetStart:this.longHistoryStart}
+      });
+    }
+
+    let symbolsDone=0,barsStored=0,misses=0;
+    for(const file of batch){
+      try{
+        const url=this.#githubRawUrl("ARKMD/stooq",file.path,"main");
+        const res=await fetch(url,{
+          headers:{
+            "user-agent":"Trading-Eye-Research/1.0",
+            "accept":"text/plain,*/*"
+          }
+        });
+        if(!res.ok){
+          if([403,429].includes(res.status)){
+            this.longHistoryRetryAfter=Date.now()+30*60*1000;
+            throw Object.assign(new Error(`GitHub raw HTTP ${res.status}`),{status:res.status});
+          }
+          misses++;
+          continue;
+        }
+        const text=await res.text();
+        const rows=this.#parseGithubMirrorFile(file.symbol,text);
+        if(rows.length){
+          barsStored+=await this.db.upsertLongHistoryBars(rows);
+        }else misses++;
+      }catch(err){
+        misses++;
+        if([403,429].includes(Number(err?.status))){
+          await this.db.upsertResearchJob({
+            jobKey,jobType:"LONG_HISTORY_INGEST",status:"WAITING",phase:"RATE_LIMITED",
+            provider:"stooq_github_mirror",
+            progress:manifest.length?(existing.size+symbolsDone)/manifest.length:0,
+            itemsDone:existing.size+symbolsDone,itemsTotal:manifest.length,
+            barsProcessed:Number((await this.db.researchCoverage()).longHistory?.bars)||0,
+            error:String(err?.message||err),
+            details:{retryAfter:new Date(this.longHistoryRetryAfter).toISOString()}
+          });
+          return;
+        }
+      }
+      symbolsDone++;
+      if(symbolsDone%10===0){
+        console.log(JSON.stringify({
+          event:"research_github_history_progress",
+          symbolsDone,barsStored,misses,
+          totalPending:pending.length,totalManifest:manifest.length
+        }));
+      }
+      await new Promise(r=>setTimeout(r,500));
+    }
+
+    const coverage=await this.db.researchCoverage();
+    await this.db.upsertResearchJob({
+      jobKey,jobType:"LONG_HISTORY_INGEST",status:"RUNNING",phase:"GITHUB_MIRROR",
+      provider:"stooq_github_mirror",
+      progress:manifest.length?(existing.size+symbolsDone)/manifest.length:0,
+      itemsDone:existing.size+symbolsDone,itemsTotal:manifest.length,
+      barsProcessed:Number(coverage.longHistory?.bars)||0,
+      details:{sourceRepo:"ARKMD/stooq",barsStored,misses,coverage:coverage.longHistory}
+    });
+    await this.#event({
+      category:"DATA",
+      jobKey,
+      title:"GitHub history batch stored",
+      message:`Processed ${symbolsDone} mirror symbols and stored ${barsStored.toLocaleString()} daily bars. Research continues in the next batch.`,
+      details:{symbolsDone,barsStored,misses,coverage:coverage.longHistory}
+    });
   }
 
   #stooqSymbol(symbol){
