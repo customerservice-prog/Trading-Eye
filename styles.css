@@ -953,3 +953,106 @@ body[data-data-state="missing"] #marketChart { opacity:.28; }
   font-size:7px;
   line-height:1.5;
 }
+
+.pattern-lab-layout {
+  height:100%;
+  display:grid;
+  grid-template-columns:330px 1fr;
+  min-width:0;
+}
+.pattern-lab-summary {
+  border-right:1px solid var(--line);
+  background:linear-gradient(155deg,rgba(88,216,255,.04),#070d15 58%);
+  padding:14px;
+  overflow:auto;
+}
+.pattern-lab-title {
+  padding-bottom:11px;
+  border-bottom:1px solid var(--line);
+}
+.pattern-lab-title strong {
+  display:block;
+  margin-top:4px;
+  font-size:19px;
+  color:var(--text);
+}
+.pattern-lab-title > span:last-child {
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+  font-size:7px;
+  line-height:1.45;
+}
+.pattern-horizon-grid {
+  display:grid;
+  gap:7px;
+  margin-top:10px;
+}
+.pattern-horizon-card {
+  padding:10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:#08101a;
+}
+.pattern-horizon-card > span {
+  display:block;
+  color:var(--muted);
+  font-size:7px;
+  text-transform:uppercase;
+  letter-spacing:.07em;
+}
+.pattern-horizon-card strong {
+  display:block;
+  margin-top:4px;
+  font-size:15px;
+  color:var(--cyan);
+}
+.pattern-horizon-card small {
+  display:block;
+  margin-top:3px;
+  color:var(--muted-2);
+  font-size:7px;
+  line-height:1.45;
+}
+.pattern-table-wrap {
+  min-width:0;
+  display:grid;
+  grid-template-rows:auto 1fr;
+}
+.pattern-table-head {
+  min-height:54px;
+  padding:10px 12px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  border-bottom:1px solid var(--line);
+  background:#080e16;
+}
+.pattern-table-head strong {
+  display:block;
+  margin-top:2px;
+  font-size:10px;
+  color:var(--text-2);
+}
+.pattern-fingerprint {
+  max-width:48%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:#667c93;
+  font-size:7px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+.pattern-table-wrap td.similarity-high {
+  color:var(--cyan);
+  font-weight:800;
+}
+@media (max-width:920px) {
+  .pattern-lab-layout { grid-template-columns:1fr; height:auto; }
+  .pattern-lab-summary { border-right:0; border-bottom:1px solid var(--line); }
+  .pattern-horizon-grid { grid-template-columns:repeat(3,1fr); }
+}
+@media (max-width:620px) {
+  .pattern-horizon-grid { grid-template-columns:1fr; }
+}
