@@ -393,10 +393,22 @@ export class Database {
         score DOUBLE PRECISION NOT NULL,
         description TEXT NOT NULL,
         evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        validation_version TEXT NOT NULL DEFAULT 'legacy',
+        discovery_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        validation_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        holdout_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         status TEXT NOT NULL DEFAULT 'CANDIDATE'
       );
+      ALTER TABLE research_pattern_findings
+        ADD COLUMN IF NOT EXISTS validation_version TEXT NOT NULL DEFAULT 'legacy';
+      ALTER TABLE research_pattern_findings
+        ADD COLUMN IF NOT EXISTS discovery_metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE research_pattern_findings
+        ADD COLUMN IF NOT EXISTS validation_metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE research_pattern_findings
+        ADD COLUMN IF NOT EXISTS holdout_metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
       CREATE INDEX IF NOT EXISTS research_pattern_findings_rank
         ON research_pattern_findings(score DESC,last_seen DESC);
 
@@ -1411,10 +1423,11 @@ export class Database {
       INSERT INTO research_pattern_findings(
         finding_id,provider,scope,symbol,pattern_key,horizon_days,sample_count,
         hit_rate,avg_forward_return,median_forward_return,avg_adverse_return,
-        avg_favorable_return,score,description,evidence,first_seen,last_seen,status
+        avg_favorable_return,score,description,evidence,validation_version,
+        discovery_metrics,validation_metrics,holdout_metrics,first_seen,last_seen,status
       ) VALUES(
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,
-        NOW(),NOW(),$16
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,
+        $17::jsonb,$18::jsonb,$19::jsonb,NOW(),NOW(),$20
       )
       ON CONFLICT(finding_id) DO UPDATE SET
         sample_count=EXCLUDED.sample_count,hit_rate=EXCLUDED.hit_rate,
@@ -1423,12 +1436,20 @@ export class Database {
         avg_adverse_return=EXCLUDED.avg_adverse_return,
         avg_favorable_return=EXCLUDED.avg_favorable_return,
         score=EXCLUDED.score,description=EXCLUDED.description,
-        evidence=EXCLUDED.evidence,last_seen=NOW(),status=EXCLUDED.status
+        evidence=EXCLUDED.evidence,validation_version=EXCLUDED.validation_version,
+        discovery_metrics=EXCLUDED.discovery_metrics,
+        validation_metrics=EXCLUDED.validation_metrics,
+        holdout_metrics=EXCLUDED.holdout_metrics,
+        last_seen=NOW(),status=EXCLUDED.status
     `,[
       f.findingId,f.provider,f.scope,f.symbol||null,f.patternKey,f.horizonDays,
       f.sampleCount,f.hitRate,f.avgForwardReturn,f.medianForwardReturn,
       f.avgAdverseReturn,f.avgFavorableReturn,f.score,f.description,
-      JSON.stringify(f.evidence||{}),f.status||"CANDIDATE"
+      JSON.stringify(f.evidence||{}),f.validationVersion||"legacy",
+      JSON.stringify(f.discoveryMetrics||{}),
+      JSON.stringify(f.validationMetrics||{}),
+      JSON.stringify(f.holdoutMetrics||{}),
+      f.status||"CANDIDATE"
     ]);
   }
 
@@ -1441,7 +1462,9 @@ export class Database {
     const q=await this.pool.query(`
       SELECT finding_id,provider,scope,symbol,pattern_key,horizon_days,sample_count,
              hit_rate,avg_forward_return,median_forward_return,avg_adverse_return,
-             avg_favorable_return,score,description,evidence,first_seen,last_seen,status
+             avg_favorable_return,score,description,evidence,validation_version,
+             discovery_metrics,validation_metrics,holdout_metrics,
+             first_seen,last_seen,status
       FROM research_pattern_findings
       ${where}
       ORDER BY score DESC,last_seen DESC
