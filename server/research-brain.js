@@ -75,7 +75,8 @@ export class ResearchBrain extends EventEmitter {
     longHistoryProvider="stooq_bulk",
     longHistoryStart="1999-01-01",
     longHistoryUrl="https://static.stooq.com/db/h/d_us_txt.zip",
-    longHistoryApiKey=""
+    longHistoryApiKey="",
+    role="all"
   }){
     super();
     this.db=db;
@@ -87,6 +88,7 @@ export class ResearchBrain extends EventEmitter {
     this.longHistoryStart=longHistoryStart;
     this.longHistoryUrl=longHistoryUrl;
     this.longHistoryApiKey=String(longHistoryApiKey||"");
+    this.role=String(role||"all").toLowerCase();
     this.longHistoryRetryAfter=0;
     this.longHistoryAuthNoticeSent=false;
     this.timer=null;
@@ -108,11 +110,12 @@ export class ResearchBrain extends EventEmitter {
         longHistoryEnabled:this.longHistoryEnabled,
         longHistoryStart:this.longHistoryStart,
         intradaySource:"Alpaca",
-        longHistorySource:this.longHistoryProvider
+        longHistorySource:this.longHistoryProvider,
+        role:this.role
       }
     });
 
-    await this.#syncJobMirror();
+    if(this.role!=="long_history") await this.#syncJobMirror();
     this.timer=setInterval(()=>this.tick().catch(err=>this.#error("tick",err)),15000);
     this.heartbeatTimer=setInterval(()=>this.#heartbeat().catch(()=>{}),60000);
     setTimeout(()=>this.tick().catch(err=>this.#error("initial_tick",err)),3500);
@@ -166,10 +169,10 @@ export class ResearchBrain extends EventEmitter {
   }
 
   async tick(){
-    await this.#syncJobMirror();
+    if(this.role!=="long_history") await this.#syncJobMirror();
 
     const coverage=await this.db.researchCoverage();
-    if(this.longHistoryEnabled && !this.longHistoryRunning){
+    if(this.role!=="orchestrator" && this.longHistoryEnabled && !this.longHistoryRunning){
       if(!this.longHistoryApiKey){
         if(!this.longHistoryAuthNoticeSent){
           this.longHistoryAuthNoticeSent=true;
@@ -209,7 +212,7 @@ export class ResearchBrain extends EventEmitter {
       }
     }
 
-    if(Number(coverage.longHistory?.bars)>0 && !this.miningRunning){
+    if(this.role!=="orchestrator" && Number(coverage.longHistory?.bars)>0 && !this.miningRunning){
       this.miningRunning=true;
       this.#mineNextBatch()
         .catch(err=>this.#error("pattern_mining",err))
@@ -328,7 +331,7 @@ export class ResearchBrain extends EventEmitter {
     this.lastHeartbeatAt=new Date().toISOString();
     const coverage=await this.db.researchCoverage();
     await this.db.upsertResearchJob({
-      jobKey:"research-brain-heartbeat",
+      jobKey:"research-brain-heartbeat-"+this.role,
       jobType:"SYSTEM",
       status:"RUNNING",
       phase:"CONTINUOUS",
@@ -336,6 +339,7 @@ export class ResearchBrain extends EventEmitter {
       progress:1,
       details:{
         heartbeatAt:this.lastHeartbeatAt,
+        role:this.role,
         intradayBars:coverage.intraday?.bars||0,
         longHistoryBars:coverage.longHistory?.bars||0,
         findings:coverage.findings?.findings||0,
