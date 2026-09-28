@@ -1464,3 +1464,202 @@ body[data-data-state="missing"] #marketChart { opacity:.28; }
   background:var(--red);
   box-shadow:0 0 11px rgba(255,101,118,.55);
 }
+
+.beginner-command-center {
+  display:grid;
+  grid-template-columns:minmax(250px,1.2fr) minmax(620px,3fr) auto;
+  align-items:stretch;
+  gap:1px;
+  background:var(--line);
+  border-bottom:1px solid var(--line);
+}
+.beginner-command-copy,
+.beginner-command-grid,
+.beginner-research-btn {
+  background:#08101a;
+}
+.beginner-command-copy {
+  padding:12px 14px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.beginner-command-copy strong {
+  display:block;
+  margin-top:3px;
+  color:var(--text);
+  font-size:15px;
+  letter-spacing:-.02em;
+}
+.beginner-command-copy > span:last-child {
+  margin-top:3px;
+  color:var(--muted-2);
+  font-size:8px;
+  line-height:1.4;
+}
+.beginner-command-grid {
+  display:grid;
+  grid-template-columns:repeat(5,minmax(130px,1fr));
+  gap:1px;
+  background:var(--line);
+}
+.beginner-command-item {
+  min-width:0;
+  padding:10px 11px;
+  background:#07101a;
+}
+.beginner-command-item > span {
+  display:block;
+  color:var(--muted);
+  font-size:6px;
+  font-weight:900;
+  letter-spacing:.07em;
+  text-transform:uppercase;
+}
+.beginner-command-item strong {
+  display:block;
+  margin-top:4px;
+  color:var(--text-2);
+  font-size:12px;
+  line-height:1.12;
+}
+.beginner-command-item small {
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:7px;
+  line-height:1.35;
+}
+.beginner-command-item.action strong {
+  color:var(--amber);
+}
+.beginner-command-item.action.positive strong {
+  color:var(--green);
+}
+.beginner-command-item.action.negative strong {
+  color:var(--red);
+}
+.beginner-command-item.research strong {
+  color:var(--cyan);
+}
+.beginner-command-item.readiness strong {
+  color:var(--amber);
+}
+.beginner-command-item.readiness.review strong {
+  color:var(--green);
+}
+.beginner-research-btn {
+  min-width:165px;
+  border:0;
+  border-left:1px solid var(--line);
+  padding:10px 13px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  color:var(--green);
+  font-size:8px;
+  font-weight:900;
+  cursor:pointer;
+}
+.beginner-research-btn:hover {
+  background:rgba(73,226,154,.06);
+}
+.beginner-research-btn b {
+  font-size:15px;
+}
+.research-hero-actions {
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.research-close-btn {
+  min-height:34px;
+  border:1px solid var(--line-2);
+  background:#0b141f;
+  color:var(--text-2);
+  border-radius:7px;
+  padding:0 10px;
+  font-size:8px;
+  font-weight:850;
+  cursor:pointer;
+}
+.research-close-btn:hover {
+  background:#101c29;
+}
+body.research-focus {
+  overflow:hidden;
+}
+body.research-focus .topbar,
+body.research-focus .mode-banner,
+body.research-focus .beginner-command-center,
+body.research-focus .workspace > :not(.lower-panel) {
+  display:none !important;
+}
+body.research-focus .workspace {
+  display:block;
+  background:var(--bg);
+}
+body.research-focus .lower-panel {
+  position:fixed;
+  inset:0;
+  z-index:120;
+  display:block;
+  background:#060b12;
+  overflow:hidden;
+}
+body.research-focus .lower-tabs {
+  display:none;
+}
+body.research-focus .lower-content {
+  height:100vh;
+  overflow:hidden;
+}
+body.research-focus .tab-pane {
+  display:none !important;
+}
+body.research-focus #tab-research {
+  display:block !important;
+  height:100vh;
+  overflow:auto;
+}
+body.research-focus .research-brain-layout {
+  min-height:100vh;
+}
+@media (max-width:1200px) {
+  .beginner-command-center {
+    grid-template-columns:1fr;
+  }
+  .beginner-command-grid {
+    grid-template-columns:repeat(5,1fr);
+  }
+  .beginner-research-btn {
+    border-left:0;
+    border-top:1px solid var(--line);
+    min-height:40px;
+  }
+}
+@media (max-width:760px) {
+  .beginner-command-grid {
+    grid-template-columns:1fr 1fr;
+  }
+  .beginner-command-item.readiness {
+    grid-column:1 / -1;
+  }
+}
+@media (max-width:470px) {
+  .beginner-command-grid {
+    grid-template-columns:1fr;
+  }
+  .beginner-command-item.readiness {
+    grid-column:auto;
+  }
+  .research-hero-actions {
+    width:100%;
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .research-close-btn {
+    width:100%;
+  }
+}
