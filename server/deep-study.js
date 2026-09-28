@@ -258,9 +258,18 @@ export class DeepStudyEngine extends EventEmitter {
     if (!this.marketEngine.enabled || this.running) return;
     if (this.marketEngine.backfill.state!=="COMPLETE") return;
 
-    const top=await this.db.topPatterns({minSamples:12,limit:1});
-    if (!top.length && this.patternState.state!=="BUILDING" && this.patternState.state!=="COMPLETE") {
+    const memoryStats=await this.db.patternMemoryStats();
+    if (!memoryStats.patterns && this.patternState.state!=="BUILDING" && this.patternState.state!=="COMPLETE") {
       await this.rebuildPatternMemory();
+    } else if (memoryStats.patterns && this.patternState.state==="WAITING") {
+      this.patternState={
+        state:"COMPLETE",
+        patterns:memoryStats.patterns,
+        totalSamples:memoryStats.totalSamples,
+        byHorizon:memoryStats.byHorizon,
+        lastBuiltAt:null,
+        error:null
+      };
     }
 
     const p=etParts();
@@ -323,8 +332,11 @@ export class DeepStudyEngine extends EventEmitter {
 
       if (stage==="regular_close") await this.#learnPatternsForDay(bySymbol);
       const topPatterns=await this.db.topPatterns({minSamples:12,limit:40});
+      const memoryStats=await this.db.patternMemoryStats();
       const patternFindings={
-        memorySize:topPatterns.length,
+        memorySize:memoryStats.patterns,
+        totalSamples:memoryStats.totalSamples,
+        byHorizon:memoryStats.byHorizon,
         strongest:topPatterns.slice(0,15).map(p=>({
           symbol:p.symbol,fingerprint:p.fingerprint,horizonMinutes:p.horizon_minutes,
           samples:p.sample_count,
