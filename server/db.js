@@ -417,7 +417,8 @@ export class Database {
       VALUES($1,$2,'RUNNING',NOW())
       ON CONFLICT(scan_date) DO UPDATE SET
         scan_version=EXCLUDED.scan_version,status='RUNNING',started_at=NOW(),
-        completed_at=NULL,error=NULL,assets_scanned=0,daily_bars=0,candidates=0
+        completed_at=NULL,error=NULL,assets_scanned=0,daily_bars=0,candidates=0,
+        deep_assets=0,deep_bars=0
     `,[scanDate,scanVersion]);
   }
 
