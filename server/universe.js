@@ -35,7 +35,10 @@ export class AssetUniverse {
       throw new Error("Alpaca assets HTTP "+res.status);
     }
     const raw=await res.json();
-    const assets=(Array.isArray(raw)?raw:[]).map(a=>({
+    const nonStockName=/\b(warrant|warrants|unit|units|right|rights)\b/i;
+    const assets=(Array.isArray(raw)?raw:[])
+      .filter(a=>String(a.class||"").toLowerCase()==="us_equity")
+      .map(a=>({
       symbol:String(a.symbol||"").toUpperCase(),
       name:a.name||null,
       exchange:a.exchange||null,
@@ -47,7 +50,10 @@ export class AssetUniverse {
       easyToBorrow:Boolean(a.easy_to_borrow),
       marginable:Boolean(a.marginable),
       attributes:Array.isArray(a.attributes)?a.attributes:[],
-      dataSupported:String(a.exchange||"").toUpperCase()!=="OTC"
+      dataSupported:String(a.exchange||"").toUpperCase()!=="OTC",
+      scannerEligible:
+        String(a.exchange||"").toUpperCase()!=="OTC" &&
+        !nonStockName.test(String(a.name||""))
     })).filter(a=>a.symbol);
     await this.db.upsertAssets(assets);
     this.count=assets.length;
