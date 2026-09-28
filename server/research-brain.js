@@ -559,6 +559,9 @@ export class ResearchBrain extends EventEmitter {
       await new Promise(r=>setTimeout(r,500));
     }
 
+    const importedSymbols=batch.map(x=>x.symbol);
+    await this.db.refreshHistoricalSecurityMaster(importedSymbols);
+    await this.db.auditCorporateActionCandidates(importedSymbols);
     const coverage=await this.db.researchCoverage();
     await this.db.upsertResearchJob({
       jobKey,jobType:"LONG_HISTORY_INGEST",status:"RUNNING",phase:"GITHUB_MIRROR",
@@ -883,8 +886,9 @@ export class ResearchBrain extends EventEmitter {
     const statusCounts={PROMOTED:0,VALIDATED:0,CANDIDATE:0,REJECTED_VALIDATION:0,REJECTED_HOLDOUT:0};
     for(const meta of batch){
       const rows=await this.db.getLongHistoryBars(meta.symbol,{start:this.longHistoryStart,limit:10000});
+      const actionDays=new Set(await this.db.corporateActionDays(meta.symbol));
       barsProcessed+=rows.length;
-      const findings=this.#mineSymbol(meta.symbol,rows);
+      const findings=this.#mineSymbol(meta.symbol,rows,actionDays);
       for(const finding of findings){
         await this.db.upsertResearchFinding(finding);
         findingsStored++;
@@ -939,7 +943,7 @@ export class ResearchBrain extends EventEmitter {
     };
   }
 
-  #mineSymbol(symbol,rawRows){
+  #mineSymbol(symbol,rawRows,actionDays=new Set()){
     const rows=(rawRows||[]).map(r=>({
       day:String(r.day).slice(0,10),
       open:Number(r.open),high:Number(r.high),low:Number(r.low),
@@ -949,6 +953,9 @@ export class ResearchBrain extends EventEmitter {
 
     const groups=new Map();
     for(let i=80;i<rows.length-65;i++){
+      const guarded=rows.slice(Math.max(0,i-60),Math.min(rows.length,i+61))
+        .some(x=>actionDays.has(x.day));
+      if(guarded) continue;
       const close=rows[i].close;
       const r20=pct(close,rows[i-20].close);
       const daily=[];
