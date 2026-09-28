@@ -1,6 +1,6 @@
-import { MarketClient } from "./market-client.js?v=20260928-0935";
-import { MarketChart } from "./chart.js?v=20260928-0935";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-0935";
+import { MarketClient } from "./market-client.js?v=20260928-1415";
+import { MarketChart } from "./chart.js?v=20260928-1415";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1415";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
@@ -27,6 +27,10 @@ let watchlist={rows:[],provider:"alpaca",feed:"iex"};
 let predictionData={rows:[],stats:null,legacyModel:null,modelLab:null};
 let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:false,positions:[],fills:[]};
 let modelLabData={enabled:true,training:false,production:null,latestRun:null};
+let readinessData={
+  status:"LOCKED",reviewEligible:false,liveTradingEnabled:false,
+  detail:"Server proof gate is loading.",gates:[],blockers:[]
+};
 let studyData={status:null,rows:[]};
 let scannerData={universe:null,scan:null,candidates:[],hotSymbols:[],pinnedSymbols:[]};
 let patternLabData={symbol:null,status:"WAITING",statsByHorizon:{},analogs:[]};
@@ -101,32 +105,15 @@ function latestSelectedMarketTs() {
 }
 
 function readinessSummary() {
-  const production=modelLabData?.production||predictionData.modelLab?.production||null;
-  const live=production?.liveMetrics||{};
-  const liveSamples=Number(live.samples)||0;
-  const brier=live.brier==null?null:Number(live.brier);
-  const ece=live.ece==null?null:Number(live.ece);
-  const closed=Number(paperData?.closedOutcomes)||0;
-  const pf=paperData?.profitFactor==null?null:Number(paperData.profitFactor);
-  const dd=paperData?.maxDrawdown==null?null:Number(paperData.maxDrawdown);
-  const realized=Number(paperData?.realizedPnl)||0;
-
-  if (!production) {
-    return {label:"LOCKED",detail:"No production model has completed the proof pipeline yet.",review:false};
-  }
-  if (liveSamples<500) {
-    return {label:"PROVING",detail:`${num(liveSamples)} future live samples collected · target is much more evidence before review.`,review:false};
-  }
-  if (closed<100) {
-    return {label:"PROVING",detail:`${num(closed)} closed paper outcomes · paper execution still needs a larger sample.`,review:false};
-  }
-  if ((brier!=null&&brier>.22)||(ece!=null&&ece>.08)||realized<=0||(pf!=null&&pf<=1)||(dd!=null&&dd<-.10)) {
-    return {label:"NOT READY",detail:"The current live/paper evidence has not earned a real-money review.",review:false};
-  }
+  const status=String(readinessData?.status||"LOCKED").toUpperCase();
+  const label=status.replaceAll("_"," ");
+  const detail=readinessData?.detail||"Server proof gate is still loading.";
   return {
-    label:"REVIEW ELIGIBLE",
-    detail:"Evidence gates passed for manual review only. Real money remains locked until you deliberately approve a tiny live test.",
-    review:true
+    label,
+    detail,
+    review:Boolean(readinessData?.reviewEligible),
+    gates:Array.isArray(readinessData?.gates)?readinessData.gates:[],
+    blockers:Array.isArray(readinessData?.blockers)?readinessData.blockers:[]
   };
 }
 
@@ -639,6 +626,29 @@ function renderLearning() {
     }).join(""):`<tr><td colspan="8">No challenger is currently eligible for live shadow.</td></tr>`;
   }
 
+  if ($("readinessGateList")) {
+    const ready=readinessSummary();
+    const drift=production?.drift||modelLabData?.drift||{};
+    $("readinessProofTitle").textContent=`Server proof gate: ${ready.label}`;
+    $("readinessProofMeta").textContent=ready.review
+      ?"All proof gates passed for manual review only; live execution remains disabled."
+      : `${ready.blockers.length} blocker${ready.blockers.length===1?"":"s"} · drift ${String(drift.level||"INSUFFICIENT").replaceAll("_"," ")}`;
+    $("readinessGateList").innerHTML=ready.gates.length
+      ? ready.gates.map(g=>`
+        <div class="readiness-gate ${g.pass?"pass":"blocked"}">
+          <div class="readiness-gate-status">${g.pass?"✓ PASS":"× BLOCKED"}</div>
+          <div class="readiness-gate-copy">
+            <strong>${g.label||g.key}</strong>
+            <span>${g.detail||""}</span>
+          </div>
+          <div class="readiness-gate-values">
+            <span>Current <b>${g.current==null?"—":g.current}</b></span>
+            <span>Target <b>${g.target==null?"—":g.target}</b></span>
+          </div>
+        </div>`).join("")
+      : '<div class="readiness-gate blocked"><div class="readiness-gate-copy"><strong>Server proof gate loading</strong><span>No client-side shortcut can mark the system ready.</span></div></div>';
+  }
+
   const rows=predictionData.rows||[];
   $("predictionBody").innerHTML=rows.length?rows.map(p=>`
     <tr>
@@ -914,12 +924,12 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,lab,research]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,lab,research,readiness]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research()
+      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research(),client.readiness()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; modelLabData=lab; researchData=research;
+    paperData=paperState; modelLabData=lab; researchData=research; readinessData=readiness;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -1012,6 +1022,9 @@ function applyRealtime(event) {
   if (event.type==="prediction" || event.type==="prediction_scored") {
     client.predictions().then(p=>{predictionData=p;renderLearning();}).catch(()=>{});
     client.snapshot(activeSymbol).then(s=>{snapshot=s;renderAI();renderChart();}).catch(()=>{});
+    if (event.type==="prediction_scored") {
+      client.readiness().then(r=>{readinessData=r;renderLearning();renderBeginnerCommandCenter();}).catch(()=>{});
+    }
   }
   if (event.type==="deep_study_status" || event.type==="deep_study_complete") {
     client.studies(10).then(s=>{studyData=s;renderDeepStudy();}).catch(()=>{});
