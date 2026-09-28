@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import { Database } from "./db.js";
 import { AlpacaProvider } from "./alpaca.js";
 import { RealMarketEngine } from "./engine.js";
+import { DeepStudyEngine } from "./deep-study.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -26,6 +27,9 @@ const provider=new AlpacaProvider({
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
 await engine.init();
 
+const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
+await deepStudy.init();
+
 const app=express();
 app.disable("x-powered-by");
 app.use(express.json({limit:"100kb"}));
@@ -43,6 +47,7 @@ app.get("/health",async(req,res)=>{
     historicalFeed:HISTORICAL_FEED,
     mode:"REAL_DATA_ONLY",
     engineEnabled:s.engineEnabled,
+    deepStudy:deepStudy.status(),
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
   });
@@ -68,6 +73,16 @@ app.get("/api/watchlist",async(req,res)=>{
     return {symbol,bar,quote:snap.quote,analysis:snap.analysis};
   });
   res.json({provider:"alpaca",feed:engine.status().provider.feed,feedMode:FEED,mode:"REAL_DATA_ONLY",rows});
+});
+
+app.get("/api/studies/status",async(req,res)=>{
+  res.json(deepStudy.status());
+});
+
+app.get("/api/studies/latest",async(req,res)=>{
+  const limit=Math.max(1,Math.min(30,Number(req.query.limit)||10));
+  const rows=await deepStudy.latest(limit);
+  res.json({status:deepStudy.status(),rows});
 });
 
 app.get("/api/predictions",async(req,res)=>{
@@ -96,6 +111,8 @@ function broadcast(obj) {
 }
 engine.on("market",event=>broadcast(event));
 engine.on("status",status=>broadcast({type:"status",data:status}));
+deepStudy.on("status",status=>broadcast({type:"deep_study_status",data:status}));
+deepStudy.on("study",study=>broadcast({type:"deep_study_complete",data:study}));
 
 wss.on("connection",ws=>{
   ws.send(JSON.stringify({type:"status",data:engine.status()}));
@@ -111,6 +128,7 @@ server.listen(PORT,"0.0.0.0",()=>{
 
 const shutdown=async()=>{
   provider.stop();
+  deepStudy.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
 };
