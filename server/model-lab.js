@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { FeatureFactory, MODEL_FEATURES } from "./feature-factory.js";
 import {
-  CLASS_NAMES,SoftmaxModel,GaussianNBModel,EnsembleModel,
+  CLASS_NAMES,SoftmaxModel,GaussianNBModel,BoostedStumpModel,EnsembleModel,
   metricsFor,chooseTemperature,buildEnsembleWeight,splitChronologically,applyTemperature
 } from "./ml-models.js";
 
@@ -24,6 +24,7 @@ function modelFromRegistryArtifact(a){
   if(a.kind==="ensemble") return EnsembleModel.fromArtifact(a);
   if(a.kind==="softmax") return SoftmaxModel.fromArtifact(a);
   if(a.kind==="gaussian_nb") return GaussianNBModel.fromArtifact(a);
+  if(a.kind==="boosted_stumps") return BoostedStumpModel.fromArtifact(a);
   return null;
 }
 function directionFromProbs(p){
@@ -53,6 +54,19 @@ function localContributions(model,x,classIdx){
       indices.forEach((featureIdx,j)=>{
         add(featureIdx,scale*(Number(weights[j])||0)*(Number(x[featureIdx])||0));
       });
+      return;
+    }
+    if(m.kind==="boosted_stumps"){
+      for(const stump of m.stumps||[]){
+        const featureIdx=Number(stump.featureIndex);
+        const delta=(Number(x[featureIdx])||0)<=Number(stump.threshold)
+          ? stump.leftValue
+          : stump.rightValue;
+        const own=Number(delta?.[classIdx])||0;
+        const others=(delta||[]).filter((_,i)=>i!==classIdx).map(Number);
+        const baseline=others.length?others.reduce((a,b)=>a+b,0)/others.length:0;
+        add(featureIdx,scale*(own-baseline));
+      }
       return;
     }
     if(m.kind==="gaussian_nb"){
@@ -240,7 +254,9 @@ export class ModelLab {
   currentFeatures(symbol){
     const rows=this.marketEngine.histories.get(String(symbol).toUpperCase())||[];
     if(rows.length<50) return null;
-    return this.factory.extract(rows,rows.length-1);
+    const last=rows.at(-1);
+    const context=this.factory.contextAt(this.marketEngine.histories,last?.ts||Date.now());
+    return this.factory.extract(rows,rows.length-1,context);
   }
 
   predict(symbol){
@@ -479,6 +495,7 @@ export class ModelLab {
     const momentum=[
       "ret1","ret3","ret5","ret10","ret20","momAccel",
       "volRel5","volRel20","volAccel","trendSlope10","trendSlope30",
+      "spyRet5","qqqRet5","breadth5","relativeSpy5","relativeQqq5",
       "timeSin","timeCos"
     ].map(idx).filter(i=>i>=0);
     const reversion=[
@@ -491,7 +508,8 @@ export class ModelLab {
       {name:"softmax_full",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,name:"softmax_full"})},
       {name:"softmax_momentum",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:momentum,name:"softmax_momentum"})},
       {name:"softmax_reversion",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:reversion,name:"softmax_reversion"})},
-      {name:"gaussian_full",build:()=>new GaussianNBModel({featureCount:MODEL_FEATURES.length,name:"gaussian_full"})}
+      {name:"gaussian_full",build:()=>new GaussianNBModel({featureCount:MODEL_FEATURES.length,name:"gaussian_full"})},
+      {name:"boosted_stumps",build:()=>new BoostedStumpModel({featureCount:MODEL_FEATURES.length,name:"boosted_stumps"})}
     ];
   }
 
@@ -505,6 +523,8 @@ export class ModelLab {
     const model=spec.build();
     if(model.kind==="softmax"){
       model.train(train,{epochs:3,learningRate:.022,l2:.001,maxSamples:30000});
+    }else if(model.kind==="boosted_stumps"){
+      model.train(train,{rounds:14,learningRate:.20,maxSamples:12000});
     }else{
       model.train(train,{maxSamples:50000});
     }
@@ -627,6 +647,8 @@ export class ModelLab {
         const model=spec.build();
         if(model.kind==="softmax"){
           model.train(splits.train,{epochs:4,learningRate:.022,l2:.001,maxSamples:70000});
+        }else if(model.kind==="boosted_stumps"){
+          model.train(splits.train,{rounds:18,learningRate:.20,maxSamples:14000});
         }else{
           model.train(splits.train,{maxSamples:120000});
         }
