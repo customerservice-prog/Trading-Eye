@@ -62,6 +62,24 @@ export class MarketClient {
     return r.json();
   }
 
+  async readiness() {
+    const r=await fetch("/api/readiness",{cache:"no-store"});
+    if (!r.ok) throw new Error("Readiness request failed: "+r.status);
+    return r.json();
+  }
+
+  async drift() {
+    const r=await fetch("/api/drift",{cache:"no-store"});
+    if (!r.ok) throw new Error("Drift request failed: "+r.status);
+    return r.json();
+  }
+
+  async integrity() {
+    const r=await fetch("/api/integrity",{cache:"no-store"});
+    if (!r.ok) throw new Error("Integrity request failed: "+r.status);
+    return r.json();
+  }
+
   async research() {
     const r=await fetch("/api/research",{cache:"no-store"});
     if (!r.ok) throw new Error("Research Brain request failed: "+r.status);
