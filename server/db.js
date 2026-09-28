@@ -403,6 +403,31 @@ export class Database {
     return q.rows;
   }
 
+  async upsertPatternAggregate(row) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO pattern_memory(
+        symbol,fingerprint,horizon_minutes,sample_count,up_count,flat_count,down_count,
+        avg_return,avg_abs_return,avg_mfe,avg_mae,last_seen,context
+      ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)
+      ON CONFLICT(symbol,fingerprint,horizon_minutes) DO UPDATE SET
+        sample_count=EXCLUDED.sample_count,
+        up_count=EXCLUDED.up_count,
+        flat_count=EXCLUDED.flat_count,
+        down_count=EXCLUDED.down_count,
+        avg_return=EXCLUDED.avg_return,
+        avg_abs_return=EXCLUDED.avg_abs_return,
+        avg_mfe=EXCLUDED.avg_mfe,
+        avg_mae=EXCLUDED.avg_mae,
+        last_seen=EXCLUDED.last_seen,
+        context=EXCLUDED.context
+    `,[
+      row.symbol,row.fingerprint,row.horizonMinutes,row.sampleCount,
+      row.upCount,row.flatCount,row.downCount,row.avgReturn,row.avgAbsReturn,
+      row.avgMfe,row.avgMae,row.lastSeen,JSON.stringify(row.context||{})
+    ]);
+  }
+
   async updatePatternMemory(row) {
     if (!this.ready) return;
     await this.pool.query(`
