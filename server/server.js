@@ -23,6 +23,7 @@ const OVERNIGHT_LIVE_SYMBOL_LIMIT=Math.max(
 );
 const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowerCase() === "true";
 const MODEL_LAB_ENABLED=String(process.env.MODEL_LAB_ENABLED ?? "true").toLowerCase() === "true";
+const MODEL_LAB_FORCE_TRAIN_ON_START=String(process.env.MODEL_LAB_FORCE_TRAIN_ON_START ?? "false").toLowerCase() === "true";
 const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
 const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1");
@@ -52,7 +53,8 @@ const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACK
 await engine.init();
 
 const modelLab=new ModelLab({
-  db,marketEngine:engine,horizonMinutes:15,enabled:MODEL_LAB_ENABLED
+  db,marketEngine:engine,horizonMinutes:15,enabled:MODEL_LAB_ENABLED,
+  forceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START
 });
 await modelLab.init();
 
@@ -315,7 +317,9 @@ server.listen(PORT,"0.0.0.0",()=>{
     provider:"alpaca",feed:provider.feed,feedMode:FEED,marketScope:"US_EQUITIES_ONLY",
     liveSymbolLimit:LIVE_SYMBOL_LIMIT,overnightLiveSymbolLimit:OVERNIGHT_LIVE_SYMBOL_LIMIT,
     symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED,
-    modelLabEnabled:MODEL_LAB_ENABLED,paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED
+    modelLabEnabled:MODEL_LAB_ENABLED,
+    modelLabForceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START,
+    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED
   }));
 });
 
