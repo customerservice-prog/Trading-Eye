@@ -58,12 +58,23 @@ function localContributions(model,x,classIdx){
       return;
     }
     if(m.kind==="bagged_boosted"){
-      for(const member of m.members||[]){
-        const model=BoostedStumpModel.fromArtifact(member.artifact);
+      const members=m.members||[];
+      for(const member of members){
         const indices=member.featureIndices||[];
-        const xx=indices.map(i=>Number(x[i])||0);
-        const inner=localContributions(model,xx,classIdx);
-        for(const c of inner) add(indices[c.featureIndex]??c.featureIndex,scale*(Number(c.contribution)||0)/Math.max(1,(m.members||[]).length));
+        const artifact=member.artifact||{};
+        for(const stump of artifact.stumps||[]){
+          const localIdx=Number(stump.featureIndex);
+          const globalIdx=indices[localIdx];
+          if(globalIdx==null) continue;
+          const localValue=Number(x[globalIdx])||0;
+          const delta=localValue<=Number(stump.threshold)
+            ? stump.leftValue
+            : stump.rightValue;
+          const own=Number(delta?.[classIdx])||0;
+          const others=(delta||[]).filter((_,i)=>i!==classIdx).map(Number);
+          const baseline=others.length?others.reduce((a,b)=>a+b,0)/others.length:0;
+          add(globalIdx,scale*(own-baseline)/Math.max(1,members.length));
+        }
       }
       return;
     }
