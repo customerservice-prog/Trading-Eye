@@ -111,6 +111,10 @@ export class PaperBroker {
       FROM paper_fills WHERE account_id=$1
       ORDER BY created_at DESC LIMIT 100
     `,[this.accountId]);
+    const fillCount=await this.db.pool.query(
+      "SELECT COUNT(*)::int AS n FROM paper_fills WHERE account_id=$1",
+      [this.accountId]
+    );
 
     return {
       accountId:this.accountId,
@@ -121,6 +125,7 @@ export class PaperBroker {
       grossExposurePct:equity?gross/equity:0,
       autopilotEnabled:Boolean(account?.autopilot_enabled),
       fillModel:`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`,
+      fillCount:Number(fillCount.rows[0]?.n)||0,
       positions:marked,
       fills:fills.rows.map(r=>({
         fillId:r.fill_id,orderId:r.order_id,symbol:r.symbol,side:r.side,qty:Number(r.qty),
