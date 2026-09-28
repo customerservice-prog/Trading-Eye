@@ -469,16 +469,16 @@ export class ModelLab {
   }
 
   async #trainingHistories(){
-    const meta=await this.db.listSymbolsWithMinuteHistory({minBars:1500,limit:48});
+    const meta=await this.db.listSymbolsWithMinuteHistory({minBars:600,limit:64});
     const histories=new Map();
     for(const row of meta){
       const live=this.marketEngine.histories.get(row.symbol);
-      if(live?.length>=1500){
+      if(live?.length>=600){
         histories.set(row.symbol,live);
         continue;
       }
       const bars=await this.db.getBars(row.symbol,{limit:26000});
-      if(bars.length>=1500) histories.set(row.symbol,bars);
+      if(bars.length>=600) histories.set(row.symbol,bars);
       await sleepTick();
     }
 
