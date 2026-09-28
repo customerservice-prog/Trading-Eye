@@ -141,6 +141,43 @@ function featureAt(rows,index) {
   };
 }
 
+function dailyScanMetric(rows) {
+  const ordered=[...(rows||[])].sort((a,b)=>+new Date(a.t||a.ts)-+new Date(b.t||b.ts));
+  if (ordered.length<22) return null;
+  const n=ordered.length;
+  const close=i=>Number(ordered[i].c??ordered[i].close);
+  const high=i=>Number(ordered[i].h??ordered[i].high);
+  const low=i=>Number(ordered[i].l??ordered[i].low);
+  const volume=i=>Number(ordered[i].v??ordered[i].volume);
+  const last=n-1;
+  const returns=[];
+  for(let i=Math.max(1,n-20);i<n;i++) returns.push(pct(close(i),close(i-1)));
+  const priorVolumes=[];
+  const ranges=[];
+  for(let i=Math.max(0,n-21);i<n-1;i++) {
+    priorVolumes.push(volume(i));
+    ranges.push((high(i)-low(i))/Math.max(.000001,close(i)));
+  }
+  const avgVolume20=mean(priorVolumes);
+  const return1d=pct(close(last),close(last-1));
+  const return5d=pct(close(last),close(Math.max(0,last-5)));
+  const return20d=pct(close(last),close(Math.max(0,last-20)));
+  const relativeVolume=avgVolume20?volume(last)/avgVolume20:0;
+  const realizedVol20=std(returns)*Math.sqrt(252);
+  const avgRange20=mean(ranges);
+  const interestingScore=
+    Math.abs(return1d)/.02+
+    Math.abs(return5d)/.05+
+    Math.abs(return20d)/.10+
+    Math.max(0,relativeVolume-1)*.75+
+    realizedVol20/.45+
+    avgRange20/.03;
+  return {
+    close:close(last),return1d,return5d,return20d,avgVolume20,relativeVolume,
+    realizedVol20,avgRange20,interestingScore
+  };
+}
+
 function predictionSummary(rows) {
   const scored=rows.filter(x=>x.status==="SCORED");
   const correct=scored.filter(x=>x.correct).length;
@@ -229,6 +266,7 @@ export class DeepStudyEngine extends EventEmitter {
     this.running=false;
     this.lastStudy=null;
     this.patternState={state:"WAITING",patterns:0,lastBuiltAt:null,error:null};
+    this.universeState={state:"WAITING",scanDate:null,assetsScanned:0,dailyBars:0,candidates:0,error:null};
     this.timer=null;
     this.initialized=false;
   }
@@ -246,7 +284,8 @@ export class DeepStudyEngine extends EventEmitter {
     return {
       running:this.running,
       lastStudy:this.lastStudy,
-      patternState:this.patternState
+      patternState:this.patternState,
+      universeState:this.universeState
     };
   }
 
@@ -276,6 +315,26 @@ export class DeepStudyEngine extends EventEmitter {
     const today=`${p.year}-${p.month}-${p.day}`;
     const minute=Number(p.hour)*60+Number(p.minute);
 
+    let scanDate=today;
+    if (!isWeekday(scanDate) || minute<16*60+20) {
+      do { scanDate=addDays(scanDate,-1); } while(!isWeekday(scanDate));
+    }
+    if (!(await this.db.universeScanComplete(scanDate)) && this.universeState.state!=="RUNNING") {
+      await this.runUniverseScan(scanDate);
+    } else if (await this.db.universeScanComplete(scanDate)) {
+      const latestScan=await this.db.latestUniverseScan();
+      if (latestScan) {
+        this.universeState={
+          state:latestScan.status,
+          scanDate:String(latestScan.scan_date).slice(0,10),
+          assetsScanned:Number(latestScan.assets_scanned)||0,
+          dailyBars:Number(latestScan.daily_bars)||0,
+          candidates:Number(latestScan.candidates)||0,
+          error:latestScan.error||null
+        };
+      }
+    }
+
     const candidates=[];
     if (isWeekday(today) && minute>=16*60+10) candidates.push({date:today,stage:"regular_close"});
     if (isWeekday(today) && minute>=20*60+10) candidates.push({date:today,stage:"extended_close"});
@@ -294,6 +353,74 @@ export class DeepStudyEngine extends EventEmitter {
       await this.runStudy(c.date,c.stage);
       break;
     }
+  }
+
+  async runUniverseScan(scanDate) {
+    this.universeState={state:"RUNNING",scanDate,assetsScanned:0,dailyBars:0,candidates:0,error:null};
+    this.emit("status",this.status());
+    await this.db.beginUniverseScan(scanDate);
+    try {
+      const assets=await this.db.listActiveAssets({limit:20000,dataSupportedOnly:true});
+      const start=new Date(addDays(scanDate,-180)+"T00:00:00Z");
+      const end=new Date(addDays(scanDate,1)+"T23:59:59Z");
+      let assetsScanned=0,dailyBars=0;
+
+      for (let offset=0;offset<assets.length;offset+=100) {
+        const chunk=assets.slice(offset,offset+100);
+        const bySymbol=new Map(chunk.map(a=>[a.symbol,[]]));
+        const persisted=[];
+
+        await this.marketEngine.provider.historicalBarsForSymbols({
+          symbols:chunk.map(a=>a.symbol),start,end,timeframe:"1Day",limit:10000,
+          onPage:async barsBySymbol=>{
+            for (const [symbol,rows] of Object.entries(barsBySymbol)) {
+              if (!bySymbol.has(symbol)) bySymbol.set(symbol,[]);
+              bySymbol.get(symbol).push(...rows);
+              for (const r of rows) {
+                persisted.push({
+                  provider:"alpaca",feed:this.marketEngine.provider.historicalFeed||"iex",
+                  symbol,day:new Date(r.t).toISOString().slice(0,10),
+                  open:r.o,high:r.h,low:r.l,close:r.c,volume:r.v,
+                  tradeCount:r.n??null,vwap:r.vw??null
+                });
+              }
+            }
+          }
+        });
+
+        await this.db.upsertDailyBarsBatch(persisted);
+        dailyBars+=persisted.length;
+
+        const results=[];
+        for (const asset of chunk) {
+          const metric=dailyScanMetric(bySymbol.get(asset.symbol)||[]);
+          if (metric) results.push({symbol:asset.symbol,...metric});
+        }
+        await this.db.saveUniverseScanResults(scanDate,results);
+        assetsScanned+=chunk.length;
+
+        this.universeState={state:"RUNNING",scanDate,assetsScanned,dailyBars,candidates:0,error:null};
+        if (offset%500===0) {
+          console.log(JSON.stringify({event:"universe_scan_progress",scanDate,assetsScanned,dailyBars}));
+          this.emit("status",this.status());
+        }
+      }
+
+      const top=await this.db.topUniverseCandidates(scanDate,{limit:24});
+      await this.marketEngine.setAutoCandidates(top.map(x=>x.symbol),{backfillDays:3});
+      await this.db.completeUniverseScan(scanDate,{
+        assetsScanned,dailyBars,candidates:top.length
+      });
+      this.universeState={state:"COMPLETE",scanDate,assetsScanned,dailyBars,candidates:top.length,error:null};
+      console.log(JSON.stringify({
+        event:"universe_scan_complete",scanDate,assetsScanned,dailyBars,candidates:top.length
+      }));
+    } catch(err) {
+      this.universeState={...this.universeState,state:"ERROR",error:String(err?.message||err)};
+      await this.db.failUniverseScan(scanDate,this.universeState.error);
+      console.log(JSON.stringify({event:"universe_scan_error",scanDate,message:this.universeState.error}));
+    }
+    this.emit("status",this.status());
   }
 
   async runStudy(studyDate,stage="regular_close") {
