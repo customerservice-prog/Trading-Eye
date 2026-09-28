@@ -13,7 +13,8 @@ export class RealMarketEngine extends EventEmitter {
     this.enabled=enabled;
     this.coreSymbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))];
     this.pinnedSymbols=new Set(this.coreSymbols);
-    this.symbols=[...this.coreSymbols];
+    this.liveSymbolLimit=this.provider.maxSymbols||28;
+    this.symbols=[...this.coreSymbols].slice(0,this.liveSymbolLimit);
     this.hotLastUsed=new Map(this.symbols.map(s=>[s,Date.now()]));
     this.backfillDays=backfillDays;
     this.predictEvery=predictEvery;
@@ -73,14 +74,14 @@ export class RealMarketEngine extends EventEmitter {
     return [...this.symbols];
   }
 
-  async activateSymbol(symbol,{backfill=true,pin=true}={}) {
+  async activateSymbol(symbol,{backfill=true,pin=false}={}) {
     symbol=String(symbol||"").trim().toUpperCase();
     if (!symbol) throw new Error("Symbol required");
     this.hotLastUsed.set(symbol,Date.now());
     if (pin) this.pinnedSymbols.add(symbol);
 
     if (!this.symbols.includes(symbol)) {
-      if (this.symbols.length>=30) {
+      if (this.symbols.length>=this.liveSymbolLimit) {
         const removable=this.symbols
           .filter(s=>!this.pinnedSymbols.has(s))
           .sort((a,b)=>(this.hotLastUsed.get(a)||0)-(this.hotLastUsed.get(b)||0));
@@ -96,7 +97,7 @@ export class RealMarketEngine extends EventEmitter {
       this.symbols.push(symbol);
       this.histories.set(symbol,[]);
       this.barCounters.set(symbol,0);
-      this.provider.setSymbols(this.symbols);
+      this.symbols=this.provider.setSymbols(this.symbols);
     }
 
     const existing=this.histories.get(symbol)||[];
@@ -111,16 +112,16 @@ export class RealMarketEngine extends EventEmitter {
     const pinned=[...this.pinnedSymbols];
     const target=[...pinned];
     for (const symbol of unique) {
-      if (target.length>=30) break;
+      if (target.length>=this.liveSymbolLimit) break;
       if (!target.includes(symbol)) target.push(symbol);
     }
-    this.symbols=target.slice(0,30);
+    this.symbols=target.slice(0,this.liveSymbolLimit);
     for (const symbol of this.symbols) {
       if (!this.histories.has(symbol)) this.histories.set(symbol,[]);
       if (!this.barCounters.has(symbol)) this.barCounters.set(symbol,0);
       this.hotLastUsed.set(symbol,this.hotLastUsed.get(symbol)||Date.now());
     }
-    this.provider.setSymbols(this.symbols);
+    this.symbols=this.provider.setSymbols(this.symbols);
     await this.#backfillSymbols(this.symbols.filter(s=>(this.histories.get(s)||[]).length<120),backfillDays);
     console.log(JSON.stringify({event:"auto_hot_set_updated",symbols:this.symbols}));
     return this.hotSymbols();
@@ -252,6 +253,10 @@ export class RealMarketEngine extends EventEmitter {
   }
 
   #onProviderStatus(status) {
+    if (status.state==="LIMIT_ADJUSTED" && Array.isArray(status.symbols)) {
+      this.liveSymbolLimit=Number(status.maxSymbols)||status.symbols.length||this.liveSymbolLimit;
+      this.symbols=[...status.symbols];
+    }
     this.providerStatus={...status,at:new Date().toISOString()};
     console.log(JSON.stringify({
       event:"provider_status",
@@ -503,6 +508,7 @@ export class RealMarketEngine extends EventEmitter {
       symbols:this.symbols,
       coreSymbols:this.coreSymbols,
       pinnedSymbols:[...this.pinnedSymbols],
+      liveSymbolLimit:this.liveSymbolLimit,
       lastEventAt:this.lastEventAt,
       lastBarAt:this.lastBarAt,
       backfill:this.backfill,
