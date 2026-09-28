@@ -13,6 +13,7 @@ const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
 const FEED=(process.env.ALPACA_FEED || "auto").trim().toLowerCase();
 const HISTORICAL_FEED=(process.env.ALPACA_HISTORICAL_FEED || "iex").trim().toLowerCase();
 const BACKFILL_DAYS=Math.max(1,Math.min(365,Number(process.env.BACKFILL_DAYS || 30)));
+const LIVE_SYMBOL_LIMIT=Math.max(5,Math.min(30,Number(process.env.ALPACA_LIVE_SYMBOL_LIMIT || 28)));
 const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowerCase() === "true";
 
 const db=new Database(process.env.DATABASE_URL);
@@ -30,6 +31,7 @@ const provider=new AlpacaProvider({
   secret:process.env.ALPACA_API_SECRET_KEY,
   feed:FEED,
   historicalFeed:HISTORICAL_FEED,
+  maxSymbols:LIVE_SYMBOL_LIMIT,
   symbols:SYMBOLS
 });
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
@@ -54,6 +56,7 @@ app.get("/health",async(req,res)=>{
     feedMode:FEED,
     historicalFeed:HISTORICAL_FEED,
     mode:"REAL_DATA_ONLY",
+    marketScope:"US_EQUITIES_ONLY",
     engineEnabled:s.engineEnabled,
     deepStudy:deepStudy.status(),
     lastEventAt:s.lastEventAt,
@@ -78,10 +81,15 @@ app.get("/api/assets/search",async(req,res)=>{
 app.post("/api/activate/:symbol",async(req,res)=>{
   const symbol=String(req.params.symbol||"").trim().toUpperCase();
   const asset=await universe.get(symbol);
-  if (!asset || asset.status!=="active") return res.status(404).json({error:"Unknown or inactive US equity"});
-  if (!asset.data_supported) return res.status(400).json({error:"This symbol is not available on the current free Alpaca data feed",asset});
+  if (!asset || asset.status!=="active" || asset.asset_class!=="us_equity") {
+    return res.status(404).json({error:"Unknown or inactive U.S. equity"});
+  }
+  if (!asset.data_supported || String(asset.exchange||"").toUpperCase()==="OTC") {
+    return res.status(400).json({error:"This U.S. symbol is not available on the current free Alpaca feed",asset});
+  }
   try {
-    const hot=await engine.activateSymbol(symbol,{backfill:true});
+    const pin=String(req.query.pin||"false").toLowerCase()==="true";
+    const hot=await engine.activateSymbol(symbol,{backfill:true,pin});
     res.json({ok:true,asset,...hot});
   } catch(err) {
     res.status(400).json({error:String(err?.message||err)});
@@ -179,7 +187,8 @@ wss.on("connection",ws=>{
 server.listen(PORT,"0.0.0.0",()=>{
   console.log(JSON.stringify({
     event:"server_started",port:PORT,mode:"REAL_DATA_ONLY",
-    provider:"alpaca",feed:provider.feed,feedMode:FEED,symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED
+    provider:"alpaca",feed:provider.feed,feedMode:FEED,marketScope:"US_EQUITIES_ONLY",
+    liveSymbolLimit:LIVE_SYMBOL_LIMIT,symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED
   }));
 });
 
