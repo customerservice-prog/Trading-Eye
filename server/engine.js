@@ -89,7 +89,8 @@ export class RealMarketEngine extends EventEmitter {
     if (pin) this.pinnedSymbols.add(symbol);
 
     if (!this.symbols.includes(symbol)) {
-      if (this.symbols.length>=this.liveSymbolLimit) {
+      const currentLimit=this.provider.currentSymbolLimit?.()||this.liveSymbolLimit;
+      if (this.symbols.length>=currentLimit) {
         const removable=this.symbols
           .filter(s=>!this.pinnedSymbols.has(s))
           .sort((a,b)=>(this.hotLastUsed.get(a)||0)-(this.hotLastUsed.get(b)||0));
