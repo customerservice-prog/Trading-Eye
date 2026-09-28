@@ -259,7 +259,15 @@ function renderAI() {
     reasons.innerHTML=`<div class="reason-item"><span class="reason-dot mixed"></span><div class="reason-copy"><strong>No synthetic fallback</strong><span>${status?.configured?"Waiting for sufficient real market history.":"Add real provider credentials to begin ingestion."}</span></div><span class="reason-value">—</span></div>`;
     return;
   }
-  for (const c of a.contributions.slice(0,5)) {
+  const broad=scannerData.regime||null;
+  if (broad?.regime) {
+    const item=document.createElement("div");
+    item.className="reason-item";
+    item.innerHTML=`<span class="reason-dot mixed"></span><div class="reason-copy"><strong>Broad U.S. market regime</strong><span>${String(broad.regime).replaceAll("_"," ")} from the completed whole-market scan dated ${broad.scan_date}.</span></div><span class="reason-value">${Math.round(Number(broad.confidence||0)*100)}%</span>`;
+    reasons.appendChild(item);
+  }
+
+  for (const c of a.contributions.slice(0,4)) {
     const label=FEATURE_LABELS[c.key] || {title:c.key,positive:"Positive contribution.",negative:"Negative contribution."};
     const statusClass=Math.abs(c.contribution)<.08?"mixed":c.contribution>0?"good":"bad";
     const explanation=simpleReasons
