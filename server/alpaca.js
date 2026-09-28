@@ -3,14 +3,19 @@ import WebSocket from "ws";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 export class AlpacaProvider {
-  constructor({key,secret,feed="auto",historicalFeed="iex",symbols=[],maxSymbols=28,onEvent=()=>{},onStatus=()=>{}}) {
+  constructor({
+    key,secret,feed="auto",historicalFeed="sip",symbols=[],
+    maxSymbols=28,overnightMaxSymbols=14,onEvent=()=>{},onStatus=()=>{}
+  }) {
     this.key=key;
     this.secret=secret;
     this.feedMode=feed;
     this.historicalFeed=historicalFeed;
     this.feed=this.#desiredFeed();
     this.maxSymbols=Math.max(5,Math.min(30,Number(maxSymbols)||28));
-    this.symbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))].slice(0,this.maxSymbols);
+    this.overnightMaxSymbols=Math.max(5,Math.min(this.maxSymbols,Number(overnightMaxSymbols)||14));
+    this.requestedSymbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))].slice(0,this.maxSymbols);
+    this.symbols=this.requestedSymbols.slice(0,this.#effectiveLimit());
     this.subscribedSymbols=new Set();
     this.onEvent=onEvent;
     this.onStatus=onStatus;
@@ -43,6 +48,15 @@ export class AlpacaProvider {
     return overnight?"overnight":"iex";
   }
 
+  #effectiveLimit() {
+    return this.feed==="overnight"?this.overnightMaxSymbols:this.maxSymbols;
+  }
+
+  #applyFeedCapacity() {
+    this.symbols=this.requestedSymbols.slice(0,this.#effectiveLimit());
+    return this.symbols;
+  }
+
   #streamUrl(feed) {
     const version=["overnight","boats"].includes(feed)?"v1beta1":"v2";
     return `wss://stream.data.alpaca.markets/${version}/${feed}`;
@@ -62,11 +76,13 @@ export class AlpacaProvider {
       if (desired!==this.feed) {
         this.onStatus({state:"SWITCHING",provider:"alpaca",feed:this.feed,nextFeed:desired});
         this.feed=desired;
+        this.#applyFeedCapacity();
         try { this.ws?.close(1000,"session switch"); } catch {}
       }
     },30000);
     while (!this.stopped) {
       this.feed=this.#desiredFeed();
+      this.#applyFeedCapacity();
       try {
         await this.#connectOnce();
       } catch (err) {
@@ -125,18 +141,27 @@ export class AlpacaProvider {
               bars:this.symbols
             }));
             this.subscribedSymbols=new Set(this.symbols);
-            this.onStatus({state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols});
+            this.onStatus({
+              state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols,
+              symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols
+            });
             continue;
           }
           if (msg.T==="error") {
             const code=Number(msg.code);
             this.onStatus({state:"ERROR",provider:"alpaca",feed:this.feed,error:msg.msg || "Alpaca stream error",code});
             if (code===405 && this.symbols.length>5) {
-              this.maxSymbols=Math.max(5,Math.min(this.maxSymbols-2,this.symbols.length-1));
-              this.symbols=this.symbols.slice(0,this.maxSymbols);
+              if (this.feed==="overnight") {
+                this.overnightMaxSymbols=Math.max(5,Math.min(this.overnightMaxSymbols-1,this.symbols.length-1));
+              } else {
+                this.maxSymbols=Math.max(5,Math.min(this.maxSymbols-1,this.symbols.length-1));
+              }
+              this.#applyFeedCapacity();
               this.onStatus({
                 state:"LIMIT_ADJUSTED",provider:"alpaca",feed:this.feed,code,
-                maxSymbols:this.maxSymbols,symbols:this.symbols
+                maxSymbols:this.maxSymbols,overnightMaxSymbols:this.overnightMaxSymbols,
+                symbolLimit:this.#effectiveLimit(),symbols:this.symbols,
+                requestedSymbols:this.requestedSymbols
               });
               try { ws.close(1000,"symbol limit retry"); } catch {}
             } else if ([402,404,406,409].includes(code)) {
@@ -170,7 +195,8 @@ export class AlpacaProvider {
   }
 
   setSymbols(symbols) {
-    const next=[...new Set(symbols.map(s=>String(s).toUpperCase()).filter(Boolean))].slice(0,this.maxSymbols);
+    this.requestedSymbols=[...new Set(symbols.map(s=>String(s).toUpperCase()).filter(Boolean))].slice(0,this.maxSymbols);
+    const next=this.requestedSymbols.slice(0,this.#effectiveLimit());
     const current=new Set(this.symbols);
     const add=next.filter(s=>!current.has(s));
     const remove=this.symbols.filter(s=>!next.includes(s));
@@ -184,7 +210,10 @@ export class AlpacaProvider {
         this.ws.send(JSON.stringify({action:"subscribe",trades:add,quotes:add,bars:add}));
         add.forEach(s=>this.subscribedSymbols.add(s));
       }
-      this.onStatus({state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols});
+      this.onStatus({
+        state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols,
+        symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols
+      });
     }
     return this.symbols;
   }
