@@ -1,0 +1,367 @@
+import crypto from "node:crypto";
+
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+export class PaperBroker {
+  constructor({
+    db,marketEngine,accountId="TE_PAPER_MAIN",startingCash=100000,
+    fillBufferBps=1.5,maxPositionPct=.10,maxGrossPct=.50,maxPositions=6,
+    dailyLossPct=.03,autopilotMinConfidence=.50,autopilotMinEdge=.07
+  }){
+    this.db=db;
+    this.marketEngine=marketEngine;
+    this.accountId=accountId;
+    this.startingCash=startingCash;
+    this.fillBufferBps=fillBufferBps;
+    this.maxPositionPct=maxPositionPct;
+    this.maxGrossPct=maxGrossPct;
+    this.maxPositions=maxPositions;
+    this.dailyLossPct=dailyLossPct;
+    this.autopilotMinConfidence=autopilotMinConfidence;
+    this.autopilotMinEdge=autopilotMinEdge;
+    this.snapshotTimer=null;
+    this.processing=new Set();
+  }
+
+  async init(){
+    await this.db.pool.query(`
+      INSERT INTO paper_accounts(account_id,starting_cash,cash,realized_pnl,autopilot_enabled)
+      VALUES($1,$2,$2,0,true)
+      ON CONFLICT(account_id) DO NOTHING
+    `,[this.accountId,this.startingCash]);
+    this.snapshotTimer=setInterval(()=>this.recordEquitySnapshot().catch(()=>{}),5*60*1000);
+    await this.recordEquitySnapshot().catch(()=>{});
+  }
+
+  stop(){ clearInterval(this.snapshotTimer); }
+
+  #marketState(symbol){
+    const q=this.marketEngine.latestQuotes.get(symbol)||null;
+    const trades=this.marketEngine.latestTrades.get(symbol)||[];
+    const rows=this.marketEngine.histories.get(symbol)||[];
+    const bar=rows.at(-1)||null;
+    const bid=Number(q?.bidPrice),ask=Number(q?.askPrice);
+    const midpoint=Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>0?(bid+ask)/2:null;
+    const lastTrade=trades.length?Number(trades[0].price):null;
+    const barClose=bar?Number(bar.close):null;
+    return {
+      quote:q,
+      bid:Number.isFinite(bid)&&bid>0?bid:null,
+      ask:Number.isFinite(ask)&&ask>0?ask:null,
+      midpoint,
+      lastTrade:Number.isFinite(lastTrade)&&lastTrade>0?lastTrade:null,
+      barClose:Number.isFinite(barClose)&&barClose>0?barClose:null,
+      mark:midpoint??lastTrade??barClose??null
+    };
+  }
+
+  #freshQuote(symbol,maxAgeMs=120000){
+    const s=this.#marketState(symbol);
+    if(!s.quote||!s.bid||!s.ask) return null;
+    const ts=+new Date(s.quote.ts);
+    if(!Number.isFinite(ts)||Date.now()-ts>maxAgeMs) return null;
+    return s;
+  }
+
+  async #account(){
+    const q=await this.db.pool.query(
+      "SELECT * FROM paper_accounts WHERE account_id=$1",
+      [this.accountId]
+    );
+    return q.rows[0]||null;
+  }
+
+  async #positions(){
+    const q=await this.db.pool.query(
+      "SELECT * FROM paper_positions WHERE account_id=$1 ORDER BY symbol",
+      [this.accountId]
+    );
+    return q.rows;
+  }
+
+  async snapshot(){
+    const account=await this.#account();
+    const positions=await this.#positions();
+    const marked=positions.map(p=>{
+      const market=this.#marketState(p.symbol);
+      const mark=market.mark??Number(p.avg_price);
+      const qty=Number(p.qty);
+      const avg=Number(p.avg_price);
+      return {
+        symbol:p.symbol,
+        qty,
+        avgPrice:avg,
+        mark,
+        marketSource:market.midpoint!=null?"MIDPOINT":market.lastTrade!=null?"LAST_TRADE":"LAST_BAR",
+        pnl:(mark-avg)*qty,
+        openedAt:p.opened_at,
+        updatedAt:p.updated_at
+      };
+    });
+    const cash=Number(account?.cash)||0;
+    const positionValue=marked.reduce((s,p)=>s+p.qty*p.mark,0);
+    const openPnl=marked.reduce((s,p)=>s+p.pnl,0);
+    const equity=cash+positionValue;
+    const gross=marked.reduce((s,p)=>s+Math.abs(p.qty*p.mark),0);
+
+    const fills=await this.db.pool.query(`
+      SELECT fill_id,order_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model,created_at
+      FROM paper_fills WHERE account_id=$1
+      ORDER BY created_at DESC LIMIT 100
+    `,[this.accountId]);
+
+    return {
+      accountId:this.accountId,
+      startingCash:Number(account?.starting_cash)||this.startingCash,
+      cash,equity,openPnl,
+      realizedPnl:Number(account?.realized_pnl)||0,
+      grossExposure:gross,
+      grossExposurePct:equity?gross/equity:0,
+      autopilotEnabled:Boolean(account?.autopilot_enabled),
+      fillModel:`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`,
+      positions:marked,
+      fills:fills.rows.map(r=>({
+        fillId:r.fill_id,orderId:r.order_id,symbol:r.symbol,side:r.side,qty:Number(r.qty),
+        fillPrice:Number(r.fill_price),marketBid:r.market_bid==null?null:Number(r.market_bid),
+        marketAsk:r.market_ask==null?null:Number(r.market_ask),quoteTs:r.quote_ts,
+        fillModel:r.fill_model,createdAt:r.created_at
+      }))
+    };
+  }
+
+  async setAutopilot(enabled){
+    await this.db.pool.query(`
+      UPDATE paper_accounts SET autopilot_enabled=$2,updated_at=NOW()
+      WHERE account_id=$1
+    `,[this.accountId,Boolean(enabled)]);
+    return this.snapshot();
+  }
+
+  async suggestedQty(symbol,{positionPct=.05}={}){
+    const state=await this.snapshot();
+    const market=this.#marketState(symbol);
+    const price=market.ask??market.mark;
+    if(!price) return 0;
+    const notional=Math.max(250,state.equity*clamp(positionPct,.005,this.maxPositionPct));
+    return Math.max(1,Math.floor(notional/price));
+  }
+
+  async submitMarketOrder({symbol,side,qty,source="MANUAL_PAPER",modelId=null}){
+    symbol=String(symbol||"").toUpperCase();
+    side=String(side||"").toUpperCase();
+    qty=Math.max(1,Math.floor(Number(qty)||0));
+    if(!symbol||!["BUY","SELL"].includes(side)||!qty) throw new Error("Invalid paper order");
+
+    const lockKey=symbol;
+    if(this.processing.has(lockKey)) throw new Error("Paper order already processing for "+symbol);
+    this.processing.add(lockKey);
+    try{
+      const market=this.#freshQuote(symbol);
+      if(!market) return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"NO_FRESH_TOP_OF_BOOK"});
+
+      const buffer=this.fillBufferBps/10000;
+      const fillPrice=side==="BUY"?market.ask*(1+buffer):market.bid*(1-buffer);
+      const quoteTs=new Date(market.quote.ts);
+      const snapshot=await this.snapshot();
+      const old=snapshot.positions.find(p=>p.symbol===symbol)||null;
+      const oldQty=Number(old?.qty)||0;
+      const signed=side==="BUY"?qty:-qty;
+      const newQty=oldQty+signed;
+      const isOpening=!oldQty&&newQty;
+      const isIncreasing=!oldQty||Math.sign(oldQty)===Math.sign(signed);
+      const asset=await this.db.findAsset(symbol);
+
+      if(newQty<0 && !asset?.shortable){
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"SYMBOL_NOT_SHORTABLE"});
+      }
+      if(isOpening && snapshot.positions.length>=this.maxPositions){
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"MAX_POSITIONS"});
+      }
+
+      const prospectiveNotional=Math.abs(newQty*fillPrice);
+      if(isIncreasing && prospectiveNotional>snapshot.equity*this.maxPositionPct){
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"MAX_POSITION_EXPOSURE"});
+      }
+      const oldNotional=Math.abs(oldQty*(old?.mark||fillPrice));
+      const grossAfter=snapshot.grossExposure-oldNotional+prospectiveNotional;
+      if(isIncreasing && grossAfter>snapshot.equity*this.maxGrossPct){
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"MAX_GROSS_EXPOSURE"});
+      }
+      if(side==="BUY" && signed>0 && oldQty>=0 && fillPrice*qty>snapshot.cash){
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"INSUFFICIENT_CASH"});
+      }
+      if(snapshot.equity<=snapshot.startingCash*(1-this.dailyLossPct)){
+        await this.setAutopilot(false);
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"PAPER_LOSS_LIMIT"});
+      }
+
+      return await this.#fillOrder({
+        symbol,side,qty,fillPrice,market,quoteTs,source,modelId,oldQty,
+        oldAvg:Number(old?.avgPrice)||0
+      });
+    }finally{
+      this.processing.delete(lockKey);
+    }
+  }
+
+  async #rejectOrder({symbol,side,qty,source,modelId,reason}){
+    const orderId="PO-"+crypto.randomUUID();
+    await this.db.pool.query(`
+      INSERT INTO paper_orders(
+        order_id,account_id,symbol,side,qty,status,source,model_id,reference_quote,reject_reason
+      ) VALUES($1,$2,$3,$4,$5,'REJECTED',$6,$7,'{}'::jsonb,$8)
+    `,[orderId,this.accountId,symbol,side,qty,source,modelId,reason]);
+    return {ok:false,orderId,status:"REJECTED",reason};
+  }
+
+  async #fillOrder({symbol,side,qty,fillPrice,market,quoteTs,source,modelId,oldQty,oldAvg}){
+    const orderId="PO-"+crypto.randomUUID();
+    const fillId="PF-"+crypto.randomUUID();
+    const signed=side==="BUY"?qty:-qty;
+    const newQty=oldQty+signed;
+    let realized=0;
+    let newAvg=oldAvg;
+
+    if(!oldQty || Math.sign(oldQty)===Math.sign(signed)){
+      const oldNotional=Math.abs(oldQty)*oldAvg;
+      const addNotional=Math.abs(signed)*fillPrice;
+      newAvg=(oldNotional+addNotional)/Math.max(1,Math.abs(newQty));
+    }else{
+      const closingQty=Math.min(Math.abs(oldQty),Math.abs(signed));
+      realized=(fillPrice-oldAvg)*closingQty*Math.sign(oldQty);
+      if(newQty===0) newAvg=0;
+      else if(Math.sign(newQty)!==Math.sign(oldQty)) newAvg=fillPrice;
+      else newAvg=oldAvg;
+    }
+
+    const client=await this.db.pool.connect();
+    try{
+      await client.query("BEGIN");
+      await client.query(`
+        INSERT INTO paper_orders(
+          order_id,account_id,symbol,side,qty,status,source,model_id,requested_at,filled_at,reference_quote
+        ) VALUES($1,$2,$3,$4,$5,'FILLED',$6,$7,NOW(),NOW(),$8::jsonb)
+      `,[
+        orderId,this.accountId,symbol,side,qty,source,modelId,
+        JSON.stringify({bid:market.bid,ask:market.ask,ts:market.quote.ts,bufferBps:this.fillBufferBps})
+      ]);
+
+      await client.query(`
+        INSERT INTO paper_fills(
+          fill_id,order_id,account_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      `,[
+        fillId,orderId,this.accountId,symbol,side,qty,fillPrice,
+        market.bid,market.ask,quoteTs,`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`
+      ]);
+
+      await client.query(`
+        UPDATE paper_accounts
+        SET cash=cash-$2,realized_pnl=realized_pnl+$3,updated_at=NOW()
+        WHERE account_id=$1
+      `,[this.accountId,signed*fillPrice,realized]);
+
+      if(newQty===0){
+        await client.query(
+          "DELETE FROM paper_positions WHERE account_id=$1 AND symbol=$2",
+          [this.accountId,symbol]
+        );
+      }else{
+        await client.query(`
+          INSERT INTO paper_positions(account_id,symbol,qty,avg_price,opened_at,updated_at)
+          VALUES($1,$2,$3,$4,NOW(),NOW())
+          ON CONFLICT(account_id,symbol) DO UPDATE SET
+            qty=EXCLUDED.qty,avg_price=EXCLUDED.avg_price,updated_at=NOW()
+        `,[this.accountId,symbol,newQty,newAvg]);
+      }
+      await client.query("COMMIT");
+    }catch(err){
+      await client.query("ROLLBACK");
+      throw err;
+    }finally{
+      client.release();
+    }
+
+    return {
+      ok:true,orderId,fillId,status:"FILLED",symbol,side,qty,
+      fillPrice,marketBid:market.bid,marketAsk:market.ask,quoteTs,
+      realized,fillModel:`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`
+    };
+  }
+
+  async flatten(symbol,{source="MANUAL_FLATTEN",modelId=null}={}){
+    const snap=await this.snapshot();
+    const pos=snap.positions.find(p=>p.symbol===String(symbol).toUpperCase());
+    if(!pos?.qty) return {ok:false,status:"NO_POSITION"};
+    return this.submitMarketOrder({
+      symbol:pos.symbol,
+      side:pos.qty>0?"SELL":"BUY",
+      qty:Math.abs(pos.qty),
+      source,modelId
+    });
+  }
+
+  async handlePrediction(prediction){
+    const account=await this.#account();
+    if(!account?.autopilot_enabled||!prediction) return;
+    if(prediction.noTrade) return;
+    if(Number(prediction.confidence)<this.autopilotMinConfidence) return;
+    if(Number(prediction.edge)<this.autopilotMinEdge) return;
+    if(!["UP","DOWN"].includes(prediction.direction)) return;
+
+    const snap=await this.snapshot();
+    const pos=snap.positions.find(p=>p.symbol===prediction.symbol);
+    const desired=prediction.direction==="UP"?1:-1;
+
+    if(pos){
+      if(Math.sign(pos.qty)!==desired){
+        await this.flatten(prediction.symbol,{source:"AI_PAPER_EXIT",modelId:prediction.modelId});
+      }
+      return;
+    }
+
+    const qty=await this.suggestedQty(prediction.symbol,{positionPct:.05});
+    if(!qty) return;
+    await this.submitMarketOrder({
+      symbol:prediction.symbol,
+      side:desired>0?"BUY":"SELL",
+      qty,
+      source:"AI_PAPER_ENTRY",
+      modelId:prediction.modelId
+    });
+  }
+
+  async onBar(bar){
+    if(!bar?.symbol) return;
+    const snap=await this.snapshot();
+    const pos=snap.positions.find(p=>p.symbol===bar.symbol);
+    if(!pos) return;
+
+    const ret=pos.qty>0
+      ? (Number(bar.close)-pos.avgPrice)/pos.avgPrice
+      : (pos.avgPrice-Number(bar.close))/pos.avgPrice;
+    const age=Date.now()-new Date(pos.openedAt).getTime();
+
+    if(ret<=-.005){
+      await this.flatten(bar.symbol,{source:"AI_PAPER_STOP"});
+    }else if(ret>=.009){
+      await this.flatten(bar.symbol,{source:"AI_PAPER_TARGET"});
+    }else if(age>=75*60*1000){
+      await this.flatten(bar.symbol,{source:"AI_PAPER_TIME_EXIT"});
+    }
+  }
+
+  async recordEquitySnapshot(){
+    const s=await this.snapshot();
+    await this.db.pool.query(`
+      INSERT INTO paper_equity_snapshots(
+        account_id,ts,equity,cash,open_pnl,realized_pnl,positions
+      ) VALUES($1,date_trunc('minute',NOW()),$2,$3,$4,$5,$6::jsonb)
+      ON CONFLICT(account_id,ts) DO UPDATE SET
+        equity=EXCLUDED.equity,cash=EXCLUDED.cash,open_pnl=EXCLUDED.open_pnl,
+        realized_pnl=EXCLUDED.realized_pnl,positions=EXCLUDED.positions
+    `,[
+      this.accountId,s.equity,s.cash,s.openPnl,s.realizedPnl,JSON.stringify(s.positions)
+    ]);
+  }
+}
