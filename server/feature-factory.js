@@ -221,7 +221,10 @@ export class FeatureFactory {
     };
   }
 
-  buildDataset(histories,{symbols=null,horizon=15,step=5,maxSamples=220000,sectorProxyBySymbol={},eventRiskBySymbol={}}={}){
+  buildDataset(histories,{
+    symbols=null,horizon=15,step=5,maxSamples=220000,
+    sectorProxyBySymbol={},eventRiskBySymbol={},excludeDaysBySymbol=new Map()
+  }={}){
     const examples=[];
     const chosen=symbols||[...histories.keys()];
     const contextMap=this.buildContextMap(histories,sectorProxyBySymbol);
@@ -230,6 +233,11 @@ export class FeatureFactory {
       if(rows.length<100) continue;
       for(let i=40;i<rows.length-horizon-1;i+=step){
         const ts=+new Date(rows[i].ts||rows[i].time);
+        const day=new Date(ts).toISOString().slice(0,10);
+        const excluded=excludeDaysBySymbol instanceof Map
+          ?excludeDaysBySymbol.get(symbol)?.has(day)
+          :excludeDaysBySymbol?.[symbol]?.includes?.(day);
+        if(excluded) continue;
         const base=contextMap.get(ts)||{};
         const sectorProxy=sectorProxyBySymbol[symbol]||null;
         const sectorRet5=sectorProxy
