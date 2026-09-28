@@ -385,9 +385,19 @@ export class MistakeLab extends EventEmitter {
     if(!isAlert&&!isWarn) return;
 
     const latest=this.modelLab.status?.().latestRun;
+    if(String(latest?.status||"").toUpperCase()==="RUNNING") return;
+
+    const latestReason=String(latest?.dataset?.reason||"");
+    const latestWasMistakeRun=latestReason.startsWith("mistake_lab_");
     const lastRunAt=latest?.startedAt?+new Date(latest.startedAt):0;
-    const lastRequest=Math.max(lastRunAt||0,this.lastRetrainRequestedAt||0);
-    const cooldown=isAlert?this.retrainCooldownMs:this.warnRetrainCooldownMs;
+
+    const cooldown=latestWasMistakeRun
+      ? (isAlert?this.retrainCooldownMs:this.warnRetrainCooldownMs)
+      : (isAlert?10*60*1000:60*60*1000);
+    const lastRequest=Math.max(
+      latestWasMistakeRun?(lastRunAt||0):0,
+      this.lastRetrainRequestedAt||0
+    );
     if(Date.now()-lastRequest<cooldown) return;
 
     this.lastRetrainRequestedAt=Date.now();
