@@ -225,6 +225,22 @@ function renderBeginnerCommandCenter() {
         ?"LIVE"
         : ageText(latestTs);
 
+  if ($("heroExploreEquity")) {
+    const ep=explorationData||{};
+    const eStarting=Number(ep.startingCash)||100000;
+    const eEquity=Number.isFinite(Number(ep.equity))?Number(ep.equity):eStarting;
+    const eGross=Number(ep.grossExposure)||0;
+    const ePositions=Array.isArray(ep.positions)?ep.positions:[];
+    const eMistakeLevel=String(mistakeData?.lastAnalysis?.guard?.level||modelLabData?.mistakeGuard?.level||"LEARNING").toUpperCase();
+
+    $("heroExploreEquity").textContent=money(eEquity);
+    $("heroExploreDeployed").textContent=`${money(eGross)} · ${Math.round(Number(ep.grossExposurePct||0)*100)}%`;
+    $("heroExploreOpen").textContent=num(ePositions.length);
+    $("heroExploreFills").textContent=num(ep.fillCount||0);
+    $("heroExploreMistakes").textContent=eMistakeLevel==="ALERT"?"BLOCKING":eMistakeLevel;
+    $("heroExploreMistakes").className=eMistakeLevel==="ALERT"?"negative":eMistakeLevel==="WARN"?"neutral":"positive";
+  }
+
   const jobs=Array.isArray(researchData.jobs)?researchData.jobs:[];
   const running=jobs.filter(j=>j.status==="RUNNING");
   $("beginnerResearchState").textContent=running.length?"WORKING":"MONITORING";
