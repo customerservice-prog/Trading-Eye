@@ -23,7 +23,8 @@ export class MistakeLab extends EventEmitter {
     db,modelLab,enabled=true,
     explorationAccountId="TE_PAPER_EXPLORATION_V1",
     analysisEveryMs=2*60*1000,
-    retrainCooldownMs=6*60*60*1000
+    retrainCooldownMs=6*60*60*1000,
+    warnRetrainCooldownMs=12*60*60*1000
   }={}){
     super();
     this.db=db;
@@ -32,6 +33,7 @@ export class MistakeLab extends EventEmitter {
     this.explorationAccountId=String(explorationAccountId||"TE_PAPER_EXPLORATION_V1");
     this.analysisEveryMs=analysisEveryMs;
     this.retrainCooldownMs=retrainCooldownMs;
+    this.warnRetrainCooldownMs=warnRetrainCooldownMs;
     this.timer=null;
     this.running=false;
     this.pendingScores=0;
@@ -357,20 +359,30 @@ export class MistakeLab extends EventEmitter {
   }
 
   async #maybeRetrain(guard){
-    if(guard.level!=="ALERT"||!this.modelLab||this.modelLab.training) return;
+    if(!this.modelLab||this.modelLab.training) return;
+
+    const isAlert=guard.level==="ALERT";
+    const isWarn=guard.level==="WARN"&&Number(guard.recentSamples)>=200;
+    if(!isAlert&&!isWarn) return;
+
     const latest=this.modelLab.status?.().latestRun;
     const lastRunAt=latest?.startedAt?+new Date(latest.startedAt):0;
     const lastRequest=Math.max(lastRunAt||0,this.lastRetrainRequestedAt||0);
-    if(Date.now()-lastRequest<this.retrainCooldownMs) return;
+    const cooldown=isAlert?this.retrainCooldownMs:this.warnRetrainCooldownMs;
+    if(Date.now()-lastRequest<cooldown) return;
+
     this.lastRetrainRequestedAt=Date.now();
+    const reason=isAlert?"mistake_lab_alert":"mistake_lab_warn_refresh";
     console.log(JSON.stringify({
       event:"mistake_lab_retrain_requested",
-      reason:guard.reason,
+      severity:guard.level,
+      reason,
       errorRate:guard.errorRate,
-      baselineErrorRate:guard.baselineErrorRate
+      baselineErrorRate:guard.baselineErrorRate,
+      recentSamples:guard.recentSamples
     }));
     setTimeout(()=>{
-      this.modelLab.trainNow("mistake_lab_alert")
+      this.modelLab.trainNow(reason)
         .catch(err=>this.#capture(err));
     },1000);
   }
