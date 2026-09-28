@@ -22,9 +22,9 @@ export class MistakeLab extends EventEmitter {
   constructor({
     db,modelLab,enabled=true,
     explorationAccountId="TE_PAPER_EXPLORATION_V1",
-    analysisEveryMs=2*60*1000,
-    retrainCooldownMs=6*60*60*1000,
-    warnRetrainCooldownMs=12*60*60*1000
+    analysisEveryMs=60*1000,
+    retrainCooldownMs=90*60*1000,
+    warnRetrainCooldownMs=3*60*60*1000
   }={}){
     super();
     this.db=db;
@@ -78,7 +78,7 @@ export class MistakeLab extends EventEmitter {
   async onPredictionScored(){
     if(!this.enabled) return;
     this.pendingScores++;
-    if(this.pendingScores>=10 && !this.running){
+    if(this.pendingScores>=5 && !this.running){
       this.pendingScores=0;
       setTimeout(()=>this.analyze().catch(err=>this.#capture(err)),250);
     }
