@@ -655,3 +655,19 @@ tbody tr:hover { background:#0a121c; }
   .paper-buttons { grid-template-columns:1fr; }
   .chart-callout { width:calc(100% - 26px); top:9px; }
 }
+
+.trade-btn:disabled,.switch-label input:disabled + .switch-ui {
+  opacity:.38;
+  cursor:not-allowed;
+  transform:none;
+}
+body[data-data-state="missing"] .chart-stage::before {
+  content:"REAL MARKET DATA NOT CONNECTED — NO PRICES WILL BE INVENTED";
+  position:absolute; z-index:7; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:min(520px,calc(100% - 40px)); padding:18px 20px;
+  border:1px solid rgba(244,190,93,.28); border-radius:10px;
+  background:rgba(11,15,23,.94); color:var(--amber);
+  font-size:11px; font-weight:900; letter-spacing:.06em; text-align:center;
+  box-shadow:0 18px 50px rgba(0,0,0,.34); pointer-events:none;
+}
+body[data-data-state="missing"] #marketChart { opacity:.28; }
