@@ -3,13 +3,14 @@ import WebSocket from "ws";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 export class AlpacaProvider {
-  constructor({key,secret,feed="auto",historicalFeed="iex",symbols=[],onEvent=()=>{},onStatus=()=>{}}) {
+  constructor({key,secret,feed="auto",historicalFeed="iex",symbols=[],maxSymbols=28,onEvent=()=>{},onStatus=()=>{}}) {
     this.key=key;
     this.secret=secret;
     this.feedMode=feed;
     this.historicalFeed=historicalFeed;
     this.feed=this.#desiredFeed();
-    this.symbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))].slice(0,30);
+    this.maxSymbols=Math.max(5,Math.min(30,Number(maxSymbols)||28));
+    this.symbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))].slice(0,this.maxSymbols);
     this.subscribedSymbols=new Set();
     this.onEvent=onEvent;
     this.onStatus=onStatus;
@@ -128,8 +129,17 @@ export class AlpacaProvider {
             continue;
           }
           if (msg.T==="error") {
-            this.onStatus({state:"ERROR",provider:"alpaca",feed:this.feed,error:msg.msg || "Alpaca stream error",code:msg.code});
-            if ([402,404,406,409].includes(Number(msg.code))) {
+            const code=Number(msg.code);
+            this.onStatus({state:"ERROR",provider:"alpaca",feed:this.feed,error:msg.msg || "Alpaca stream error",code});
+            if (code===405 && this.symbols.length>5) {
+              this.maxSymbols=Math.max(5,Math.min(this.maxSymbols-2,this.symbols.length-1));
+              this.symbols=this.symbols.slice(0,this.maxSymbols);
+              this.onStatus({
+                state:"LIMIT_ADJUSTED",provider:"alpaca",feed:this.feed,code,
+                maxSymbols:this.maxSymbols,symbols:this.symbols
+              });
+              try { ws.close(1000,"symbol limit retry"); } catch {}
+            } else if ([402,404,406,409].includes(code)) {
               try { ws.close(1000,"retry"); } catch {}
             }
             continue;
@@ -160,7 +170,7 @@ export class AlpacaProvider {
   }
 
   setSymbols(symbols) {
-    const next=[...new Set(symbols.map(s=>String(s).toUpperCase()).filter(Boolean))].slice(0,30);
+    const next=[...new Set(symbols.map(s=>String(s).toUpperCase()).filter(Boolean))].slice(0,this.maxSymbols);
     const current=new Set(this.symbols);
     const add=next.filter(s=>!current.has(s));
     const remove=this.symbols.filter(s=>!next.includes(s));
