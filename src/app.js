@@ -399,14 +399,14 @@ function renderLearning() {
 
   const production=modelLabData?.production||predictionData.modelLab?.production||null;
   const testAcc=production?.testMetrics?.accuracy;
-  const shadowBrier=production?.shadowMetrics?.brier;
+  const shadowBrier=production?.liveMetrics?.samples?production.liveMetrics.brier:null;
   $("historicalHoldoutAccuracy").textContent=testAcc==null?"No production model":pct(testAcc);
   $("learningUpdates").textContent=shadowBrier==null?"—":Number(shadowBrier).toFixed(4);
 
   if ($("modelLabSummary")) {
     const run=modelLabData?.latestRun||predictionData.modelLab?.latestRun||null;
     $("modelLabSummary").innerHTML=production
-      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · shadow Brier ${Number(production.shadowMetrics?.brier||0).toFixed(4)} · ${run?.promotionReason||"production locked until a challenger proves better"}`
+      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · live Brier ${production.liveMetrics?.samples?Number(production.liveMetrics.brier).toFixed(4):"collecting"} · ${run?.promotionReason||"production locked until a challenger proves better"}`
       : `<strong>Model Lab is building the first production model.</strong><br>Predictions stay on the legacy fallback until a challenger passes calibration, unseen-test and shadow guards.`;
   }
 
