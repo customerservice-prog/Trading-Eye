@@ -87,6 +87,9 @@ export class AlpacaProvider {
           }
           if (msg.T==="error") {
             this.onStatus({state:"ERROR",provider:"alpaca",feed:this.feed,error:msg.msg || "Alpaca stream error",code:msg.code});
+            if ([402,404,406,409].includes(Number(msg.code))) {
+              try { ws.close(1000,"retry"); } catch {}
+            }
             continue;
           }
           if (["t","q","b"].includes(msg.T)) {
