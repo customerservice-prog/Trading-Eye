@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { fingerprintFromFeatures, timeBucketET } from "./patterns.js";
+import { classifyMarketRegime } from "./regime.js";
 
 const pct=(a,b)=>b?(a-b)/b:0;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -526,6 +527,10 @@ export class DeepStudyEngine extends EventEmitter {
       }
 
       const deep=await this.runUniverseIntradayScan(scanDate,assets);
+      const regimeMetrics=await this.db.computeUniverseRegimeMetrics(scanDate);
+      const regime=classifyMarketRegime(regimeMetrics);
+      await this.db.saveMarketRegime(scanDate,regime);
+
       const liveCapacity=Math.max(1,this.marketEngine.liveSymbolLimit-this.marketEngine.pinnedSymbols.size);
       const top=await this.db.topUniverseCandidates(scanDate,{limit:liveCapacity});
       await this.marketEngine.setAutoCandidates(top.map(x=>x.symbol),{backfillDays:3});
@@ -536,11 +541,13 @@ export class DeepStudyEngine extends EventEmitter {
       this.universeState={
         state:"COMPLETE",scanDate,scanVersion:this.scanVersion,
         assetsScanned:assets.length,dailyBars,candidates:top.length,
-        deepAssets:deep.deepAssets,deepBars:deep.deepBars,error:null
+        deepAssets:deep.deepAssets,deepBars:deep.deepBars,
+        regime:regime.regime,regimeConfidence:regime.confidence,error:null
       };
       console.log(JSON.stringify({
         event:"universe_scan_complete",scanDate,assetsScanned:assets.length,dailyBars,
-        deepAssets:deep.deepAssets,deepBars:deep.deepBars,candidates:top.length
+        deepAssets:deep.deepAssets,deepBars:deep.deepBars,candidates:top.length,
+        regime:regime.regime,regimeConfidence:regime.confidence
       }));
     } catch(err) {
       this.universeState={...this.universeState,state:"ERROR",error:String(err?.message||err)};
