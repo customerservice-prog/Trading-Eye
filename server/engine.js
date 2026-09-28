@@ -23,6 +23,7 @@ export class RealMarketEngine extends EventEmitter {
     this.model=new OnlineModel(db);
     this.modelLab=null;
     this.paperBroker=null;
+    this.eventEngine=null;
     this.histories=new Map(this.symbols.map(s=>[s,[]]));
     this.latestQuotes=new Map();
     this.latestTrades=new Map();
@@ -75,9 +76,10 @@ export class RealMarketEngine extends EventEmitter {
     }
   }
 
-  attachIntelligence({modelLab=null,paperBroker=null}={}) {
+  attachIntelligence({modelLab=null,paperBroker=null,eventEngine=null}={}) {
     this.modelLab=modelLab;
     this.paperBroker=paperBroker;
+    this.eventEngine=eventEngine;
   }
 
   hotSymbols() {
@@ -701,9 +703,12 @@ export class RealMarketEngine extends EventEmitter {
     const confidence=blended.confidence;
     const sorted=[blended.pUp,blended.pFlat,blended.pDown].sort((a,b)=>b-a);
     const edge=(sorted[0]||0)-(sorted[1]||0);
-    const noTrade=learned
+    const eventRisk=this.eventEngine
+      ? await this.eventEngine.riskForSymbol(bar.symbol,createdAt).catch(()=>({risk:0,blocked:false,elevated:false,events:[]}))
+      : {risk:0,blocked:false,elevated:false,events:[]};
+    const noTrade=(learned
       ? Boolean(learned.noTrade||confidence<.46||edge<.055)
-      : confidence<.52||edge<.07;
+      : confidence<.52||edge<.07) || Boolean(eventRisk.blocked);
 
     const p={
       id,symbol:bar.symbol,provider:"alpaca",feed:this.provider.feed,
@@ -713,7 +718,8 @@ export class RealMarketEngine extends EventEmitter {
       features:{
         ...features,
         pattern:patternInsight,
-        ml:learned?{family:learned.family,edge:learned.edge,noTrade:learned.noTrade}:null
+        ml:learned?{family:learned.family,edge:learned.edge,noTrade:learned.noTrade}:null,
+        eventRisk
       },
       modelVersion,
       modelId,
@@ -721,6 +727,7 @@ export class RealMarketEngine extends EventEmitter {
         family:learned.family,
         edge,
         noTrade,
+        eventRisk,
         test:learned.metrics?.test||null,
         shadow:learned.metrics?.shadow||null
       }:{family:"legacy_online",edge,noTrade}
