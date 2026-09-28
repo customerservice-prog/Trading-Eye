@@ -14,6 +14,7 @@ export const MODEL_FEATURES=[
   "vwapDist","ma5Dist","ma20Dist","maCross",
   "high20Dist","low20Dist","rangeCompression",
   "trendSlope10","trendSlope30","closeLocation",
+  "spyRet5","qqqRet5","breadth5","relativeSpy5","relativeQqq5",
   "timeSin","timeCos"
 ];
 
@@ -42,7 +43,7 @@ function slope(values){
 }
 
 export class FeatureFactory {
-  extract(rows,index=rows.length-1){
+  extract(rows,index=rows.length-1,context={}){
     if(!Array.isArray(rows) || index<35 || !rows[index]) return null;
     const last=rows[index];
     const c=n=>Number(rows[index-n]?.close);
@@ -120,10 +121,65 @@ export class FeatureFactory {
       trendSlope10:clamp((slope(closes.slice(-10))/close)/0.004,-3,3),
       trendSlope30:clamp((slope(closes.slice(-30))/close)/0.002,-3,3),
       closeLocation:clamp(((close-lo20)/Math.max(hi20-lo20,close*1e-6))*2-1,-1,1),
+      spyRet5:clamp((Number(context.spyRet5)||0)/0.025,-3,3),
+      qqqRet5:clamp((Number(context.qqqRet5)||0)/0.03,-3,3),
+      breadth5:clamp(Number(context.breadth5)||0,-1,1),
+      relativeSpy5:clamp((pct(close,c(5))-(Number(context.spyRet5)||0))/0.025,-3,3),
+      relativeQqq5:clamp((pct(close,c(5))-(Number(context.qqqRet5)||0))/0.03,-3,3),
       timeSin:Math.sin(angle),
       timeCos:Math.cos(angle)
     };
     return feature;
+  }
+
+  buildContextMap(histories){
+    const accum=new Map();
+    const core={SPY:new Map(),QQQ:new Map()};
+    for(const [symbol,rows] of histories.entries()){
+      if(!Array.isArray(rows)||rows.length<6) continue;
+      for(let i=5;i<rows.length;i++){
+        const ts=+new Date(rows[i].ts||rows[i].time);
+        const prev=Number(rows[i-5].close),cur=Number(rows[i].close);
+        if(!Number.isFinite(ts)||!prev||!Number.isFinite(cur)) continue;
+        const r=(cur-prev)/prev;
+        let a=accum.get(ts);
+        if(!a){ a={up:0,total:0}; accum.set(ts,a); }
+        a.total++;
+        if(r>0) a.up++;
+        if(symbol==="SPY") core.SPY.set(ts,r);
+        if(symbol==="QQQ") core.QQQ.set(ts,r);
+      }
+    }
+    const out=new Map();
+    for(const [ts,a] of accum.entries()){
+      out.set(ts,{
+        spyRet5:core.SPY.get(ts)||0,
+        qqqRet5:core.QQQ.get(ts)||0,
+        breadth5:a.total?((a.up/a.total)-.5)*2:0
+      });
+    }
+    return out;
+  }
+
+  contextAt(histories,ts){
+    const target=+new Date(ts);
+    let up=0,total=0,spyRet5=0,qqqRet5=0;
+    for(const [symbol,rows] of histories.entries()){
+      if(!rows?.length) continue;
+      let idx=rows.length-1;
+      while(idx>5 && +new Date(rows[idx].ts||rows[idx].time)>target) idx--;
+      if(idx<5) continue;
+      const prev=Number(rows[idx-5].close),cur=Number(rows[idx].close);
+      if(!prev||!Number.isFinite(cur)) continue;
+      const r=(cur-prev)/prev;
+      total++; if(r>0) up++;
+      if(symbol==="SPY") spyRet5=r;
+      if(symbol==="QQQ") qqqRet5=r;
+    }
+    return {
+      spyRet5,qqqRet5,
+      breadth5:total?((up/total)-.5)*2:0
+    };
   }
 
   vector(features){
@@ -147,11 +203,13 @@ export class FeatureFactory {
   buildDataset(histories,{symbols=null,horizon=15,step=5,maxSamples=220000}={}){
     const examples=[];
     const chosen=symbols||[...histories.keys()];
+    const contextMap=this.buildContextMap(histories);
     for(const symbol of chosen){
       const rows=histories.get(symbol)||[];
       if(rows.length<100) continue;
       for(let i=40;i<rows.length-horizon-1;i+=step){
-        const features=this.extract(rows,i);
+        const ts=+new Date(rows[i].ts||rows[i].time);
+        const features=this.extract(rows,i,contextMap.get(ts)||{});
         const target=this.target(rows,i,horizon);
         if(!features||!target) continue;
         examples.push({
