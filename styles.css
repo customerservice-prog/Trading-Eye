@@ -195,7 +195,7 @@ button, .watch-row { -webkit-tap-highlight-color: transparent; }
   border-top:1px solid var(--line); border-bottom:1px solid var(--line);
   color:#566b82; font-size:7px; font-weight:800; text-transform:uppercase; letter-spacing:.08em;
 }
-.watchlist { padding:0 7px 6px; }
+.watchlist { padding:0 7px 6px; flex:1; min-height:0; overflow:auto; }
 .watch-row {
   position:relative;
   display:grid; grid-template-columns:1fr auto; align-items:center; gap:7px;
