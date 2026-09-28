@@ -141,6 +141,42 @@ function liveMetrics(rows){
   };
 }
 
+function driftState(baseline,recent){
+  const base=baseline||{};
+  const now=recent||{};
+  const bs=Number(base.samples)||0;
+  const rs=Number(now.samples)||0;
+  if(rs<150 || bs<300){
+    return {
+      level:"INSUFFICIENT",blocked:false,recentSamples:rs,baselineSamples:bs,
+      reason:"Need at least 150 recent and 300 older scored future outcomes before drift can be judged."
+    };
+  }
+
+  const brierRatio=(Number(now.brier)||1)/Math.max(.0001,Number(base.brier)||1);
+  const accuracyDrop=(Number(base.accuracy)||0)-(Number(now.accuracy)||0);
+  const recentEce=Number(now.ece)||0;
+
+  let level="STABLE";
+  let reason="Recent future outcomes remain within the historical live-performance guardrails.";
+  if(brierRatio>=1.20 || accuracyDrop>=.07 || recentEce>=.12){
+    level="ALERT";
+    reason="Recent future outcomes deteriorated enough to block new AI paper entries until performance recovers or the model is replaced.";
+  }else if(brierRatio>=1.10 || accuracyDrop>=.04 || recentEce>=.09){
+    level="WARN";
+    reason="Recent model performance has weakened and is being watched closely.";
+  }
+
+  return {
+    level,blocked:level==="ALERT",
+    recentSamples:rs,baselineSamples:bs,
+    brierRatio,accuracyDrop,recentEce,
+    baseline:{accuracy:base.accuracy,brier:base.brier,ece:base.ece},
+    recent:{accuracy:now.accuracy,brier:now.brier,ece:now.ece},
+    reason
+  };
+}
+
 export class ModelLab {
   constructor({db,marketEngine,horizonMinutes=15,enabled=true,forceTrainOnStart=false}){
     this.db=db;
@@ -155,6 +191,9 @@ export class ModelLab {
     this.shadowModels=[];
     this.liveShadowMetrics={};
     this.productionLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+    this.productionRecentLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+    this.productionBaselineLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+    this.drift={level:"INSUFFICIENT",blocked:false,recentSamples:0,baselineSamples:0};
     this.shadowMinSamples=300;
     this.shadowScoreCounter=0;
     this.training=false;
@@ -229,6 +268,9 @@ export class ModelLab {
         walkForwardMetrics:p.walk_forward_metrics,
         shadowMetrics:p.shadow_metrics,
         liveMetrics:this.productionLiveMetrics,
+        recentLiveMetrics:this.productionRecentLiveMetrics,
+        baselineLiveMetrics:this.productionBaselineLiveMetrics,
+        drift:this.drift,
         liveShadowMetrics:p.live_shadow_metrics,
         dataset:p.dataset,
         calibration:p.calibration
@@ -251,7 +293,8 @@ export class ModelLab {
         dataset:this.latestRun.dataset,
         candidates:this.latestRun.candidates,
         error:this.latestRun.error
-      }:null
+      }:null,
+      drift:this.drift
     };
   }
 
@@ -281,7 +324,8 @@ export class ModelLab {
       pUp:probs[0],
       pFlat:probs[1],
       pDown:probs[2],
-      noTrade:confidence<.46||edge<.055,
+      driftBlocked:Boolean(this.drift?.blocked),
+      noTrade:Boolean(this.drift?.blocked)||confidence<.46||edge<.055,
       modelId:this.productionRecord.model_id,
       modelVersion:Math.floor(new Date(this.productionRecord.trained_at).getTime()/1000),
       family:this.productionRecord.family,
@@ -292,7 +336,9 @@ export class ModelLab {
         test:this.productionRecord.test_metrics,
         walkForward:this.productionRecord.walk_forward_metrics,
         shadow:this.productionRecord.shadow_metrics,
-        live:this.productionLiveMetrics
+        live:this.productionLiveMetrics,
+        recentLive:this.productionRecentLiveMetrics,
+        drift:this.drift
       }
     };
   }
@@ -355,15 +401,38 @@ export class ModelLab {
 
   async refreshLiveShadowMetrics(){
     if(this.productionRecord?.model_id){
-      const prod=await this.db.pool.query(`
-        SELECT p_up,p_flat,p_down,actual_direction
-        FROM predictions
-        WHERE model_id=$1 AND status='SCORED'
-        ORDER BY created_at
-      `,[this.productionRecord.model_id]);
+      const modelId=this.productionRecord.model_id;
+      const [prod,recent,baseline]=await Promise.all([
+        this.db.pool.query(`
+          SELECT p_up,p_flat,p_down,actual_direction
+          FROM predictions
+          WHERE model_id=$1 AND status='SCORED'
+          ORDER BY created_at
+        `,[modelId]),
+        this.db.pool.query(`
+          SELECT p_up,p_flat,p_down,actual_direction
+          FROM predictions
+          WHERE model_id=$1 AND status='SCORED'
+          ORDER BY created_at DESC
+          LIMIT 250
+        `,[modelId]),
+        this.db.pool.query(`
+          SELECT p_up,p_flat,p_down,actual_direction
+          FROM predictions
+          WHERE model_id=$1 AND status='SCORED'
+          ORDER BY created_at DESC
+          OFFSET 250 LIMIT 2000
+        `,[modelId])
+      ]);
       this.productionLiveMetrics=liveMetrics(prod.rows);
+      this.productionRecentLiveMetrics=liveMetrics(recent.rows);
+      this.productionBaselineLiveMetrics=liveMetrics(baseline.rows);
+      this.drift=driftState(this.productionBaselineLiveMetrics,this.productionRecentLiveMetrics);
     }else{
       this.productionLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+      this.productionRecentLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+      this.productionBaselineLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+      this.drift={level:"INSUFFICIENT",blocked:false,recentSamples:0,baselineSamples:0};
     }
 
     const map={};
