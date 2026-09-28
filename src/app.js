@@ -462,7 +462,7 @@ async function refreshAll({quiet=false}={}) {
   }
 }
 
-async function selectSymbol(symbol,{activate=false}={}) {
+async function selectSymbol(symbol,{activate=true}={}) {
   symbol=String(symbol||"").trim().toUpperCase();
   if (!symbol) return;
   try {
