@@ -562,14 +562,17 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,patterns]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.patternLab(activeSymbol,40)
+      client.studies(10),client.scanner(50)
     ]);
-    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner; patternLabData=patterns;
+    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
+    client.patternLab(activeSymbol,40)
+      .then(p=>{patternLabData=p;renderPatternLab();})
+      .catch(()=>{});
     if (!quiet) toast(st.configured?`Connected: ${sourceName()}`:"Backend online; real market provider still needs credentials.");
   } catch (err) {
     if (!quiet) toast("Real-data backend error: "+String(err.message||err));
@@ -589,13 +592,17 @@ async function selectSymbol(symbol,{activate=true}={}) {
     activeSymbol=symbol;
     $("symbolInput").value=symbol;
     $("symbolResults").classList.add("hidden");
-    const [snap,patterns]=await Promise.all([
-      client.snapshot(symbol),
-      client.patternLab(symbol,40).catch(()=>({symbol,status:"BUILDING_HISTORY",statsByHorizon:{},analogs:[]}))
-    ]);
-    snapshot=snap;
-    patternLabData=patterns;
+    snapshot=await client.snapshot(symbol);
+    patternLabData={symbol,status:"BUILDING_HISTORY",statsByHorizon:{},analogs:[]};
     renderAll();
+    client.patternLab(symbol,40)
+      .then(p=>{
+        if (activeSymbol===symbol) {
+          patternLabData=p;
+          renderPatternLab();
+        }
+      })
+      .catch(()=>{});
     return true;
   } catch (err) {
     toast(String(err.message||err));
@@ -654,10 +661,16 @@ function applyRealtime(event) {
     const rows=(snapshot.bars||[]).filter(x=>+new Date(x.ts)!==+new Date(d.ts));
     rows.push(d); rows.sort((a,b)=>+new Date(a.ts)-+new Date(b.ts));
     snapshot.bars=rows.slice(-1200);
-    Promise.all([
-      client.snapshot(activeSymbol),
-      client.patternLab(activeSymbol,40).catch(()=>patternLabData)
-    ]).then(([s,p])=>{snapshot=s;patternLabData=p;renderAll();maybeAutopilot();}).catch(()=>{});
+    client.snapshot(activeSymbol)
+      .then(s=>{
+        snapshot=s;
+        renderAll();
+        maybeAutopilot();
+        client.patternLab(activeSymbol,40)
+          .then(p=>{patternLabData=p;renderPatternLab();})
+          .catch(()=>{});
+      })
+      .catch(()=>{});
   }
   if (event.type==="prediction" || event.type==="prediction_scored") {
     client.predictions().then(p=>{predictionData=p;renderLearning();}).catch(()=>{});
