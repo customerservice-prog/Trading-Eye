@@ -86,7 +86,7 @@ app.get("/health",async(req,res)=>{
     engineEnabled:s.engineEnabled,
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
-    paperAutopilot:(await paperBroker.snapshot()).autopilotEnabled,
+    paperBroker:true,
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
   });
