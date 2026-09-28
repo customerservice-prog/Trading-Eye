@@ -7,7 +7,8 @@ export class PaperBroker {
     db,marketEngine,accountId="TE_PAPER_MAIN",startingCash=100000,
     fillBufferBps=1.5,maxPositionPct=.10,maxGrossPct=.50,maxPositions=6,
     dailyLossPct=.03,autopilotMinConfidence=.50,autopilotMinEdge=.07,
-    autopilotEnabled=true
+    autopilotEnabled=true,respectNoTrade=true,entryPositionPct=.05,
+    sourceTag="AI_PAPER"
   }){
     this.db=db;
     this.marketEngine=marketEngine;
@@ -21,6 +22,9 @@ export class PaperBroker {
     this.autopilotMinConfidence=autopilotMinConfidence;
     this.autopilotMinEdge=autopilotMinEdge;
     this.autopilotEnabled=Boolean(autopilotEnabled);
+    this.respectNoTrade=Boolean(respectNoTrade);
+    this.entryPositionPct=clamp(Number(entryPositionPct)||.05,.005,this.maxPositionPct);
+    this.sourceTag=String(sourceTag||"AI_PAPER").toUpperCase().replace(/[^A-Z0-9_]/g,"_");
     this.snapshotTimer=null;
     this.processing=new Set();
   }
@@ -153,6 +157,10 @@ export class PaperBroker {
 
     return {
       accountId:this.accountId,
+      lane:this.sourceTag.includes("EXPLORE")?"EXPLORATION":"PROOF",
+      sourceTag:this.sourceTag,
+      respectNoTrade:this.respectNoTrade,
+      entryPositionPct:this.entryPositionPct,
       startingCash:Number(account?.starting_cash)||this.startingCash,
       cash,equity,openPnl,
       realizedPnl:Number(account?.realized_pnl)||0,
@@ -212,7 +220,7 @@ export class PaperBroker {
       if(!Number.isFinite(spreadBps)||spreadBps<0){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"INVALID_TOP_OF_BOOK"});
       }
-      const aiEntry=String(source||"")==="AI_PAPER_ENTRY";
+      const aiEntry=String(source||"").endsWith("_ENTRY");
       if(spreadBps>100 || (aiEntry&&spreadBps>25)){
         return this.#rejectOrder({
           symbol,side,qty,source,modelId,
@@ -416,7 +424,7 @@ export class PaperBroker {
     if(!account?.autopilot_enabled||!prediction) return;
     if(!this.#regularSessionNow()) return;
     if(!prediction.modelId) return;
-    if(prediction.noTrade) return;
+    if(this.respectNoTrade&&prediction.noTrade) return;
     if(Number(prediction.confidence)<this.autopilotMinConfidence) return;
     if(Number(prediction.edge)<this.autopilotMinEdge) return;
     if(!["UP","DOWN"].includes(prediction.direction)) return;
@@ -427,18 +435,18 @@ export class PaperBroker {
 
     if(pos){
       if(Math.sign(pos.qty)!==desired){
-        await this.flatten(prediction.symbol,{source:"AI_PAPER_EXIT",modelId:prediction.modelId});
+        await this.flatten(prediction.symbol,{source:this.sourceTag+"_EXIT",modelId:prediction.modelId});
       }
       return;
     }
 
-    const qty=await this.suggestedQty(prediction.symbol,{positionPct:.05});
+    const qty=await this.suggestedQty(prediction.symbol,{positionPct:this.entryPositionPct});
     if(!qty) return;
     await this.submitMarketOrder({
       symbol:prediction.symbol,
       side:desired>0?"BUY":"SELL",
       qty,
-      source:"AI_PAPER_ENTRY",
+      source:this.sourceTag+"_ENTRY",
       modelId:prediction.modelId
     });
   }
@@ -455,11 +463,11 @@ export class PaperBroker {
     const age=Date.now()-new Date(pos.openedAt).getTime();
 
     if(ret<=-.005){
-      await this.flatten(bar.symbol,{source:"AI_PAPER_STOP"});
+      await this.flatten(bar.symbol,{source:this.sourceTag+"_STOP"});
     }else if(ret>=.009){
-      await this.flatten(bar.symbol,{source:"AI_PAPER_TARGET"});
+      await this.flatten(bar.symbol,{source:this.sourceTag+"_TARGET"});
     }else if(age>=75*60*1000){
-      await this.flatten(bar.symbol,{source:"AI_PAPER_TIME_EXIT"});
+      await this.flatten(bar.symbol,{source:this.sourceTag+"_TIME_EXIT"});
     }
   }
 
