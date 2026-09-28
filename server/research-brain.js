@@ -77,6 +77,7 @@ export class ResearchBrain extends EventEmitter {
     longHistoryUrl="https://static.stooq.com/db/h/d_us_txt.zip",
     longHistoryApiKey="",
     symbolFallbackEnabled=true,
+    historicalIntegrityVerified=false,
     role="all"
   }){
     super();
@@ -90,6 +91,7 @@ export class ResearchBrain extends EventEmitter {
     this.longHistoryUrl=longHistoryUrl;
     this.longHistoryApiKey=String(longHistoryApiKey||"");
     this.symbolFallbackEnabled=Boolean(symbolFallbackEnabled);
+    this.historicalIntegrityVerified=Boolean(historicalIntegrityVerified);
     this.role=String(role||"all").toLowerCase();
     this.longHistoryRetryAfter=0;
     this.longHistoryAuthNoticeSent=false;
@@ -180,7 +182,16 @@ export class ResearchBrain extends EventEmitter {
                 :this.longHistoryEnabled&&!this.longHistoryApiKey
                   ?"AUTH_REQUIRED"
                   :"WAITING",
-          note:"Separate daily-history lane; never labeled as Alpaca."
+          note:"Separate daily-history lane; never labeled as Alpaca.",
+          integrity:{
+            status:this.historicalIntegrityVerified?"VERIFIED":"UNVERIFIED",
+            survivorshipAndDelistings:this.historicalIntegrityVerified?"VERIFIED":"UNVERIFIED",
+            corporateActions:this.historicalIntegrityVerified?"VERIFIED":"UNVERIFIED",
+            realMoneyGateBlocked:!this.historicalIntegrityVerified,
+            note:this.historicalIntegrityVerified
+              ?"Historical survivorship/delisting and corporate-action handling has been explicitly verified."
+              :"Research may continue, but real-money review stays locked until delistings, ticker changes, splits/dividends, and survivorship handling are genuinely audited."
+          }
         }
       },
       coverage,jobs,events,findings,
@@ -1137,6 +1148,7 @@ export class ResearchBrain extends EventEmitter {
               validation:baselineByHorizon[h].validation,
               holdout:baselineByHorizon[h].holdout
             },
+            historicalIntegrityVerified:this.historicalIntegrityVerified,
             recentHoldoutExamples:s.holdout.slice(-8)
           }
         });
