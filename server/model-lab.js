@@ -152,6 +152,38 @@ function liveMetrics(rows){
   };
 }
 
+function shadowTimeBucket(ts){
+  const parts=Object.fromEntries(
+    new Intl.DateTimeFormat("en-US",{
+      timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"
+    }).formatToParts(new Date(ts)).filter(x=>x.type!=="literal").map(x=>[x.type,x.value])
+  );
+  const m=Number(parts.hour)*60+Number(parts.minute);
+  if(m<9*60+30) return "PREMARKET";
+  if(m<10*60+30) return "OPENING_HOUR";
+  if(m<14*60) return "MIDDAY";
+  if(m<15*60) return "AFTERNOON";
+  if(m<16*60) return "POWER_HOUR";
+  return "AFTER_HOURS";
+}
+function confidenceBucket(conf){
+  const c=Number(conf)||0;
+  if(c>=.70) return "70_PLUS";
+  if(c>=.60) return "60_69";
+  if(c>=.50) return "50_59";
+  return "UNDER_50";
+}
+function sliceMetrics(rows,key){
+  const groups={};
+  for(const row of rows){
+    const k=String(row[key]||"UNKNOWN");
+    (groups[k]||(groups[k]=[])).push(row);
+  }
+  const out={};
+  for(const [k,list] of Object.entries(groups)) out[k]=liveMetrics(list);
+  return out;
+}
+
 export class ModelLab {
   constructor({db,marketEngine,horizonMinutes=15,enabled=true,forceTrainOnStart=false}){
     this.db=db;
@@ -166,7 +198,8 @@ export class ModelLab {
     this.shadowModels=[];
     this.liveShadowMetrics={};
     this.productionLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
-    this.shadowMinSamples=300;
+    this.shadowMinSamples=1000;
+    this.cachedRegime={value:"UNKNOWN",at:0};
     this.shadowScoreCounter=0;
     this.training=false;
     this.lastError=null;
@@ -266,6 +299,16 @@ export class ModelLab {
     };
   }
 
+  async #currentRegime(){
+    if(Date.now()-this.cachedRegime.at<60000) return this.cachedRegime.value;
+    const row=await this.db.latestMarketRegime().catch(()=>null);
+    this.cachedRegime={
+      value:String(row?.regime||"UNKNOWN"),
+      at:Date.now()
+    };
+    return this.cachedRegime.value;
+  }
+
   currentFeatures(symbol){
     const rows=this.marketEngine.histories.get(String(symbol).toUpperCase())||[];
     if(rows.length<50) return null;
@@ -315,6 +358,8 @@ export class ModelLab {
     const x=this.factory.vector(features);
     const createdAt=new Date(bar.ts);
     const targetAt=new Date(createdAt.getTime()+this.horizonMinutes*60*1000);
+    const regime=await this.#currentRegime();
+    const timeBucket=shadowTimeBucket(createdAt);
 
     for(const item of this.shadowModels){
       const raw=item.model.predict(x);
@@ -324,12 +369,13 @@ export class ModelLab {
       await this.db.pool.query(`
         INSERT INTO model_shadow_predictions(
           model_id,symbol,created_at,target_at,reference_price,direction,confidence,
-          p_up,p_flat,p_down,status
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDING')
+          p_up,p_flat,p_down,status,regime,time_bucket,confidence_bucket,model_details
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDING',$11,$12,$13,$14::jsonb)
         ON CONFLICT(model_id,symbol,created_at) DO NOTHING
       `,[
         item.record.model_id,String(symbol).toUpperCase(),createdAt,targetAt,Number(bar.close),
-        direction,confidence,p[0],p[1],p[2]
+        direction,confidence,p[0],p[1],p[2],regime,timeBucket,confidenceBucket(confidence),
+        JSON.stringify({family:item.record.family,horizonMinutes:this.horizonMinutes})
       ]);
     }
   }
@@ -380,12 +426,19 @@ export class ModelLab {
     const map={};
     for(const item of this.shadowModels){
       const q=await this.db.pool.query(`
-        SELECT p_up,p_flat,p_down,actual_direction
+        SELECT p_up,p_flat,p_down,actual_direction,symbol,created_at,confidence,
+               regime,time_bucket,confidence_bucket
         FROM model_shadow_predictions
         WHERE model_id=$1 AND status='SCORED'
         ORDER BY created_at
       `,[item.record.model_id]);
-      const metrics=liveMetrics(q.rows);
+      const metrics={
+        ...liveMetrics(q.rows),
+        byRegime:sliceMetrics(q.rows,"regime"),
+        byTimeBucket:sliceMetrics(q.rows,"time_bucket"),
+        byConfidence:sliceMetrics(q.rows,"confidence_bucket"),
+        bySymbol:sliceMetrics(q.rows,"symbol")
+      };
       map[item.record.model_id]=metrics;
       await this.db.pool.query(`
         UPDATE model_registry SET live_shadow_metrics=$2::jsonb
@@ -427,10 +480,16 @@ export class ModelLab {
       const liveAccuracySafe=challenger.accuracy>=incumbent.accuracy-.005;
       const liveCalibrationSafe=challenger.ece<=incumbent.ece+.015;
       const historicalSafe=!incumbentTest.brier||challengerTest.brier<=Number(incumbentTest.brier)*1.01;
-      const pass=liveBrierBetter&&liveAccuracySafe&&liveCalibrationSafe&&historicalSafe;
+      const meaningfulSlices=[
+        ...Object.values(challenger.byTimeBucket||{}),
+        ...Object.values(challenger.byRegime||{})
+      ].filter(x=>Number(x.samples||0)>=50);
+      const sliceSafe=meaningfulSlices.length>=3 &&
+        meaningfulSlices.every(x=>Number(x.brier||1)<=Math.max(.30,Number(challenger.brier||1)*1.25));
+      const pass=liveBrierBetter&&liveAccuracySafe&&liveCalibrationSafe&&historicalSafe&&sliceSafe;
 
       if(pass){
-        const reason=`Live-shadow promotion: challenger Brier ${challenger.brier.toFixed(4)} vs production ${incumbent.brier.toFixed(4)} across ${challenger.samples} paired real-time outcomes; calibration/accuracy/historical guards passed.`;
+        const reason=`Live-shadow promotion: challenger Brier ${challenger.brier.toFixed(4)} vs production ${incumbent.brier.toFixed(4)} across ${challenger.samples} paired real-time outcomes; calibration, accuracy, historical and slice-stability guards passed.`;
         const client=await this.db.pool.connect();
         try{
           await client.query("BEGIN");
