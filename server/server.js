@@ -10,6 +10,7 @@ const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
   .split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const FEED=(process.env.ALPACA_FEED || "iex").trim().toLowerCase();
 const BACKFILL_DAYS=Math.max(1,Math.min(365,Number(process.env.BACKFILL_DAYS || 30)));
+const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowerCase() === "true";
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
@@ -20,7 +21,7 @@ const provider=new AlpacaProvider({
   feed:FEED,
   symbols:SYMBOLS
 });
-const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS});
+const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
 await engine.init();
 
 const app=express();
@@ -37,6 +38,7 @@ app.get("/health",async(req,res)=>{
     providerState:s.provider.state,
     feed:FEED,
     mode:"REAL_DATA_ONLY",
+    engineEnabled:s.engineEnabled,
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
   });
@@ -99,7 +101,7 @@ wss.on("connection",ws=>{
 server.listen(PORT,"0.0.0.0",()=>{
   console.log(JSON.stringify({
     event:"server_started",port:PORT,mode:"REAL_DATA_ONLY",
-    provider:"alpaca",feed:FEED,symbols:SYMBOLS,providerConfigured:provider.configured()
+    provider:"alpaca",feed:FEED,symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED
   }));
 });
 
