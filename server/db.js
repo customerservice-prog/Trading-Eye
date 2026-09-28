@@ -62,11 +62,17 @@ export class Database {
         assets_scanned INTEGER NOT NULL DEFAULT 0,
         daily_bars INTEGER NOT NULL DEFAULT 0,
         candidates INTEGER NOT NULL DEFAULT 0,
+        deep_assets INTEGER NOT NULL DEFAULT 0,
+        deep_bars INTEGER NOT NULL DEFAULT 0,
         error TEXT
       );
 
       ALTER TABLE universe_scan_runs
         ADD COLUMN IF NOT EXISTS scan_version INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE universe_scan_runs
+        ADD COLUMN IF NOT EXISTS deep_assets INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE universe_scan_runs
+        ADD COLUMN IF NOT EXISTS deep_bars INTEGER NOT NULL DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS universe_scan_results (
         scan_date DATE NOT NULL,
@@ -80,11 +86,40 @@ export class Database {
         realized_vol_20 DOUBLE PRECISION,
         avg_range_20 DOUBLE PRECISION,
         interesting_score DOUBLE PRECISION,
+        deep_score DOUBLE PRECISION,
+        intraday_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
         details JSONB NOT NULL DEFAULT '{}'::jsonb,
         PRIMARY KEY(scan_date,symbol)
       );
+      ALTER TABLE universe_scan_results
+        ADD COLUMN IF NOT EXISTS deep_score DOUBLE PRECISION;
+      ALTER TABLE universe_scan_results
+        ADD COLUMN IF NOT EXISTS intraday_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
       CREATE INDEX IF NOT EXISTS universe_scan_results_rank
         ON universe_scan_results(scan_date,interesting_score DESC);
+
+      CREATE TABLE IF NOT EXISTS universe_intraday_profiles (
+        scan_date DATE NOT NULL,
+        symbol TEXT NOT NULL,
+        bars_5m INTEGER NOT NULL DEFAULT 0,
+        sessions INTEGER NOT NULL DEFAULT 0,
+        last_day_return DOUBLE PRECISION,
+        open30_return DOUBLE PRECISION,
+        midday_return DOUBLE PRECISION,
+        power_hour_return DOUBLE PRECISION,
+        first_hour_range DOUBLE PRECISION,
+        realized_vol_5d DOUBLE PRECISION,
+        open_volume_share DOUBLE PRECISION,
+        close_volume_share DOUBLE PRECISION,
+        trend_follow_rate DOUBLE PRECISION,
+        reversal_rate DOUBLE PRECISION,
+        deep_score DOUBLE PRECISION,
+        profile JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(scan_date,symbol)
+      );
+      CREATE INDEX IF NOT EXISTS universe_intraday_rank
+        ON universe_intraday_profiles(scan_date,deep_score DESC);
 
       CREATE TABLE IF NOT EXISTS raw_market_events (
         id BIGSERIAL PRIMARY KEY,
@@ -421,13 +456,14 @@ export class Database {
     }
   }
 
-  async completeUniverseScan(scanDate,{assetsScanned,dailyBars,candidates}) {
+  async completeUniverseScan(scanDate,{assetsScanned,dailyBars,candidates,deepAssets=0,deepBars=0}) {
     if (!this.ready) return;
     await this.pool.query(`
       UPDATE universe_scan_runs SET
-        status='COMPLETE',completed_at=NOW(),assets_scanned=$2,daily_bars=$3,candidates=$4,error=NULL
+        status='COMPLETE',completed_at=NOW(),assets_scanned=$2,daily_bars=$3,candidates=$4,
+        deep_assets=$5,deep_bars=$6,error=NULL
       WHERE scan_date=$1
-    `,[scanDate,assetsScanned,dailyBars,candidates]);
+    `,[scanDate,assetsScanned,dailyBars,candidates,deepAssets,deepBars]);
   }
 
   async failUniverseScan(scanDate,error) {
@@ -450,10 +486,73 @@ export class Database {
   async latestUniverseScan() {
     if (!this.ready) return null;
     const q=await this.pool.query(`
-      SELECT scan_date,scan_version,status,started_at,completed_at,assets_scanned,daily_bars,candidates,error
+      SELECT scan_date,scan_version,status,started_at,completed_at,assets_scanned,daily_bars,candidates,deep_assets,deep_bars,error
       FROM universe_scan_runs ORDER BY scan_date DESC LIMIT 1
     `);
     return q.rows[0]||null;
+  }
+
+  async intradayScannedSymbols(scanDate) {
+    if (!this.ready) return [];
+    const q=await this.pool.query("SELECT symbol FROM universe_intraday_profiles WHERE scan_date=$1",[scanDate]);
+    return q.rows.map(r=>r.symbol);
+  }
+
+  async saveIntradayProfiles(scanDate,rows) {
+    if (!this.ready || !rows.length) return;
+    for (let i=0;i<rows.length;i+=500) {
+      const chunk=rows.slice(i,i+500);
+      const values=[];
+      const placeholders=[];
+      chunk.forEach((r,j)=>{
+        const n=j*15;
+        placeholders.push("(" + Array.from({length:15},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        values.push(
+          scanDate,r.symbol,r.bars5m,r.sessions,r.lastDayReturn,r.open30Return,r.middayReturn,
+          r.powerHourReturn,r.firstHourRange,r.realizedVol5d,r.openVolumeShare,r.closeVolumeShare,
+          r.trendFollowRate,r.reversalRate,r.deepScore
+        );
+      });
+      await this.pool.query(`
+        INSERT INTO universe_intraday_profiles(
+          scan_date,symbol,bars_5m,sessions,last_day_return,open30_return,midday_return,
+          power_hour_return,first_hour_range,realized_vol_5d,open_volume_share,
+          close_volume_share,trend_follow_rate,reversal_rate,deep_score
+        ) VALUES ${placeholders.join(",")}
+        ON CONFLICT(scan_date,symbol) DO UPDATE SET
+          bars_5m=EXCLUDED.bars_5m,sessions=EXCLUDED.sessions,last_day_return=EXCLUDED.last_day_return,
+          open30_return=EXCLUDED.open30_return,midday_return=EXCLUDED.midday_return,
+          power_hour_return=EXCLUDED.power_hour_return,first_hour_range=EXCLUDED.first_hour_range,
+          realized_vol_5d=EXCLUDED.realized_vol_5d,open_volume_share=EXCLUDED.open_volume_share,
+          close_volume_share=EXCLUDED.close_volume_share,trend_follow_rate=EXCLUDED.trend_follow_rate,
+          reversal_rate=EXCLUDED.reversal_rate,deep_score=EXCLUDED.deep_score,updated_at=NOW()
+      `,values);
+      for (const r of chunk) {
+        await this.pool.query(`
+          UPDATE universe_scan_results
+          SET deep_score=$3,
+              intraday_profile=jsonb_build_object(
+                'bars5m',$4,'sessions',$5,'lastDayReturn',$6,'open30Return',$7,
+                'middayReturn',$8,'powerHourReturn',$9,'firstHourRange',$10,
+                'realizedVol5d',$11,'openVolumeShare',$12,'closeVolumeShare',$13,
+                'trendFollowRate',$14,'reversalRate',$15
+              )
+          WHERE scan_date=$1 AND symbol=$2
+        `,[
+          scanDate,r.symbol,r.deepScore,r.bars5m,r.sessions,r.lastDayReturn,r.open30Return,
+          r.middayReturn,r.powerHourReturn,r.firstHourRange,r.realizedVol5d,
+          r.openVolumeShare,r.closeVolumeShare,r.trendFollowRate,r.reversalRate
+        ]);
+      }
+    }
+  }
+
+  async updateUniverseDeepProgress(scanDate,{deepAssets,deepBars}) {
+    if (!this.ready) return;
+    await this.pool.query(
+      "UPDATE universe_scan_runs SET deep_assets=$2,deep_bars=$3 WHERE scan_date=$1",
+      [scanDate,deepAssets,deepBars]
+    );
   }
 
   async topUniverseCandidates(scanDate,{limit=30}={}) {
@@ -462,11 +561,11 @@ export class Database {
     const q=await this.pool.query(`
       SELECT r.scan_date,r.symbol,r.close,r.return_1d,r.return_5d,r.return_20d,
              r.avg_volume_20,r.relative_volume,r.realized_vol_20,r.avg_range_20,
-             r.interesting_score,a.name,a.exchange
+             r.interesting_score,r.deep_score,r.intraday_profile,a.name,a.exchange
       FROM universe_scan_results r
       LEFT JOIN asset_universe a ON a.symbol=r.symbol
       WHERE r.scan_date=$1
-      ORDER BY r.interesting_score DESC
+      ORDER BY (r.interesting_score + COALESCE(r.deep_score,0)) DESC
       LIMIT ${n}
     `,[scanDate]);
     return q.rows;
