@@ -272,6 +272,7 @@
           <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
           <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
+          <button data-tab="research" type="button"><span class="tab-icon">∞</span><span>Research Brain</span><span class="tab-live-dot"></span></button>
           <button data-tab="patterns" type="button"><span class="tab-icon">⌘</span><span>Pattern Lab</span></button>
           <button data-tab="scanner" type="button"><span class="tab-icon">⌁</span><span>Market Scanner</span></button>
           <button data-tab="study" type="button"><span class="tab-icon">◈</span><span>Deep Study</span></button>
@@ -368,6 +369,90 @@
                   <tbody id="shadowModelBody"></tbody>
                 </table>
               </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-research">
+            <div class="research-brain-layout">
+              <section class="research-hero">
+                <div>
+                  <span class="eyebrow">Continuous AI research</span>
+                  <div class="research-live-line">
+                    <span id="researchPulse" class="research-pulse"></span>
+                    <strong id="researchState">Research Brain starting…</strong>
+                  </div>
+                  <p id="researchCurrentTask">Waiting for the server research worker.</p>
+                </div>
+                <div class="research-heartbeat">
+                  <span>Last heartbeat</span>
+                  <strong id="researchHeartbeat">—</strong>
+                </div>
+              </section>
+
+              <section class="research-coverage-grid">
+                <div class="research-card">
+                  <span class="eyebrow">Live / intraday lane</span>
+                  <strong id="researchIntradayCoverage">—</strong>
+                  <span id="researchIntradayMeta">Alpaca · 2016 → present</span>
+                </div>
+                <div class="research-card">
+                  <span class="eyebrow">Long-history lane</span>
+                  <strong id="researchLongCoverage">—</strong>
+                  <span id="researchLongMeta">Target 1999 → present</span>
+                </div>
+                <div class="research-card">
+                  <span class="eyebrow">Pattern findings</span>
+                  <strong id="researchFindingCount">—</strong>
+                  <span id="researchFindingMeta">sample-filtered historical patterns</span>
+                </div>
+                <div class="research-card">
+                  <span class="eyebrow">Model research</span>
+                  <strong id="researchModelCount">—</strong>
+                  <span id="researchModelMeta">production / shadow / rejected</span>
+                </div>
+              </section>
+
+              <section class="research-main-grid">
+                <div class="research-jobs-panel">
+                  <div class="research-section-head">
+                    <div>
+                      <span class="eyebrow">What the AI is doing now</span>
+                      <strong>Research job queue</strong>
+                    </div>
+                    <span id="researchJobSummary">—</span>
+                  </div>
+                  <div id="researchJobs" class="research-jobs"></div>
+                </div>
+
+                <div class="research-stream-panel">
+                  <div class="research-section-head">
+                    <div>
+                      <span class="eyebrow">Real event stream</span>
+                      <strong>Research activity</strong>
+                    </div>
+                    <span id="researchEventCount">0 events</span>
+                  </div>
+                  <div id="researchEventStream" class="research-event-stream"></div>
+                </div>
+              </section>
+
+              <section class="research-findings-panel">
+                <div class="research-section-head">
+                  <div>
+                    <span class="eyebrow">Historical discoveries</span>
+                    <strong>Patterns that passed minimum sample/effect filters</strong>
+                  </div>
+                  <span>These are research findings, not guaranteed trades.</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Status</th><th>Symbol</th><th>Pattern</th><th>Horizon</th><th>Samples</th><th>Hit rate</th><th>Avg return</th><th>Score</th><th>Evidence window</th></tr>
+                    </thead>
+                    <tbody id="researchFindingBody"></tbody>
+                  </table>
+                </div>
+              </section>
             </div>
           </div>
 
