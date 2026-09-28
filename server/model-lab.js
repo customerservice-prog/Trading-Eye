@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { FeatureFactory, MODEL_FEATURES } from "./feature-factory.js";
 import {
-  CLASS_NAMES,SoftmaxModel,GaussianNBModel,BoostedStumpModel,EnsembleModel,
+  CLASS_NAMES,SoftmaxModel,GaussianNBModel,BoostedStumpModel,BaggedBoostedModel,EnsembleModel,
   metricsFor,chooseTemperature,buildEnsembleWeight,splitChronologically,applyTemperature
 } from "./ml-models.js";
 
@@ -25,6 +25,7 @@ function modelFromRegistryArtifact(a){
   if(a.kind==="softmax") return SoftmaxModel.fromArtifact(a);
   if(a.kind==="gaussian_nb") return GaussianNBModel.fromArtifact(a);
   if(a.kind==="boosted_stumps") return BoostedStumpModel.fromArtifact(a);
+  if(a.kind==="bagged_boosted") return BaggedBoostedModel.fromArtifact(a);
   return null;
 }
 function directionFromProbs(p){
@@ -54,6 +55,16 @@ function localContributions(model,x,classIdx){
       indices.forEach((featureIdx,j)=>{
         add(featureIdx,scale*(Number(weights[j])||0)*(Number(x[featureIdx])||0));
       });
+      return;
+    }
+    if(m.kind==="bagged_boosted"){
+      for(const member of m.members||[]){
+        const model=BoostedStumpModel.fromArtifact(member.artifact);
+        const indices=member.featureIndices||[];
+        const xx=indices.map(i=>Number(x[i])||0);
+        const inner=localContributions(model,xx,classIdx);
+        for(const c of inner) add(indices[c.featureIndex]??c.featureIndex,scale*(Number(c.contribution)||0)/Math.max(1,(m.members||[]).length));
+      }
       return;
     }
     if(m.kind==="boosted_stumps"){
@@ -617,7 +628,8 @@ export class ModelLab {
       {name:"softmax_momentum",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:momentum,name:"softmax_momentum"})},
       {name:"softmax_reversion",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:reversion,name:"softmax_reversion"})},
       {name:"gaussian_full",build:()=>new GaussianNBModel({featureCount:MODEL_FEATURES.length,name:"gaussian_full"})},
-      {name:"boosted_stumps",build:()=>new BoostedStumpModel({featureCount:MODEL_FEATURES.length,name:"boosted_stumps"})}
+      {name:"boosted_stumps",build:()=>new BoostedStumpModel({featureCount:MODEL_FEATURES.length,name:"boosted_stumps"})},
+      {name:"bagged_boosted",build:()=>new BaggedBoostedModel({featureCount:MODEL_FEATURES.length,name:"bagged_boosted"})}
     ];
   }
 
@@ -633,6 +645,8 @@ export class ModelLab {
       model.train(train,{epochs:3,learningRate:.022,l2:.001,maxSamples:30000});
     }else if(model.kind==="boosted_stumps"){
       model.train(train,{rounds:14,learningRate:.20,maxSamples:12000});
+    }else if(model.kind==="bagged_boosted"){
+      model.train(train,{bags:5,rounds:12,learningRate:.18,maxSamples:10000});
     }else{
       model.train(train,{maxSamples:50000});
     }
@@ -758,6 +772,8 @@ export class ModelLab {
           model.train(splits.train,{epochs:4,learningRate:.022,l2:.001,maxSamples:70000});
         }else if(model.kind==="boosted_stumps"){
           model.train(splits.train,{rounds:18,learningRate:.20,maxSamples:14000});
+        }else if(model.kind==="bagged_boosted"){
+          model.train(splits.train,{bags:6,rounds:14,learningRate:.18,maxSamples:12000});
         }else{
           model.train(splits.train,{maxSamples:120000});
         }
