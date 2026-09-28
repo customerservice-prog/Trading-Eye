@@ -119,6 +119,29 @@ export class Database {
     ]);
   }
 
+  async upsertBarsBatch(bars) {
+    if (!this.ready || !bars.length) return;
+    const values=[];
+    const rows=[];
+    bars.forEach((bar,i)=>{
+      const n=i*12;
+      rows.push(`(${n+1},${n+2},${n+3},${n+4},${n+5},${n+6},${n+7},${n+8},${n+9},${n+10},${n+11},${n+12})`);
+      values.push(
+        bar.provider,bar.feed,bar.symbol,bar.ts,bar.open,bar.high,bar.low,bar.close,
+        bar.volume,bar.tradeCount ?? null,bar.vwap ?? null,bar.source || "historical"
+      );
+    });
+    await this.pool.query(`
+      INSERT INTO market_bars_1m
+        (provider,feed,symbol,ts,open,high,low,close,volume,trade_count,vwap,source)
+      VALUES ${rows.join(",")}
+      ON CONFLICT(provider,feed,symbol,ts) DO UPDATE SET
+        open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,
+        volume=EXCLUDED.volume,trade_count=EXCLUDED.trade_count,vwap=EXCLUDED.vwap,
+        source=EXCLUDED.source
+    `,values);
+  }
+
   async insertRawBatch(events) {
     if (!this.ready || !events.length) return;
     const values=[];
