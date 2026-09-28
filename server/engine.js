@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { OnlineModel } from "./model.js";
-import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } from "./patterns.js";
+import { fingerprintFromFeatures, patternProbabilities, blendProbabilities, timeBucketET } from "./patterns.js";
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const pct=(a,b)=>b?(a-b)/b:0;
@@ -454,6 +454,113 @@ export class RealMarketEngine extends EventEmitter {
     };
   }
 
+
+  patternLab(symbol,{limit=40}={}) {
+    symbol=String(symbol||"").toUpperCase();
+    const rows=this.histories.get(symbol)||[];
+    const currentFeatures=this.#features(symbol);
+    const latest=rows.at(-1)||null;
+    const historyReady=this.symbolDeepHistory.has(symbol);
+
+    if (!currentFeatures || !latest || rows.length<100) {
+      return {
+        symbol,
+        historyReady,
+        status:historyReady?"INSUFFICIENT_HISTORY":"BUILDING_HISTORY",
+        fingerprint:null,
+        exactMatches:0,
+        analyzedCount:0,
+        statsByHorizon:{},
+        analogs:[]
+      };
+    }
+
+    const currentFingerprint=fingerprintFromFeatures(currentFeatures,latest.ts);
+    const currentBucket=timeBucketET(latest.ts);
+    const keys=["trend","momentum","volume","volatility","orderFlow","vwap"];
+    const candidates=[];
+
+    for (let i=30;i<rows.length-61;i+=2) {
+      const f=this.#historicalFeatures(rows,i);
+      if (!f) continue;
+
+      const horizons={};
+      for (const horizon of [15,30,60]) {
+        const future=rows[i+horizon];
+        if (!future) continue;
+        const elapsed=(+new Date(future.ts)-+new Date(rows[i].ts))/60000;
+        if (elapsed<horizon-1 || elapsed>horizon+5) continue;
+        const reference=Number(rows[i].close);
+        const ret=(Number(future.close)-reference)/reference;
+        const path=rows.slice(i+1,i+horizon+1);
+        const mfe=path.length?Math.max(...path.map(x=>(Number(x.high)-reference)/reference)):0;
+        const mae=path.length?Math.min(...path.map(x=>(Number(x.low)-reference)/reference)):0;
+        horizons[horizon]={return:ret,mfe,mae,endPrice:Number(future.close)};
+      }
+      if (!horizons[15]) continue;
+
+      const histFingerprint=fingerprintFromFeatures(f,rows[i].ts);
+      const exact=histFingerprint===currentFingerprint;
+      let sum=0;
+      for (const key of keys) {
+        const d=Number(currentFeatures[key]||0)-Number(f[key]||0);
+        sum+=d*d;
+      }
+      let distance=Math.sqrt(sum/keys.length);
+      if (timeBucketET(rows[i].ts)!==currentBucket) distance+=.22;
+      const similarity=clamp(1-distance/1.45,0,1);
+
+      candidates.push({
+        time:new Date(rows[i].ts).toISOString(),
+        entryPrice:Number(rows[i].close),
+        fingerprint:histFingerprint,
+        exact,
+        similarity,
+        distance,
+        features:f,
+        horizons
+      });
+    }
+
+    candidates.sort((a,b)=>{
+      if (a.exact!==b.exact) return a.exact?-1:1;
+      return b.similarity-a.similarity;
+    });
+
+    const studySet=candidates.filter(x=>x.exact || x.similarity>=.58).slice(0,250);
+    const statsByHorizon={};
+    for (const horizon of [15,30,60]) {
+      const values=studySet.map(x=>x.horizons[horizon]).filter(Boolean);
+      if (!values.length) continue;
+      const returns=values.map(x=>x.return);
+      const up=returns.filter(x=>x>.001).length;
+      const down=returns.filter(x=>x<-.001).length;
+      const flat=returns.length-up-down;
+      statsByHorizon[horizon]={
+        samples:returns.length,
+        upRate:up/returns.length,
+        flatRate:flat/returns.length,
+        downRate:down/returns.length,
+        avgReturn:returns.reduce((a,b)=>a+b,0)/returns.length,
+        avgMfe:values.reduce((a,x)=>a+x.mfe,0)/values.length,
+        avgMae:values.reduce((a,x)=>a+x.mae,0)/values.length
+      };
+    }
+
+    return {
+      symbol,
+      historyReady,
+      status:historyReady?"READY":"BUILDING_HISTORY",
+      currentTime:new Date(latest.ts).toISOString(),
+      currentPrice:Number(latest.close),
+      fingerprint:currentFingerprint,
+      timeBucket:currentBucket,
+      exactMatches:candidates.filter(x=>x.exact).length,
+      analyzedCount:studySet.length,
+      statsByHorizon,
+      analogs:candidates.slice(0,Math.max(5,Math.min(100,Number(limit)||40)))
+    };
+  }
 
   #historicalFeatures(rows,index) {
     if (index<29) return null;
