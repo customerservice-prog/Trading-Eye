@@ -23,6 +23,8 @@ export class RealMarketEngine extends EventEmitter {
     this.model=new OnlineModel(db);
     this.modelLab=null;
     this.paperBroker=null;
+    this.paperBrokers=[];
+    this.mistakeLab=null;
     this.histories=new Map(this.symbols.map(s=>[s,[]]));
     this.latestQuotes=new Map();
     this.latestTrades=new Map();
@@ -75,9 +77,14 @@ export class RealMarketEngine extends EventEmitter {
     }
   }
 
-  attachIntelligence({modelLab=null,paperBroker=null}={}) {
+  attachIntelligence({modelLab=null,paperBroker=null,paperBrokers=null,mistakeLab=null}={}) {
     this.modelLab=modelLab;
     this.paperBroker=paperBroker;
+    this.paperBrokers=Array.isArray(paperBrokers)
+      ? paperBrokers.filter(Boolean)
+      : paperBroker?[paperBroker]:[];
+    if(paperBroker&&!this.paperBrokers.includes(paperBroker)) this.paperBrokers.unshift(paperBroker);
+    this.mistakeLab=mistakeLab;
   }
 
   hotSymbols() {
@@ -437,7 +444,9 @@ export class RealMarketEngine extends EventEmitter {
       this.histories.set(bar.symbol,history);
       await this.#scoreDue(bar);
       await this.#maybePredict(bar);
-      if (this.paperBroker) this.paperBroker.onBar(bar).catch(err=>this.#recordError("paper_bar",err));
+      for(const broker of this.paperBrokers){
+        broker.onBar(bar).catch(err=>this.#recordError("paper_bar_"+(broker.accountId||"unknown"),err));
+      }
       this.emit("market",{type:"bar",data:bar});
     }
   }
@@ -728,8 +737,9 @@ export class RealMarketEngine extends EventEmitter {
     await this.db.savePrediction(p);
     if (this.modelLab) await this.modelLab.shadowPredict(bar.symbol,bar);
     this.emit("market",{type:"prediction",data:{...p,edge,noTrade}});
-    if (this.paperBroker) {
-      this.paperBroker.handlePrediction({...p,edge,noTrade}).catch(err=>this.#recordError("paper_prediction",err));
+    for(const broker of this.paperBrokers){
+      broker.handlePrediction({...p,edge,noTrade})
+        .catch(err=>this.#recordError("paper_prediction_"+(broker.accountId||"unknown"),err));
     }
   }
 
@@ -745,9 +755,13 @@ export class RealMarketEngine extends EventEmitter {
       if (!p.model_id) {
         await this.model.learn(p.features,actualDirection,p);
       }
-      this.emit("market",{type:"prediction_scored",data:{
-        id:p.id,symbol:p.symbol,actualDirection,correct,resultPrice:bar.close,resultReturn:ret,scoredAt:bar.ts
-      }});
+      const scoredEvent={
+        id:p.id,symbol:p.symbol,actualDirection,correct,resultPrice:bar.close,
+        resultReturn:ret,scoredAt:bar.ts,predictedDirection:p.direction,
+        confidence:Number(p.confidence)||0,modelId:p.model_id||null
+      };
+      this.emit("market",{type:"prediction_scored",data:scoredEvent});
+      if(this.mistakeLab) this.mistakeLab.onPredictionScored(scoredEvent).catch?.(()=>{});
     }
     if (this.modelLab) await this.modelLab.scoreShadowDue(bar);
   }
@@ -786,6 +800,8 @@ export class RealMarketEngine extends EventEmitter {
       backfill:this.backfill,
       model:this.model.snapshot(),
       modelLab:this.modelLab?.status?.()||null,
+      mistakeLab:this.mistakeLab?.status?.()||null,
+      paperLanes:this.paperBrokers.map(b=>({accountId:b.accountId,sourceTag:b.sourceTag||null})),
       startedAt:this.startedAt,
       uptimeSeconds:Math.floor((Date.now()-this.startedAt.getTime())/1000)
     };
