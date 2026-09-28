@@ -26,6 +26,7 @@ export class RealMarketEngine extends EventEmitter {
     this.latestTrades=new Map();
     this.barCounters=new Map(this.symbols.map(s=>[s,0]));
     this.latestPatternInsight=new Map();
+    this.patternLabCache=new Map();
     this.focusSymbols=new Set(this.symbols.slice(0,1));
     this.symbolDeepHistory=new Set();
     this.rawQueue=[];
@@ -475,6 +476,12 @@ export class RealMarketEngine extends EventEmitter {
       };
     }
 
+    const cacheKey=String(+new Date(latest.ts))+"::"+rows.length+"::"+String(historyReady);
+    const cached=this.patternLabCache.get(symbol);
+    if (cached?.key===cacheKey) {
+      return {...cached.result,analogs:cached.result.analogs.slice(0,Math.max(5,Math.min(100,Number(limit)||40)))};
+    }
+
     const currentFingerprint=fingerprintFromFeatures(currentFeatures,latest.ts);
     const currentBucket=timeBucketET(latest.ts);
     const keys=["trend","momentum","volume","volatility","orderFlow","vwap"];
@@ -547,7 +554,7 @@ export class RealMarketEngine extends EventEmitter {
       };
     }
 
-    return {
+    const result={
       symbol,
       historyReady,
       status:historyReady?"READY":"BUILDING_HISTORY",
@@ -558,8 +565,10 @@ export class RealMarketEngine extends EventEmitter {
       exactMatches:candidates.filter(x=>x.exact).length,
       analyzedCount:studySet.length,
       statsByHorizon,
-      analogs:candidates.slice(0,Math.max(5,Math.min(100,Number(limit)||40)))
+      analogs:candidates.slice(0,100)
     };
+    this.patternLabCache.set(symbol,{key:cacheKey,result});
+    return {...result,analogs:result.analogs.slice(0,Math.max(5,Math.min(100,Number(limit)||40)))};
   }
 
   #historicalFeatures(rows,index) {
