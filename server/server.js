@@ -11,6 +11,8 @@ import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } fro
 import { ModelLab } from "./model-lab.js";
 import { PaperBroker } from "./paper-broker.js";
 import { ResearchBrain } from "./research-brain.js";
+import { EventEngine } from "./event-engine.js";
+import { GovernanceEngine } from "./governance-engine.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -27,6 +29,11 @@ const MODEL_LAB_ENABLED=String(process.env.MODEL_LAB_ENABLED ?? "true").toLowerC
 const MODEL_LAB_FORCE_TRAIN_ON_START=String(process.env.MODEL_LAB_FORCE_TRAIN_ON_START ?? "false").toLowerCase() === "true";
 const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
+const PAPER_MAX_SPREAD_PCT=Math.max(.001,Math.min(.05,Number(process.env.PAPER_MAX_SPREAD_PCT || .015)));
+const PAPER_MAX_PARTICIPATION=Math.max(.001,Math.min(.10,Number(process.env.PAPER_MAX_PARTICIPATION || .02)));
+const PAPER_PER_SHARE_FEE=Math.max(0,Math.min(.05,Number(process.env.PAPER_PER_SHARE_FEE || .005)));
+const PAPER_MAX_IMPACT_BPS=Math.max(0,Math.min(50,Number(process.env.PAPER_MAX_IMPACT_BPS || 15)));
+const REAL_MONEY_MANUAL_APPROVED=String(process.env.REAL_MONEY_MANUAL_APPROVED ?? "false").toLowerCase()==="true";
 const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1");
 const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
 const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
@@ -70,11 +77,22 @@ const paperBroker=new PaperBroker({
   accountId:PAPER_ACCOUNT_ID,
   startingCash:100000,
   fillBufferBps:PAPER_FILL_BUFFER_BPS,
-  autopilotEnabled:PAPER_AUTOPILOT_ENABLED
+  autopilotEnabled:PAPER_AUTOPILOT_ENABLED,
+  maxSpreadPct:PAPER_MAX_SPREAD_PCT,
+  maxParticipationRate:PAPER_MAX_PARTICIPATION,
+  perShareFee:PAPER_PER_SHARE_FEE,
+  maxImpactBps:PAPER_MAX_IMPACT_BPS
 });
 await paperBroker.init();
 
-engine.attachIntelligence({modelLab,paperBroker});
+const eventEngine=new EventEngine({
+  db,marketEngine:engine,
+  key:process.env.ALPACA_API_KEY_ID,
+  secret:process.env.ALPACA_API_SECRET_KEY
+});
+await eventEngine.init();
+
+engine.attachIntelligence({modelLab,paperBroker,eventEngine});
 
 const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
 await deepStudy.init();
@@ -89,6 +107,12 @@ const researchBrain=new ResearchBrain({
   role:RESEARCH_BRAIN_ROLE
 });
 await researchBrain.init();
+
+const governance=new GovernanceEngine({
+  db,modelLab,paperBroker,eventEngine,
+  manualApproval:REAL_MONEY_MANUAL_APPROVED
+});
+await governance.init();
 
 const app=express();
 app.disable("x-powered-by");
@@ -112,6 +136,8 @@ app.get("/health",async(req,res)=>{
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
     paperBroker:true,
+    eventEngine:eventEngine.status(),
+    governance:governance.status(),
     researchBrain:{
       longHistoryEnabled:LONG_HISTORY_ENABLED,
       longHistoryProvider:LONG_HISTORY_PROVIDER,
@@ -128,12 +154,30 @@ app.get("/api/status",async(req,res)=>{
   res.json({
     ...engine.status(),
     database:await db.ping(),
-    modelLab:modelLab.status()
+    modelLab:modelLab.status(),
+    eventEngine:eventEngine.status(),
+    governance:governance.status()
   });
 });
 
 app.get("/api/model-lab",async(req,res)=>{
   res.json(modelLab.status());
+});
+
+app.get("/api/events/status",async(req,res)=>{
+  res.json(eventEngine.status());
+});
+
+app.get("/api/readiness",async(req,res)=>{
+  res.json(governance.status().readiness||await governance.evaluateReadiness(governance.lastDrift));
+});
+
+app.get("/api/drift",async(req,res)=>{
+  res.json(governance.status().drift||await governance.evaluateDrift());
+});
+
+app.get("/api/proof-scoreboard",async(req,res)=>{
+  res.json({rows:await governance.scoreboard(),governance:governance.status()});
 });
 
 app.get("/api/research",async(req,res)=>{
@@ -225,6 +269,7 @@ app.get("/api/snapshot/:symbol",async(req,res)=>{
   const symbol=req.params.symbol.toUpperCase();
   if (!engine.hotSymbols().includes(symbol)) return res.status(404).json({error:"Symbol is not active in the live hot set"});
   const snap=engine.snapshot(symbol);
+  const eventRisk=await eventEngine.riskForSymbol(symbol).catch(()=>({risk:0,blocked:false,elevated:false,events:[]}));
   const predictions=await db.recentPredictions({symbol,limit:80});
 
   let patternInsight=snap.patternInsight||null;
@@ -252,7 +297,10 @@ app.get("/api/snapshot/:symbol",async(req,res)=>{
     }
   }
 
-  res.json({...snap,patternInsight,predictions});
+  const analysis=snap.analysis
+    ? {...snap.analysis,noTrade:Boolean(snap.analysis.noTrade||eventRisk.blocked),eventRisk}
+    : snap.analysis;
+  res.json({...snap,analysis,eventRisk,patternInsight,predictions});
 });
 
 app.get("/api/watchlist",async(req,res)=>{
@@ -362,7 +410,9 @@ server.listen(PORT,"0.0.0.0",()=>{
     symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED,
     modelLabEnabled:MODEL_LAB_ENABLED,
     modelLabForceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START,
-    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED
+    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED,
+    realMoneyManualApproved:REAL_MONEY_MANUAL_APPROVED,
+    realMoneyEnabled:false
   }));
 });
 
@@ -372,6 +422,8 @@ const shutdown=async()=>{
   deepStudy.stop();
   modelLab.stop();
   paperBroker.stop();
+  eventEngine.stop();
+  governance.stop();
   researchBrain.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
