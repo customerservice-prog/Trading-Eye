@@ -56,6 +56,50 @@ export class MarketClient {
     return r.json();
   }
 
+  async modelLab() {
+    const r=await fetch("/api/model-lab",{cache:"no-store"});
+    if (!r.ok) throw new Error("Model Lab request failed: "+r.status);
+    return r.json();
+  }
+
+  async paper() {
+    const r=await fetch("/api/paper",{cache:"no-store"});
+    if (!r.ok) throw new Error("Paper account request failed: "+r.status);
+    return r.json();
+  }
+
+  async setPaperAutopilot(enabled) {
+    const r=await fetch("/api/paper/autopilot",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enabled:Boolean(enabled)})
+    });
+    const body=await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.error||("Autopilot update failed: "+r.status));
+    return body;
+  }
+
+  async paperOrder({symbol,side,qty=null,source="MANUAL_PAPER"}={}) {
+    const r=await fetch("/api/paper/order",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({symbol,side,qty,source})
+    });
+    const body=await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.reason||body.error||("Paper order failed: "+r.status));
+    return body;
+  }
+
+  async flattenPaper(symbol) {
+    const r=await fetch("/api/paper/flatten/"+encodeURIComponent(symbol),{
+      method:"POST",
+      headers:{"Content-Type":"application/json"}
+    });
+    const body=await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.reason||body.error||("Flatten failed: "+r.status));
+    return body;
+  }
+
   async patternLab(symbol,limit=40) {
     const r=await fetch(
       "/api/pattern-lab/"+encodeURIComponent(symbol)+"?limit="+encodeURIComponent(limit),
