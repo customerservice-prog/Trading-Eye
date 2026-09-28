@@ -1,6 +1,6 @@
-import { MarketClient } from "./market-client.js?v=20260928-1905";
-import { MarketChart } from "./chart.js?v=20260928-1905";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1905";
+import { MarketClient } from "./market-client.js?v=20260928-2230";
+import { MarketChart } from "./chart.js?v=20260928-2230";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-2230";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
@@ -28,6 +28,7 @@ let predictionData={rows:[],stats:null,legacyModel:null,modelLab:null};
 let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:false,positions:[],fills:[]};
 let explorationData={enabled:true,startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:true,positions:[],fills:[]};
 let mistakeData={enabled:true,running:false,lastError:null,lastAnalysis:null};
+let replayData={status:{enabled:true,running:false,totals:{runs:0,decisions:0,trades:0,wins:0,losses:0}},runs:[],leaderboard:[]};
 let modelLabData={enabled:true,training:false,production:null,latestRun:null};
 let readinessData={
   status:"LOCKED",reviewEligible:false,liveTradingEnabled:false,
@@ -239,6 +240,17 @@ function renderBeginnerCommandCenter() {
     $("heroExploreFills").textContent=num(ep.fillCount||0);
     $("heroExploreMistakes").textContent=eMistakeLevel==="ALERT"?"BLOCKING":eMistakeLevel;
     $("heroExploreMistakes").className=eMistakeLevel==="ALERT"?"negative":eMistakeLevel==="WARN"?"neutral":"positive";
+  }
+
+  if ($("heroReplayState")) {
+    const rs=replayData?.status||{};
+    const totals=rs.totals||{};
+    const last=rs.lastRun||{};
+    $("heroReplayState").textContent=rs.running?"RUNNING NOW":"24/7 ACTIVE";
+    $("heroReplayState").className=rs.running?"positive":"";
+    $("heroReplayMeta").textContent=Number(totals.runs)
+      ? `${num(totals.runs)} runs · ${num(totals.trades)} simulated trades${last.replayDay?" · last "+last.replayDay:""}`
+      :"Server replay worker is starting; it keeps running with this page closed.";
   }
 
   const jobs=Array.isArray(researchData.jobs)?researchData.jobs:[];
@@ -730,6 +742,80 @@ function renderMistakeLab() {
 }
 
 
+function renderReplayArena() {
+  if (!$("replayTitle")) return;
+  const data=replayData||{};
+  const rs=data.status||{};
+  const totals=rs.totals||{};
+  const last=rs.lastRun||{};
+  const summary=last.summary||{};
+  const running=Boolean(rs.running);
+
+  $("replayTitle").textContent=running
+    ?"REPLAY ARENA RUNNING NOW"
+    : Number(totals.runs)
+      ?"REPLAY ARENA ACTIVE 24/7"
+      :"REPLAY ARENA STARTING";
+  $("replayDetail").textContent=running
+    ?"Trading Eye is currently replaying a historical session forward minute-by-minute with future bars hidden."
+    :"The worker keeps cycling stored sessions on the server. Replay failures can shape challenger training but never count as real-money proof.";
+
+  $("replayRuns").textContent=num(totals.runs||0);
+  $("replayDecisions").textContent=num(totals.decisions||0);
+  $("replayTrades").textContent=num(totals.trades||0);
+  $("replayWinRate").textContent=Number(totals.trades)>0?pct(Number(totals.wins||0)/Number(totals.trades)):"—";
+  $("replayDay").textContent=last.replayDay||"—";
+  $("replayBestStrategy").textContent=summary.bestStrategy?.strategy
+    ? summary.bestStrategy.strategy.replaceAll("_"," ").toUpperCase()
+    : "—";
+  $("replayModel").textContent=last.modelFamily||summary.selectedModel||"waiting";
+  $("replayLastRun").textContent=last.completedAt
+    ? "last completed "+ageText(last.completedAt)
+    : running?"running now":"waiting";
+
+  const board=Array.isArray(data.leaderboard)?data.leaderboard:[];
+  $("replayStrategyBody").innerHTML=board.length
+    ? board.map(x=>`
+      <tr>
+        <td><strong>${String(x.strategy||"").replaceAll("_"," ")}</strong></td>
+        <td>${num(x.trades||0)}</td>
+        <td>${pct(Number(x.winRate)||0)}</td>
+        <td class="${Number(x.avgReturn)>0?"positive":Number(x.avgReturn)<0?"negative":"neutral"}">${(Number(x.avgReturn||0)*100).toFixed(3)}%</td>
+        <td>${x.profitFactor==null?"—":Number.isFinite(Number(x.profitFactor))?Number(x.profitFactor).toFixed(2):"∞"}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="5">Replay strategy results will appear after the first completed session.</td></tr>';
+
+  const focusSymbols=Array.isArray(summary.focusSymbols)?summary.focusSymbols:[];
+  const focusTimes=Array.isArray(summary.focusTimeBuckets)?summary.focusTimeBuckets:[];
+  const zones=[
+    ...focusSymbols.map(x=>({type:"SYMBOL",name:x.symbol||x,detail:`${num(x.samples||0)} replay trades · ${Math.round(Number(x.errorRate||0)*100)}% loss/error rate`})),
+    ...focusTimes.map(x=>({type:"TIME",name:String(x.bucket||x).replaceAll("_"," "),detail:`${num(x.samples||0)} replay trades · ${Math.round(Number(x.errorRate||0)*100)}% loss/error rate`}))
+  ];
+  $("replayFocusCount").textContent=`${zones.length} focus zone${zones.length===1?"":"s"}`;
+  $("replayFocusList").innerHTML=zones.length
+    ? zones.map(z=>`
+      <div class="replay-focus-item">
+        <span>${z.type}</span>
+        <div><strong>${z.name}</strong><small>${z.detail}</small></div>
+      </div>`).join("")
+    : '<div class="replay-focus-empty">No replay weakness cluster has been strong enough to feed into challenger training yet.</div>';
+
+  const runs=Array.isArray(data.runs)?data.runs:[];
+  $("replayRunBody").innerHTML=runs.length
+    ? runs.map(r=>`
+      <tr>
+        <td>${safeTime(r.startedAt)}</td>
+        <td>${r.replayDay||"—"}</td>
+        <td>${r.modelFamily||"—"}</td>
+        <td>${num(r.summary?.decisions||0)}</td>
+        <td>${num(r.summary?.trades||0)}</td>
+        <td>${r.summary?.bestStrategy?.strategy?String(r.summary.bestStrategy.strategy).replaceAll("_"," "):"—"}</td>
+        <td class="${r.status==="COMPLETE"?"positive":r.status==="ERROR"?"negative":"neutral"}">${r.status||"—"}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="7">No replay sessions stored yet.</td></tr>';
+}
+
+
 function renderLearning() {
   const s=predictionData.stats;
   const production=modelLabData?.production||predictionData.modelLab?.production||null;
@@ -1085,6 +1171,7 @@ function renderAll() {
   renderPaper();
   renderExploration();
   renderMistakeLab();
+  renderReplayArena();
   renderLearning();
   renderPatternLab();
   renderScanner();
@@ -1094,13 +1181,13 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,lab,research,readiness]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,replay,lab,research,readiness]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.explorationPaper(),client.mistakes(),
+      client.studies(10),client.scanner(50),client.paper(),client.explorationPaper(),client.mistakes(),client.replay(10),
       client.modelLab(),client.research(),client.readiness()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; explorationData=exploreState; mistakeData=mistakes;
+    paperData=paperState; explorationData=exploreState; mistakeData=mistakes; replayData=replay;
     modelLabData=lab; researchData=research; readinessData=readiness;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
@@ -1230,6 +1317,24 @@ function setTour(open,markSeen=false) {
   document.body.style.overflow=open?"hidden":"";
   if (markSeen) try { localStorage.setItem("trading-eye-tour-seen-real","1"); } catch {}
 }
+
+$("runReplayBtn")?.addEventListener("click",async()=>{
+  const btn=$("runReplayBtn");
+  try{
+    btn.disabled=true;
+    btn.textContent="Replay running…";
+    await client.runReplay();
+    replayData=await client.replay(10);
+    renderReplayArena();
+    renderBeginnerCommandCenter();
+    toast("Replay Arena completed another no-hindsight session.");
+  }catch(err){
+    toast(String(err.message||err));
+  }finally{
+    btn.disabled=false;
+    btn.textContent="Run one replay now";
+  }
+});
 
 $("researchTopBtn")?.addEventListener("click",openResearchFocus);
 $("beginnerResearchBtn")?.addEventListener("click",openResearchFocus);
@@ -1379,12 +1484,14 @@ clearInterval(refreshTimer);
 refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
 clearInterval(researchTimer);
 researchTimer=setInterval(()=>{
-  Promise.all([client.research(),client.mistakes()])
-    .then(([r,m])=>{
+  Promise.all([client.research(),client.mistakes(),client.replay(10)])
+    .then(([r,m,replay])=>{
       researchData=r;
       mistakeData=m;
+      replayData=replay;
       renderResearchBrain();
       renderMistakeLab();
+      renderReplayArena();
       renderBeginnerCommandCenter();
     })
     .catch(()=>{});
@@ -1417,5 +1524,6 @@ window.TradingEye=Object.freeze({
   paperAccount:()=>paperData,
   explorationAccount:()=>explorationData,
   mistakes:()=>mistakeData,
+  replay:()=>replayData,
   modelLab:()=>modelLabData
 });
