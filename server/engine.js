@@ -105,6 +105,12 @@ export class RealMarketEngine extends EventEmitter {
 
   #onProviderStatus(status) {
     this.providerStatus={...status,at:new Date().toISOString()};
+    console.log(JSON.stringify({
+      event:"provider_status",
+      provider:status.provider,
+      feed:status.feed,
+      state:status.state
+    }));
     this.emit("status",this.status());
   }
 
