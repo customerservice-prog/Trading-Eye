@@ -374,7 +374,7 @@ function renderScanner() {
   $("universeAssetCount").textContent=num(universe.dataSupported||universe.active||0);
   $("scannerDate").textContent=scan?.scan_date?String(scan.scan_date).slice(0,10):"—";
   $("scannerStatus").textContent=scan
-    ? `${scan.status||"UNKNOWN"} · ${num(scan.assets_scanned||0)} stocks scanned`
+    ? `${scan.status||"UNKNOWN"} · broad ${num(scan.assets_scanned||0)} · deep ${num(scan.deep_assets||0)} · ${num(scan.deep_bars||0)} 5m bars`
     : "Waiting for first full-market scan";
   $("hotSetCount").textContent=num((scannerData.hotSymbols||[]).length);
 
@@ -389,8 +389,9 @@ function renderScanner() {
         <td class="${Number(r.return_20d)>0?"positive":Number(r.return_20d)<0?"negative":"neutral"}">${pct(Number(r.return_20d)||0)}</td>
         <td>${Number(r.relative_volume||0).toFixed(2)}×</td>
         <td>${Number(r.interesting_score||0).toFixed(2)}</td>
+        <td>${r.deep_score==null?"—":Number(r.deep_score).toFixed(2)}</td>
       </tr>`).join("")
-    : '<tr><td colspan="8">Trading Eye has not completed a whole-market scan yet.</td></tr>';
+    : '<tr><td colspan="9">Trading Eye has not completed a whole-market scan yet.</td></tr>';
 }
 
 function renderDeepStudy() {
