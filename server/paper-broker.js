@@ -6,7 +6,8 @@ export class PaperBroker {
   constructor({
     db,marketEngine,accountId="TE_PAPER_MAIN",startingCash=100000,
     fillBufferBps=1.5,maxPositionPct=.10,maxGrossPct=.50,maxPositions=6,
-    dailyLossPct=.03,autopilotMinConfidence=.50,autopilotMinEdge=.07
+    dailyLossPct=.03,autopilotMinConfidence=.50,autopilotMinEdge=.07,
+    autopilotEnabled=true
   }){
     this.db=db;
     this.marketEngine=marketEngine;
@@ -19,6 +20,7 @@ export class PaperBroker {
     this.dailyLossPct=dailyLossPct;
     this.autopilotMinConfidence=autopilotMinConfidence;
     this.autopilotMinEdge=autopilotMinEdge;
+    this.autopilotEnabled=Boolean(autopilotEnabled);
     this.snapshotTimer=null;
     this.processing=new Set();
   }
@@ -26,9 +28,9 @@ export class PaperBroker {
   async init(){
     await this.db.pool.query(`
       INSERT INTO paper_accounts(account_id,starting_cash,cash,realized_pnl,autopilot_enabled)
-      VALUES($1,$2,$2,0,true)
+      VALUES($1,$2,$2,0,$3)
       ON CONFLICT(account_id) DO NOTHING
-    `,[this.accountId,this.startingCash]);
+    `,[this.accountId,this.startingCash,this.autopilotEnabled]);
     this.snapshotTimer=setInterval(()=>this.recordEquitySnapshot().catch(()=>{}),5*60*1000);
     await this.recordEquitySnapshot().catch(()=>{});
   }
