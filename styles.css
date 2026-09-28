@@ -831,7 +831,7 @@ body[data-data-state="missing"] #marketChart { opacity:.28; }
 }
 .scanner-summary {
   display:grid;
-  grid-template-rows:repeat(3,1fr);
+  grid-template-rows:repeat(4,1fr);
   border-right:1px solid var(--line);
   background:#070d15;
 }
@@ -869,4 +869,15 @@ body[data-data-state="missing"] #marketChart { opacity:.28; }
   .scanner-layout { grid-template-columns:1fr; }
   .scanner-summary { grid-template-columns:repeat(3,1fr); grid-template-rows:1fr; border-right:0; border-bottom:1px solid var(--line); }
   .scanner-summary > div { border-bottom:0; border-right:1px solid var(--line); }
+}
+
+.scanner-table-wrap td:last-child {
+  min-width:220px;
+  color:var(--muted-2);
+  white-space:normal;
+  line-height:1.35;
+}
+#broadRegime {
+  font-size:13px;
+  text-transform:capitalize;
 }
