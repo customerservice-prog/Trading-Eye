@@ -87,6 +87,44 @@ export class Database {
         details JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      CREATE TABLE IF NOT EXISTS daily_market_studies (
+        study_date DATE NOT NULL,
+        stage TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'RUNNING',
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        symbols JSONB NOT NULL DEFAULT '{}'::jsonb,
+        market JSONB NOT NULL DEFAULT '{}'::jsonb,
+        prediction_review JSONB NOT NULL DEFAULT '{}'::jsonb,
+        pattern_findings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        analogs JSONB NOT NULL DEFAULT '[]'::jsonb,
+        lessons JSONB NOT NULL DEFAULT '[]'::jsonb,
+        model_version INTEGER,
+        error TEXT,
+        PRIMARY KEY(study_date, stage)
+      );
+      CREATE INDEX IF NOT EXISTS daily_market_studies_completed
+        ON daily_market_studies(completed_at DESC);
+
+      CREATE TABLE IF NOT EXISTS pattern_memory (
+        symbol TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        horizon_minutes INTEGER NOT NULL,
+        sample_count INTEGER NOT NULL DEFAULT 0,
+        up_count INTEGER NOT NULL DEFAULT 0,
+        flat_count INTEGER NOT NULL DEFAULT 0,
+        down_count INTEGER NOT NULL DEFAULT 0,
+        avg_return DOUBLE PRECISION NOT NULL DEFAULT 0,
+        avg_abs_return DOUBLE PRECISION NOT NULL DEFAULT 0,
+        avg_mfe DOUBLE PRECISION NOT NULL DEFAULT 0,
+        avg_mae DOUBLE PRECISION NOT NULL DEFAULT 0,
+        last_seen TIMESTAMPTZ,
+        context JSONB NOT NULL DEFAULT '{}'::jsonb,
+        PRIMARY KEY(symbol,fingerprint,horizon_minutes)
+      );
+      CREATE INDEX IF NOT EXISTS pattern_memory_strength
+        ON pattern_memory(sample_count DESC);
     `);
     this.ready = true;
     return true;
@@ -279,6 +317,135 @@ export class Database {
       ON CONFLICT(model_key) DO UPDATE SET
         version=EXCLUDED.version,weights=EXCLUDED.weights,stats=EXCLUDED.stats,updated_at=NOW()
     `,[key,version,JSON.stringify(weights),JSON.stringify(stats)]);
+  }
+
+  async getSessionBars(studyDate,{startTime="09:30:00",endTime="16:00:00"}={}) {
+    if (!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT provider,feed,symbol,ts,open,high,low,close,volume,trade_count,vwap,source
+      FROM market_bars_1m
+      WHERE (ts AT TIME ZONE 'America/New_York')::date = $1::date
+        AND (ts AT TIME ZONE 'America/New_York')::time >= $2::time
+        AND (ts AT TIME ZONE 'America/New_York')::time < $3::time
+      ORDER BY symbol, ts
+    `,[studyDate,startTime,endTime]);
+    return q.rows;
+  }
+
+  async getPredictionReview(studyDate) {
+    if (!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT id,symbol,created_at,target_at,horizon_minutes,reference_price,direction,
+             confidence,p_up,p_flat,p_down,features,model_version,status,result_price,
+             result_return,actual_direction,correct,scored_at
+      FROM predictions
+      WHERE (created_at AT TIME ZONE 'America/New_York')::date = $1::date
+      ORDER BY created_at
+    `,[studyDate]);
+    return q.rows;
+  }
+
+  async beginDailyStudy(studyDate,stage,modelVersion) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO daily_market_studies(study_date,stage,status,started_at,model_version)
+      VALUES($1,$2,'RUNNING',NOW(),$3)
+      ON CONFLICT(study_date,stage) DO UPDATE SET
+        status='RUNNING',started_at=NOW(),completed_at=NULL,error=NULL,model_version=EXCLUDED.model_version
+    `,[studyDate,stage,modelVersion]);
+  }
+
+  async completeDailyStudy(studyDate,stage,payload) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      UPDATE daily_market_studies SET
+        status='COMPLETE',completed_at=NOW(),
+        symbols=$3::jsonb,market=$4::jsonb,prediction_review=$5::jsonb,
+        pattern_findings=$6::jsonb,analogs=$7::jsonb,lessons=$8::jsonb,error=NULL
+      WHERE study_date=$1 AND stage=$2
+    `,[
+      studyDate,stage,
+      JSON.stringify(payload.symbols||{}),JSON.stringify(payload.market||{}),
+      JSON.stringify(payload.predictionReview||{}),JSON.stringify(payload.patternFindings||{}),
+      JSON.stringify(payload.analogs||[]),JSON.stringify(payload.lessons||[])
+    ]);
+  }
+
+  async failDailyStudy(studyDate,stage,error) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      UPDATE daily_market_studies
+      SET status='ERROR',completed_at=NOW(),error=$3
+      WHERE study_date=$1 AND stage=$2
+    `,[studyDate,stage,String(error).slice(0,2000)]);
+  }
+
+  async hasCompletedStudy(studyDate,stage) {
+    if (!this.ready) return false;
+    const q=await this.pool.query(`
+      SELECT 1 FROM daily_market_studies
+      WHERE study_date=$1 AND stage=$2 AND status='COMPLETE'
+      LIMIT 1
+    `,[studyDate,stage]);
+    return q.rowCount>0;
+  }
+
+  async recentStudies({limit=30,stage="regular_close"}={}) {
+    if (!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT study_date,stage,status,started_at,completed_at,symbols,market,
+             prediction_review,pattern_findings,analogs,lessons,model_version,error
+      FROM daily_market_studies
+      WHERE stage=$1
+      ORDER BY study_date DESC
+      LIMIT $2
+    `,[stage,Math.max(1,Math.min(365,limit))]);
+    return q.rows;
+  }
+
+  async updatePatternMemory(row) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO pattern_memory(
+        symbol,fingerprint,horizon_minutes,sample_count,up_count,flat_count,down_count,
+        avg_return,avg_abs_return,avg_mfe,avg_mae,last_seen,context
+      ) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+      ON CONFLICT(symbol,fingerprint,horizon_minutes) DO UPDATE SET
+        sample_count=pattern_memory.sample_count+1,
+        up_count=pattern_memory.up_count+EXCLUDED.up_count,
+        flat_count=pattern_memory.flat_count+EXCLUDED.flat_count,
+        down_count=pattern_memory.down_count+EXCLUDED.down_count,
+        avg_return=((pattern_memory.avg_return*pattern_memory.sample_count)+EXCLUDED.avg_return)/(pattern_memory.sample_count+1),
+        avg_abs_return=((pattern_memory.avg_abs_return*pattern_memory.sample_count)+EXCLUDED.avg_abs_return)/(pattern_memory.sample_count+1),
+        avg_mfe=((pattern_memory.avg_mfe*pattern_memory.sample_count)+EXCLUDED.avg_mfe)/(pattern_memory.sample_count+1),
+        avg_mae=((pattern_memory.avg_mae*pattern_memory.sample_count)+EXCLUDED.avg_mae)/(pattern_memory.sample_count+1),
+        last_seen=EXCLUDED.last_seen,
+        context=EXCLUDED.context
+    `,[
+      row.symbol,row.fingerprint,row.horizonMinutes,
+      row.direction==="UP"?1:0,row.direction==="FLAT"?1:0,row.direction==="DOWN"?1:0,
+      row.return,row.absReturn,row.mfe,row.mae,row.lastSeen,JSON.stringify(row.context||{})
+    ]);
+  }
+
+  async topPatterns({symbol=null,minSamples=12,limit=30}={}) {
+    if (!this.ready) return [];
+    const params=[minSamples];
+    let where="WHERE sample_count >= $1";
+    if (symbol) {
+      params.push(symbol);
+      where+=" AND symbol=$2";
+    }
+    params.push(Math.max(1,Math.min(200,limit)));
+    const q=await this.pool.query(`
+      SELECT symbol,fingerprint,horizon_minutes,sample_count,up_count,flat_count,down_count,
+             avg_return,avg_abs_return,avg_mfe,avg_mae,last_seen,context
+      FROM pattern_memory
+      ${where}
+      ORDER BY sample_count DESC, ABS(avg_return) DESC
+      LIMIT ${params.length}
+    `,params);
+    return q.rows;
   }
 
   async heartbeat(key,status,details={}) {
