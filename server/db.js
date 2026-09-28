@@ -810,13 +810,13 @@ export class Database {
     await this.pool.query(`
       INSERT INTO predictions
         (id,symbol,provider,feed,created_at,target_at,horizon_minutes,reference_price,
-         direction,confidence,p_up,p_flat,p_down,features,model_version)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)
+         direction,confidence,p_up,p_flat,p_down,features,model_version,model_id,model_details)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17::jsonb)
       ON CONFLICT(id) DO NOTHING
     `,[
       p.id,p.symbol,p.provider,p.feed,p.createdAt,p.targetAt,p.horizonMinutes,
       p.referencePrice,p.direction,p.confidence,p.pUp,p.pFlat,p.pDown,
-      JSON.stringify(p.features),p.modelVersion
+      JSON.stringify(p.features),p.modelVersion,p.modelId||null,JSON.stringify(p.modelDetails||{})
     ]);
   }
 
