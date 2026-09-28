@@ -74,7 +74,8 @@ export class ResearchBrain extends EventEmitter {
     longHistoryEnabled=false,
     longHistoryProvider="stooq_bulk",
     longHistoryStart="1999-01-01",
-    longHistoryUrl="https://stooq.com/db/h/d_us_txt.zip"
+    longHistoryUrl="https://static.stooq.com/db/h/d_us_txt.zip",
+    longHistoryApiKey=""
   }){
     super();
     this.db=db;
@@ -85,6 +86,8 @@ export class ResearchBrain extends EventEmitter {
     this.longHistoryProvider=longHistoryProvider;
     this.longHistoryStart=longHistoryStart;
     this.longHistoryUrl=longHistoryUrl;
+    this.longHistoryApiKey=String(longHistoryApiKey||"");
+    this.longHistoryRetryAfter=0;
     this.timer=null;
     this.heartbeatTimer=null;
     this.longHistoryRunning=false;
@@ -141,7 +144,14 @@ export class ResearchBrain extends EventEmitter {
           provider:this.longHistoryProvider,
           targetStart:this.longHistoryStart,
           enabled:this.longHistoryEnabled,
-          status:this.longHistoryRunning?"SYNCING":(Number(coverage.longHistory?.bars)>0?"READY":"WAITING"),
+          keyConfigured:Boolean(this.longHistoryApiKey),
+          status:this.longHistoryRunning
+            ?"SYNCING"
+            :Number(coverage.longHistory?.bars)>0
+              ?"READY"
+              :this.longHistoryEnabled&&!this.longHistoryApiKey
+                ?"AUTH_REQUIRED"
+                :"WAITING",
           note:"Separate daily-history lane; never labeled as Alpaca."
         }
       },
@@ -159,6 +169,23 @@ export class ResearchBrain extends EventEmitter {
 
     const coverage=await this.db.researchCoverage();
     if(this.longHistoryEnabled && !this.longHistoryRunning){
+      if(!this.longHistoryApiKey){
+        await this.db.upsertResearchJob({
+          jobKey:"long-history-1999-present",
+          jobType:"LONG_HISTORY_INGEST",
+          status:"WAITING",
+          phase:"AUTH_REQUIRED",
+          provider:this.longHistoryProvider,
+          progress:0,
+          details:{
+            targetStart:this.longHistoryStart,
+            keyRequired:true,
+            keyUrl:"https://stooq.com/q/d/?s=spy.us&get_apikey"
+          }
+        });
+        return;
+      }
+      if(Date.now()<this.longHistoryRetryAfter) return;
       const last=coverage.longHistory?.last?String(coverage.longHistory.last).slice(0,10):null;
       const today=etDate();
       const shouldSync=!coverage.longHistory?.bars || !last || last<today;
@@ -323,13 +350,18 @@ export class ResearchBrain extends EventEmitter {
       details:{provider:this.longHistoryProvider,url:this.longHistoryUrl}
     });
 
-    const res=await fetch(this.longHistoryUrl,{
+    const u=new URL(this.longHistoryUrl);
+    if(this.longHistoryApiKey) u.searchParams.set("apikey",this.longHistoryApiKey);
+    const res=await fetch(u,{
       headers:{
         "user-agent":"Trading-Eye-Research/1.0",
         "accept":"application/zip,application/octet-stream,*/*"
       }
     });
-    if(!res.ok||!res.body) throw new Error(`Long-history bulk HTTP ${res.status}`);
+    if(!res.ok||!res.body){
+      if([401,403].includes(res.status)) this.longHistoryRetryAfter=Date.now()+6*60*60*1000;
+      throw new Error(`Long-history bulk HTTP ${res.status}`);
+    }
 
     const zipStream=Readable.fromWeb(res.body).pipe(unzipper.Parse({forceStream:true}));
     let symbolsDone=0,barsProcessed=0,barsStored=0,filesSkipped=0;
@@ -589,6 +621,7 @@ export class ResearchBrain extends EventEmitter {
       details:{area}
     });
     if(area==="long_history"){
+      this.longHistoryRetryAfter=Math.max(this.longHistoryRetryAfter,Date.now()+60*60*1000);
       await this.db.upsertResearchJob({
         jobKey:"long-history-1999-present",jobType:"LONG_HISTORY_INGEST",
         status:"ERROR",phase:"ERROR",provider:this.longHistoryProvider,
