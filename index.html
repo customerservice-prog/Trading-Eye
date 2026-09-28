@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#050810" />
   <title>Trading Eye — AI Market Terminal</title>
-  <link rel="stylesheet" href="./styles.css?v=20260928-0935" />
+  <link rel="stylesheet" href="./styles.css?v=20260928-1415" />
 </head>
 <body>
   <div id="app" class="terminal-shell">
@@ -416,6 +416,24 @@
                 </table>
               </div>
             </div>
+
+            <div class="proof-table-block readiness-proof-block">
+              <div class="proof-table-head">
+                <div>
+                  <span class="eyebrow">Real-money proof wall</span>
+                  <strong id="readinessProofTitle">Server proof gate: LOCKED</strong>
+                </div>
+                <span id="readinessProofMeta">Loading independent proof gates…</span>
+              </div>
+              <div id="readinessGateList" class="readiness-gate-list">
+                <div class="readiness-gate blocked">
+                  <div class="readiness-gate-copy">
+                    <strong>Server proof gate loading</strong>
+                    <span>Nothing in the browser can bypass this wall.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="tab-pane" id="tab-research">
@@ -667,6 +685,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./src/app.js?v=20260928-0935"></script>
+  <script type="module" src="./src/app.js?v=20260928-1415"></script>
 </body>
 </html>
