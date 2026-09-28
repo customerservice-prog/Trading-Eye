@@ -194,6 +194,114 @@ export class Database {
         ON predictions(symbol, created_at DESC);
       CREATE INDEX IF NOT EXISTS predictions_pending_target
         ON predictions(status, target_at);
+      ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_id TEXT;
+      ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_details JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+      CREATE TABLE IF NOT EXISTS model_registry (
+        model_id TEXT PRIMARY KEY,
+        family TEXT NOT NULL,
+        horizon_minutes INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        train_start TIMESTAMPTZ,
+        train_end TIMESTAMPTZ,
+        feature_names JSONB NOT NULL DEFAULT '[]'::jsonb,
+        artifact JSONB NOT NULL,
+        calibration JSONB NOT NULL DEFAULT '{}'::jsonb,
+        validation_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        test_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        dataset JSONB NOT NULL DEFAULT '{}'::jsonb,
+        promoted_at TIMESTAMPTZ,
+        parent_model_id TEXT,
+        notes TEXT
+      );
+      CREATE INDEX IF NOT EXISTS model_registry_horizon_status
+        ON model_registry(horizon_minutes,status,trained_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS model_registry_one_production_per_horizon
+        ON model_registry(horizon_minutes)
+        WHERE status='PRODUCTION';
+
+      CREATE TABLE IF NOT EXISTS model_lab_runs (
+        run_id TEXT PRIMARY KEY,
+        horizon_minutes INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        dataset JSONB NOT NULL DEFAULT '{}'::jsonb,
+        candidates JSONB NOT NULL DEFAULT '[]'::jsonb,
+        winner_model_id TEXT,
+        promotion_reason TEXT,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS model_lab_runs_recent
+        ON model_lab_runs(started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS paper_accounts (
+        account_id TEXT PRIMARY KEY,
+        starting_cash DOUBLE PRECISION NOT NULL,
+        cash DOUBLE PRECISION NOT NULL,
+        realized_pnl DOUBLE PRECISION NOT NULL DEFAULT 0,
+        autopilot_enabled BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS paper_positions (
+        account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        avg_price DOUBLE PRECISION NOT NULL,
+        opened_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(account_id,symbol)
+      );
+
+      CREATE TABLE IF NOT EXISTS paper_orders (
+        order_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        order_type TEXT NOT NULL DEFAULT 'MARKET',
+        status TEXT NOT NULL,
+        source TEXT NOT NULL,
+        model_id TEXT,
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        filled_at TIMESTAMPTZ,
+        reference_quote JSONB NOT NULL DEFAULT '{}'::jsonb,
+        reject_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS paper_orders_recent
+        ON paper_orders(account_id,requested_at DESC);
+
+      CREATE TABLE IF NOT EXISTS paper_fills (
+        fill_id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        fill_price DOUBLE PRECISION NOT NULL,
+        market_bid DOUBLE PRECISION,
+        market_ask DOUBLE PRECISION,
+        quote_ts TIMESTAMPTZ,
+        fill_model TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS paper_fills_recent
+        ON paper_fills(account_id,created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS paper_equity_snapshots (
+        account_id TEXT NOT NULL,
+        ts TIMESTAMPTZ NOT NULL,
+        equity DOUBLE PRECISION NOT NULL,
+        cash DOUBLE PRECISION NOT NULL,
+        open_pnl DOUBLE PRECISION NOT NULL,
+        realized_pnl DOUBLE PRECISION NOT NULL,
+        positions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        PRIMARY KEY(account_id,ts)
+      );
 
       CREATE TABLE IF NOT EXISTS model_state (
         model_key TEXT PRIMARY KEY,
