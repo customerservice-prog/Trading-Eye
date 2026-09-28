@@ -34,6 +34,18 @@ export class MarketClient {
     return r.json();
   }
 
+  async studyStatus() {
+    const r=await fetch("/api/studies/status",{cache:"no-store"});
+    if (!r.ok) throw new Error("Study status request failed: "+r.status);
+    return r.json();
+  }
+
+  async studies(limit=10) {
+    const r=await fetch("/api/studies/latest?limit="+encodeURIComponent(limit),{cache:"no-store"});
+    if (!r.ok) throw new Error("Studies request failed: "+r.status);
+    return r.json();
+  }
+
   connect() {
     this.closed=false;
     const proto=location.protocol==="https:"?"wss":"ws";
