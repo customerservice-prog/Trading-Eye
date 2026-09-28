@@ -170,7 +170,7 @@ function renderChart(analysis) {
   const quote = sim.getQuote(activeSymbol);
   const meta = sim.getMeta(activeSymbol);
   const raw = sim.getCandles(activeSymbol, "1m", 30);
-  const recent = raw.slice(-20);
+  const vwapRows = raw.slice(-20);
   const vwap = recent.reduce((a, x) => a + ((x.high + x.low + x.close) / 3) * x.volume, 0) /
     Math.max(1, recent.reduce((a, x) => a + x.volume, 0));
 
