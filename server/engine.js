@@ -21,6 +21,8 @@ export class RealMarketEngine extends EventEmitter {
     this.horizonMinutes=horizonMinutes;
     this.historyRetention=Math.min(100000,Math.max(5000,this.backfillDays*600));
     this.model=new OnlineModel(db);
+    this.modelLab=null;
+    this.paperBroker=null;
     this.histories=new Map(this.symbols.map(s=>[s,[]]));
     this.latestQuotes=new Map();
     this.latestTrades=new Map();
@@ -71,6 +73,11 @@ export class RealMarketEngine extends EventEmitter {
     } else {
       this.providerStatus={state:"NOT_CONFIGURED",provider:"alpaca",feed:this.provider.feed};
     }
+  }
+
+  attachIntelligence({modelLab=null,paperBroker=null}={}) {
+    this.modelLab=modelLab;
+    this.paperBroker=paperBroker;
   }
 
   hotSymbols() {
@@ -418,6 +425,7 @@ export class RealMarketEngine extends EventEmitter {
       this.histories.set(bar.symbol,history);
       await this.#scoreDue(bar);
       await this.#maybePredict(bar);
+      if (this.paperBroker) this.paperBroker.onBar(bar).catch(err=>this.#recordError("paper_bar",err));
       this.emit("market",{type:"bar",data:bar});
     }
   }
@@ -646,7 +654,17 @@ export class RealMarketEngine extends EventEmitter {
     const features=this.#features(bar.symbol);
     if (!features) return;
 
-    const base=this.model.analyze(features);
+    const learned=this.modelLab?.predict(bar.symbol)||null;
+    const fallback=this.model.analyze(features);
+    const base=learned?{
+      direction:learned.direction,
+      confidence:learned.confidence,
+      pUp:learned.pUp,
+      pFlat:learned.pFlat,
+      pDown:learned.pDown,
+      modelVersion:learned.modelVersion
+    }:fallback;
+
     const fingerprint=fingerprintFromFeatures(features,bar.ts);
     const memoryRow=await this.db.getPattern(bar.symbol,fingerprint,this.horizonMinutes);
     const memory=patternProbabilities(memoryRow);
@@ -665,16 +683,41 @@ export class RealMarketEngine extends EventEmitter {
 
     const createdAt=new Date(bar.ts);
     const targetAt=new Date(createdAt.getTime()+this.horizonMinutes*60*1000);
-    const id=`${bar.symbol}-${createdAt.toISOString()}-v${base.modelVersion}`;
+    const modelId=learned?.modelId||null;
+    const modelVersion=learned?.modelVersion||base.modelVersion;
+    const id=`${bar.symbol}-${createdAt.toISOString()}-${modelId||("legacy-v"+modelVersion)}`;
+    const confidence=blended.confidence;
+    const sorted=[blended.pUp,blended.pFlat,blended.pDown].sort((a,b)=>b-a);
+    const edge=(sorted[0]||0)-(sorted[1]||0);
+    const noTrade=learned
+      ? Boolean(learned.noTrade||confidence<.46||edge<.055)
+      : confidence<.52||edge<.07;
+
     const p={
       id,symbol:bar.symbol,provider:"alpaca",feed:this.provider.feed,
       createdAt,targetAt,horizonMinutes:this.horizonMinutes,referencePrice:bar.close,
-      direction:blended.direction,confidence:blended.confidence,
+      direction:blended.direction,confidence,
       pUp:blended.pUp,pFlat:blended.pFlat,pDown:blended.pDown,
-      features:{...features,pattern:patternInsight},modelVersion:base.modelVersion
+      features:{
+        ...features,
+        pattern:patternInsight,
+        ml:learned?{family:learned.family,edge:learned.edge,noTrade:learned.noTrade}:null
+      },
+      modelVersion,
+      modelId,
+      modelDetails:learned?{
+        family:learned.family,
+        edge,
+        noTrade,
+        test:learned.metrics?.test||null,
+        shadow:learned.metrics?.shadow||null
+      }:{family:"legacy_online",edge,noTrade}
     };
     await this.db.savePrediction(p);
-    this.emit("market",{type:"prediction",data:p});
+    this.emit("market",{type:"prediction",data:{...p,edge,noTrade}});
+    if (this.paperBroker) {
+      this.paperBroker.handlePrediction({...p,edge,noTrade}).catch(err=>this.#recordError("paper_prediction",err));
+    }
   }
 
   async #scoreDue(bar) {
@@ -686,7 +729,9 @@ export class RealMarketEngine extends EventEmitter {
       await this.db.scorePrediction(p.id,{
         resultPrice:bar.close,resultReturn:ret,actualDirection,correct,scoredAt:bar.ts
       });
-      await this.model.learn(p.features,actualDirection,p);
+      if (!p.model_id) {
+        await this.model.learn(p.features,actualDirection,p);
+      }
       this.emit("market",{type:"prediction_scored",data:{
         id:p.id,symbol:p.symbol,actualDirection,correct,resultPrice:bar.close,resultReturn:ret,scoredAt:bar.ts
       }});
@@ -726,6 +771,7 @@ export class RealMarketEngine extends EventEmitter {
       lastBarAt:this.lastBarAt,
       backfill:this.backfill,
       model:this.model.snapshot(),
+      modelLab:this.modelLab?.status?.()||null,
       startedAt:this.startedAt,
       uptimeSeconds:Math.floor((Date.now()-this.startedAt.getTime())/1000)
     };
@@ -736,7 +782,8 @@ export class RealMarketEngine extends EventEmitter {
     const quote=this.latestQuotes.get(symbol)||null;
     const trades=(this.latestTrades.get(symbol)||[]).slice(0,100);
     const features=this.#features(symbol);
-    const analysis=features?this.model.analyze(features):null;
+    const learned=this.modelLab?.predict(symbol)||null;
+    const analysis=learned|| (features?this.model.analyze(features):null);
     const patternInsight=this.latestPatternInsight.get(symbol)||null;
     return {symbol,bars:history,quote,trades,features,analysis,patternInsight,status:this.status()};
   }
