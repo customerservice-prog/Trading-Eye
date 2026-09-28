@@ -125,7 +125,8 @@ console.log(JSON.stringify({
 }));
 
 const mistakeLab=new MistakeLab({
-  db,modelLab,enabled:MISTAKE_LAB_ENABLED
+  db,modelLab,enabled:MISTAKE_LAB_ENABLED,
+  explorationAccountId:PAPER_EXPLORATION_ACCOUNT_ID
 });
 await mistakeLab.init();
 
