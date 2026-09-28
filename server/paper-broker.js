@@ -206,11 +206,11 @@ export class PaperBroker {
       if(!Number.isFinite(spreadBps)||spreadBps<0){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"INVALID_TOP_OF_BOOK"});
       }
-      const aiOrder=String(source||"").startsWith("AI_");
-      if(spreadBps>50 || (aiOrder&&spreadBps>25)){
+      const aiEntry=String(source||"")==="AI_PAPER_ENTRY";
+      if(spreadBps>100 || (aiEntry&&spreadBps>25)){
         return this.#rejectOrder({
           symbol,side,qty,source,modelId,
-          reason:aiOrder?"AI_SPREAD_TOO_WIDE":"SPREAD_TOO_WIDE"
+          reason:aiEntry?"AI_ENTRY_SPREAD_TOO_WIDE":"SPREAD_TOO_WIDE"
         });
       }
 
@@ -231,7 +231,7 @@ export class PaperBroker {
       const signed=side==="BUY"?qty:-qty;
       const newQty=oldQty+signed;
       const isOpening=!oldQty&&newQty;
-      const isIncreasing=!oldQty||Math.sign(oldQty)===Math.sign(signed);
+      const increasesExposure=Math.abs(newQty)>Math.abs(oldQty);
       const asset=await this.db.findAsset(symbol);
 
       if(newQty<0 && !asset?.shortable){
@@ -242,15 +242,15 @@ export class PaperBroker {
       }
 
       const prospectiveNotional=Math.abs(newQty*fillPrice);
-      if(isIncreasing && prospectiveNotional>snapshot.equity*this.maxPositionPct){
+      if(increasesExposure && prospectiveNotional>snapshot.equity*this.maxPositionPct){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"MAX_POSITION_EXPOSURE"});
       }
       const oldNotional=Math.abs(oldQty*(old?.mark||fillPrice));
       const grossAfter=snapshot.grossExposure-oldNotional+prospectiveNotional;
-      if(isIncreasing && grossAfter>snapshot.equity*this.maxGrossPct){
+      if(increasesExposure && grossAfter>snapshot.equity*this.maxGrossPct){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"MAX_GROSS_EXPOSURE"});
       }
-      if(side==="BUY" && signed>0 && oldQty>=0 && fillPrice*qty>snapshot.cash){
+      if(side==="BUY" && fillPrice*qty>snapshot.cash){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"INSUFFICIENT_CASH"});
       }
       const dayBase=await this.#dailyEquityBaseline();
