@@ -25,6 +25,7 @@ const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowe
 const MODEL_LAB_ENABLED=String(process.env.MODEL_LAB_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
+const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1");
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
@@ -57,6 +58,7 @@ await modelLab.init();
 
 const paperBroker=new PaperBroker({
   db,marketEngine:engine,
+  accountId:PAPER_ACCOUNT_ID,
   startingCash:100000,
   fillBufferBps:PAPER_FILL_BUFFER_BPS,
   autopilotEnabled:PAPER_AUTOPILOT_ENABLED
