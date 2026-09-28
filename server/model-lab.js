@@ -30,6 +30,63 @@ function directionFromProbs(p){
   const i=p.indexOf(Math.max(...p));
   return CLASS_NAMES[i]||"FLAT";
 }
+function localContributions(model,x,classIdx){
+  const out=new Map();
+  const add=(idx,value)=>{
+    if(!Number.isFinite(value)) return;
+    out.set(idx,(out.get(idx)||0)+value);
+  };
+
+  const visit=(m,scale=1)=>{
+    if(!m) return;
+    if(m.kind==="ensemble"){
+      const total=(m.weights||[]).reduce((s,w)=>s+Math.max(0,Number(w)||0),0)||1;
+      (m.members||[]).forEach((member,i)=>{
+        const w=Math.max(0,Number(m.weights?.[i])||0)/total;
+        visit(member.model,scale*w);
+      });
+      return;
+    }
+    if(m.kind==="softmax"){
+      const indices=m.featureIndices||[];
+      const weights=m.weights?.[classIdx]||[];
+      indices.forEach((featureIdx,j)=>{
+        add(featureIdx,scale*(Number(weights[j])||0)*(Number(x[featureIdx])||0));
+      });
+      return;
+    }
+    if(m.kind==="gaussian_nb"){
+      const indices=m.featureIndices||[];
+      indices.forEach((featureIdx,j)=>{
+        const v=Number(x[featureIdx])||0;
+        const ownMean=Number(m.means?.[classIdx]?.[j])||0;
+        const ownVar=Math.max(.02,Number(m.vars?.[classIdx]?.[j])||1);
+        const own=-.5*Math.log(ownVar)-.5*((v-ownMean)**2)/ownVar;
+        const others=[];
+        for(let c=0;c<CLASS_NAMES.length;c++){
+          if(c===classIdx) continue;
+          const mean=Number(m.means?.[c]?.[j])||0;
+          const variance=Math.max(.02,Number(m.vars?.[c]?.[j])||1);
+          others.push(-.5*Math.log(variance)-.5*((v-mean)**2)/variance);
+        }
+        const baseline=others.length?others.reduce((a,b)=>a+b,0)/others.length:0;
+        add(featureIdx,scale*(own-baseline));
+      });
+    }
+  };
+
+  visit(model,1);
+  return [...out.entries()]
+    .map(([idx,contribution])=>({
+      key:MODEL_FEATURES[idx]||("feature_"+idx),
+      value:Number(x[idx])||0,
+      contribution,
+      source:"ml"
+    }))
+    .sort((a,b)=>Math.abs(b.contribution)-Math.abs(a.contribution))
+    .slice(0,8);
+}
+
 function edgeFromProbs(p){
   const s=[...p].sort((a,b)=>b-a);
   return (s[0]||0)-(s[1]||0);
@@ -195,6 +252,8 @@ export class ModelLab {
     const direction=directionFromProbs(probs);
     const confidence=Math.max(...probs);
     const edge=edgeFromProbs(probs);
+    const classIdx=classIndex(direction);
+    const contributions=localContributions(this.productionModel,x,classIdx);
     return {
       direction,
       confidence,
@@ -208,9 +267,12 @@ export class ModelLab {
       family:this.productionRecord.family,
       features,
       featureVector:x,
+      contributions,
       metrics:{
         test:this.productionRecord.test_metrics,
-        shadow:this.productionRecord.shadow_metrics
+        walkForward:this.productionRecord.walk_forward_metrics,
+        shadow:this.productionRecord.shadow_metrics,
+        live:this.productionLiveMetrics
       }
     };
   }
