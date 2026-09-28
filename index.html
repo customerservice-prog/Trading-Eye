@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#050810" />
   <title>Trading Eye — AI Market Terminal</title>
-  <link rel="stylesheet" href="./styles.css?v=20260928-1905" />
+  <link rel="stylesheet" href="./styles.css?v=20260928-2230" />
 </head>
 <body>
   <div id="app" class="terminal-shell">
@@ -128,6 +128,11 @@
         <div class="aggressive-learning-stat">
           <span>Mistake Lab</span>
           <strong id="heroExploreMistakes">LEARNING</strong>
+        </div>
+        <div class="aggressive-learning-stat replay-top-stat">
+          <span>24/7 Replay Arena</span>
+          <strong id="heroReplayState">STARTING</strong>
+          <small id="heroReplayMeta">Keeps learning with the browser closed</small>
         </div>
       </div>
 
@@ -347,6 +352,7 @@
           <button class="active" data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Money</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
           <button data-tab="mistakes" type="button"><span class="tab-icon">!</span><span>Mistake Lab</span></button>
+          <button data-tab="replay" type="button"><span class="tab-icon">↻</span><span>Replay Arena</span><span class="tab-live-dot"></span></button>
           <button data-tab="research" type="button"><span class="tab-icon">∞</span><span>Research Brain</span><span class="tab-live-dot"></span></button>
           <button data-tab="patterns" type="button"><span class="tab-icon">⌘</span><span>Pattern Lab</span></button>
           <button data-tab="scanner" type="button"><span class="tab-icon">⌁</span><span>Market Scanner</span></button>
@@ -523,6 +529,75 @@
                   <table>
                     <thead><tr><th>Time</th><th>Symbol</th><th>Predicted</th><th>Actual</th><th>Confidence</th><th>Move</th><th>Model</th></tr></thead>
                     <tbody id="mistakeTableBody"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-replay">
+            <div class="replay-arena-layout">
+              <section class="replay-hero">
+                <div>
+                  <span class="eyebrow">24/7 no-hindsight learning</span>
+                  <div class="replay-title-line">
+                    <span class="replay-live-dot"></span>
+                    <strong id="replayTitle">Replay Arena starting…</strong>
+                  </div>
+                  <p id="replayDetail">Historical minute bars are replayed forward one timestamp at a time. The future stays hidden until the simulated clock reaches it.</p>
+                </div>
+                <div class="replay-hero-actions">
+                  <span id="replayLastRun">Waiting for first run</span>
+                  <button id="runReplayBtn" type="button">Run one replay now</button>
+                </div>
+              </section>
+
+              <section class="replay-metrics">
+                <div><span>Replay runs</span><strong id="replayRuns">0</strong></div>
+                <div><span>Decisions tested</span><strong id="replayDecisions">0</strong></div>
+                <div><span>Simulated trades</span><strong id="replayTrades">0</strong></div>
+                <div><span>Replay win rate</span><strong id="replayWinRate">—</strong></div>
+                <div><span>Latest replay day</span><strong id="replayDay">—</strong></div>
+                <div><span>Best current policy</span><strong id="replayBestStrategy">—</strong></div>
+              </section>
+
+              <section class="replay-proof-note">
+                <strong>No cheating / no real-money credit</strong>
+                <span>The newest 40% of stored history is not used to choose replay failure zones. Replay results can guide challenger training, but they never count toward real-money readiness.</span>
+              </section>
+
+              <section class="replay-grid">
+                <div class="replay-panel">
+                  <div class="replay-panel-head">
+                    <div><span class="eyebrow">Strategy laboratory</span><strong>Policies being tested</strong></div>
+                    <span id="replayModel">—</span>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead><tr><th>Policy</th><th>Trades</th><th>Win rate</th><th>Avg return</th><th>Profit factor</th></tr></thead>
+                      <tbody id="replayStrategyBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="replay-panel">
+                  <div class="replay-panel-head">
+                    <div><span class="eyebrow">Hard examples</span><strong>What replay says needs more training</strong></div>
+                    <span id="replayFocusCount">0 focus zones</span>
+                  </div>
+                  <div id="replayFocusList" class="replay-focus-list"></div>
+                </div>
+              </section>
+
+              <section class="replay-panel replay-runs-panel">
+                <div class="replay-panel-head">
+                  <div><span class="eyebrow">Continuous replay log</span><strong>Recent no-hindsight sessions</strong></div>
+                  <span>Runs on the server even with this page closed</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead><tr><th>Started</th><th>Replay day</th><th>Model</th><th>Decisions</th><th>Trades</th><th>Best policy</th><th>Status</th></tr></thead>
+                    <tbody id="replayRunBody"></tbody>
                   </table>
                 </div>
               </section>
@@ -778,6 +853,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./src/app.js?v=20260928-1905"></script>
+  <script type="module" src="./src/app.js?v=20260928-2230"></script>
 </body>
 </html>
