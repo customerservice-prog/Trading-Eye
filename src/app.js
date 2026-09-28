@@ -594,11 +594,20 @@ function renderResearchBrain() {
   const errorJobs=jobs.filter(j=>j.status==="ERROR");
   const current=runningJobs.find(j=>j.job_key!=="research-brain-heartbeat")||runningJobs[0]||null;
 
-  $("researchState").textContent=errorJobs.length
+  const stateText=errorJobs.length
     ? "Research Brain running with an error to inspect"
     : runningJobs.length
       ? "Research Brain is working now"
       : "Research Brain monitoring continuously";
+  $("researchState").textContent=stateText;
+  if ($("researchTopState")) {
+    $("researchTopState").textContent=errorJobs.length
+      ? "AI RESEARCH NEEDS ATTENTION"
+      : runningJobs.length
+        ? "AI RESEARCH WORKING"
+        : "AI RESEARCH LIVE";
+    $("researchTopBtn")?.classList.toggle("error",Boolean(errorJobs.length));
+  }
   $("researchPulse").classList.toggle("research-error",Boolean(errorJobs.length));
   $("researchCurrentTask").textContent=current
     ? `${String(current.job_type||"research").replaceAll("_"," ")} · ${String(current.phase||current.status||"running").replaceAll("_"," ")} · ${num(current.bars_processed||0)} bars processed`
@@ -864,6 +873,11 @@ function setTour(open,markSeen=false) {
   if (markSeen) try { localStorage.setItem("trading-eye-tour-seen-real","1"); } catch {}
 }
 
+$("researchTopBtn")?.addEventListener("click",()=>{
+  const btn=document.querySelector('#lowerTabs button[data-tab="research"]');
+  if (btn) btn.click();
+  $("tab-research")?.scrollIntoView({behavior:"smooth",block:"start"});
+});
 $("loadSymbolBtn").addEventListener("click",loadSymbol);
 $("symbolInput").addEventListener("keydown",e=>{
   if(e.key==="Enter") loadSymbol();
