@@ -26,6 +26,7 @@ export class RealMarketEngine extends EventEmitter {
     this.latestTrades=new Map();
     this.barCounters=new Map(this.symbols.map(s=>[s,0]));
     this.latestPatternInsight=new Map();
+    this.focusSymbols=new Set(this.symbols.slice(0,1));
     this.rawQueue=[];
     this.providerStatus={state:"STARTING",provider:"alpaca",feed:provider.feed};
     this.lastEventAt=null;
@@ -74,7 +75,14 @@ export class RealMarketEngine extends EventEmitter {
     return [...this.symbols];
   }
 
-  async activateSymbol(symbol,{backfill=true,pin=false}={}) {
+  focusSymbol(symbol) {
+    symbol=String(symbol||"").trim().toUpperCase();
+    if (!symbol || !this.symbols.includes(symbol)) return [];
+    this.focusSymbols=new Set([symbol]);
+    return this.provider.setFocusSymbols([symbol]);
+  }
+
+  async activateSymbol(symbol,{backfill=true,pin=false,focus=true}={}) {
     symbol=String(symbol||"").trim().toUpperCase();
     if (!symbol) throw new Error("Symbol required");
     this.hotLastUsed.set(symbol,Date.now());
@@ -99,6 +107,8 @@ export class RealMarketEngine extends EventEmitter {
       this.barCounters.set(symbol,0);
       this.symbols=this.provider.setSymbols(this.symbols);
     }
+
+    if (focus) this.focusSymbol(symbol);
 
     const existing=this.histories.get(symbol)||[];
     if (backfill && existing.length<120) {
@@ -258,6 +268,7 @@ export class RealMarketEngine extends EventEmitter {
         this.liveSymbolLimit=Number(status.maxSymbols)||status.symbols.length||this.liveSymbolLimit;
       }
       this.symbols=[...status.symbols];
+      if (Array.isArray(status.tradeFocus)) this.focusSymbols=new Set(status.tradeFocus);
       for (const symbol of this.symbols) {
         if (!this.histories.has(symbol)) this.histories.set(symbol,[]);
         if (!this.barCounters.has(symbol)) this.barCounters.set(symbol,0);
@@ -519,6 +530,7 @@ export class RealMarketEngine extends EventEmitter {
       symbols:this.symbols,
       coreSymbols:this.coreSymbols,
       pinnedSymbols:[...this.pinnedSymbols],
+      focusSymbols:[...this.focusSymbols],
       liveSymbolLimit:this.liveSymbolLimit,
       lastEventAt:this.lastEventAt,
       lastBarAt:this.lastBarAt,
