@@ -27,6 +27,28 @@ export class MarketClient {
     return r.json();
   }
 
+  async searchAssets(query,limit=25) {
+    const r=await fetch("/api/assets/search?q="+encodeURIComponent(query)+"&limit="+encodeURIComponent(limit),{cache:"no-store"});
+    if (!r.ok) throw new Error("Asset search failed: "+r.status);
+    return r.json();
+  }
+
+  async activate(symbol) {
+    const r=await fetch("/api/activate/"+encodeURIComponent(symbol),{
+      method:"POST",
+      headers:{"Content-Type":"application/json"}
+    });
+    const body=await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.error||("Activation failed: "+r.status));
+    return body;
+  }
+
+  async hotSet() {
+    const r=await fetch("/api/hot-set",{cache:"no-store"});
+    if (!r.ok) throw new Error("Hot set request failed: "+r.status);
+    return r.json();
+  }
+
   async predictions(symbol=null) {
     const qs=symbol?"?symbol="+encodeURIComponent(symbol):"";
     const r=await fetch("/api/predictions"+qs,{cache:"no-store"});
