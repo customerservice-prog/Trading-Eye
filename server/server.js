@@ -11,6 +11,9 @@ import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } fro
 import { ModelLab } from "./model-lab.js";
 import { PaperBroker } from "./paper-broker.js";
 import { ResearchBrain } from "./research-brain.js";
+import { MarketIntegrity } from "./market-integrity.js";
+import { DriftMonitor } from "./drift-monitor.js";
+import { ReadinessGate } from "./readiness.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -28,6 +31,7 @@ const MODEL_LAB_FORCE_TRAIN_ON_START=String(process.env.MODEL_LAB_FORCE_TRAIN_ON
 const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
 const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1");
+const REAL_MONEY_ENABLED=false;
 const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
 const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
 const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
@@ -59,9 +63,18 @@ const provider=new AlpacaProvider({
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
 await engine.init();
 
+const marketIntegrity=new MarketIntegrity({
+  db,
+  key:process.env.ALPACA_API_KEY_ID,
+  secret:process.env.ALPACA_API_SECRET_KEY,
+  hotSymbols:()=>engine.hotSymbols()
+});
+await marketIntegrity.init();
+
 const modelLab=new ModelLab({
   db,marketEngine:engine,horizonMinutes:15,enabled:MODEL_LAB_ENABLED,
-  forceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START
+  forceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START,
+  marketIntegrity
 });
 await modelLab.init();
 
@@ -74,7 +87,17 @@ const paperBroker=new PaperBroker({
 });
 await paperBroker.init();
 
-engine.attachIntelligence({modelLab,paperBroker});
+engine.attachIntelligence({modelLab,paperBroker,marketIntegrity});
+
+const driftMonitor=new DriftMonitor({
+  db,modelLab,paperBroker,marketIntegrity
+});
+await driftMonitor.init();
+
+const readinessGate=new ReadinessGate({
+  db,modelLab,paperBroker,driftMonitor,marketIntegrity,accountId:PAPER_ACCOUNT_ID
+});
+await readinessGate.init();
 
 const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
 await deepStudy.init();
@@ -111,6 +134,10 @@ app.get("/health",async(req,res)=>{
     engineEnabled:s.engineEnabled,
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
+    marketIntegrity:marketIntegrity.status(),
+    drift:driftMonitor.status(),
+    readiness:readinessGate.status(),
+    realMoneyEnabled:REAL_MONEY_ENABLED,
     paperBroker:true,
     researchBrain:{
       longHistoryEnabled:LONG_HISTORY_ENABLED,
@@ -134,6 +161,23 @@ app.get("/api/status",async(req,res)=>{
 
 app.get("/api/model-lab",async(req,res)=>{
   res.json(modelLab.status());
+});
+
+app.get("/api/integrity",async(req,res)=>{
+  res.json({
+    ...marketIntegrity.status(),
+    openIncidents:(await db.pool.query(
+      "SELECT severity,category,symbol,message,detected_at FROM data_quality_incidents WHERE status='OPEN' ORDER BY detected_at DESC LIMIT 50"
+    )).rows
+  });
+});
+
+app.get("/api/drift",async(req,res)=>{
+  res.json(driftMonitor.status());
+});
+
+app.get("/api/readiness",async(req,res)=>{
+  res.json(readinessGate.status());
 });
 
 app.get("/api/research",async(req,res)=>{
@@ -362,7 +406,8 @@ server.listen(PORT,"0.0.0.0",()=>{
     symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED,
     modelLabEnabled:MODEL_LAB_ENABLED,
     modelLabForceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START,
-    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED
+    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED,
+    realMoneyEnabled:REAL_MONEY_ENABLED
   }));
 });
 
@@ -373,6 +418,9 @@ const shutdown=async()=>{
   modelLab.stop();
   paperBroker.stop();
   researchBrain.stop();
+  readinessGate.stop();
+  driftMonitor.stop();
+  marketIntegrity.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
 };
