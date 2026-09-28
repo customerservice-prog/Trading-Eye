@@ -81,6 +81,101 @@ export class SoftmaxModel {
   }
 }
 
+export class BoostedStumpModel {
+  constructor({featureCount,stumps=null,bias=null,name="boosted_stumps"}){
+    this.kind="boosted_stumps";
+    this.name=name;
+    this.featureCount=featureCount;
+    this.stumps=stumps||[];
+    this.bias=bias||CLASS_NAMES.map(()=>0);
+  }
+
+  train(examples,{rounds=16,learningRate=.20,maxSamples=14000}={}){
+    const data=examples.length>maxSamples
+      ? Array.from({length:maxSamples},(_,i)=>examples[Math.floor(i*(examples.length/maxSamples))])
+      : examples;
+    if(!data.length) return this;
+
+    const counts=[0,0,0];
+    for(const e of data) counts[targetIndex(e.y)]++;
+    const total=data.length;
+    this.bias=counts.map(c=>Math.log((c+2)/(total+6)));
+
+    const thresholds=Array.from({length:this.featureCount},(_,f)=>{
+      const vals=data.map(e=>Number(e.x[f])||0).sort((a,b)=>a-b);
+      if(!vals.length) return [0];
+      const q=p=>vals[Math.min(vals.length-1,Math.floor((vals.length-1)*p))];
+      return [...new Set([q(.25),q(.5),q(.75)])];
+    });
+
+    const logits=data.map(()=>[...this.bias]);
+    this.stumps=[];
+
+    for(let round=0;round<rounds;round++){
+      const residuals=data.map((e,i)=>{
+        const p=softmax(logits[i]);
+        return e.y.map((y,c)=>(Number(y)||0)-p[c]);
+      });
+
+      let best=null;
+      for(let f=0;f<this.featureCount;f++){
+        for(const threshold of thresholds[f]){
+          const left=[0,0,0],right=[0,0,0];
+          let nl=0,nr=0;
+          for(let i=0;i<data.length;i++){
+            const target=(Number(data[i].x[f])||0)<=threshold?left:right;
+            if(target===left) nl++; else nr++;
+            for(let c=0;c<3;c++) target[c]+=residuals[i][c];
+          }
+          if(nl<30||nr<30) continue;
+          let score=0;
+          for(let c=0;c<3;c++){
+            score+=(left[c]*left[c])/nl+(right[c]*right[c])/nr;
+          }
+          if(!best||score>best.score){
+            best={featureIndex:f,threshold,left,nl,right,nr,score};
+          }
+        }
+      }
+      if(!best) break;
+      const leftValue=best.left.map(v=>learningRate*v/best.nl);
+      const rightValue=best.right.map(v=>learningRate*v/best.nr);
+      const stump={
+        featureIndex:best.featureIndex,
+        threshold:best.threshold,
+        leftValue,
+        rightValue
+      };
+      this.stumps.push(stump);
+      for(let i=0;i<data.length;i++){
+        const delta=(Number(data[i].x[best.featureIndex])||0)<=best.threshold?leftValue:rightValue;
+        for(let c=0;c<3;c++) logits[i][c]+=delta[c];
+      }
+    }
+    return this;
+  }
+
+  predict(x){
+    const logits=[...this.bias];
+    for(const stump of this.stumps){
+      const delta=(Number(x[stump.featureIndex])||0)<=stump.threshold?stump.leftValue:stump.rightValue;
+      for(let c=0;c<3;c++) logits[c]+=Number(delta[c])||0;
+    }
+    return softmax(logits);
+  }
+
+  artifact(){
+    return {
+      kind:this.kind,name:this.name,featureCount:this.featureCount,
+      stumps:this.stumps,bias:this.bias
+    };
+  }
+
+  static fromArtifact(a){
+    return new BoostedStumpModel(a);
+  }
+}
+
 export class GaussianNBModel {
   constructor({featureCount,featureIndices=null,means=null,vars=null,priors=null,name="gaussian_nb"}){
     this.kind="gaussian_nb";
@@ -154,6 +249,7 @@ export function modelFromArtifact(a){
   if(!a) return null;
   if(a.kind==="softmax") return SoftmaxModel.fromArtifact(a);
   if(a.kind==="gaussian_nb") return GaussianNBModel.fromArtifact(a);
+  if(a.kind==="boosted_stumps") return BoostedStumpModel.fromArtifact(a);
   return null;
 }
 
