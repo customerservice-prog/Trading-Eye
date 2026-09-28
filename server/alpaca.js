@@ -67,6 +67,10 @@ export class AlpacaProvider {
 
   configured() { return Boolean(this.key && this.secret); }
 
+  currentSymbolLimit() {
+    return this.#effectiveLimit();
+  }
+
   async start() {
     if (!this.configured()) {
       this.onStatus({state:"NOT_CONFIGURED",provider:"alpaca",feed:this.feed});
