@@ -226,7 +226,47 @@ function renderWatchlist() {
   }
 }
 
+function renderHistoricalMemory() {
+  if (!$("memorySampleCount")) return;
+  const m=snapshot.patternInsight||null;
+  const samples=Number(m?.sampleCount)||0;
+
+  $("memorySampleCount").textContent=samples?num(samples)+" matches":"0 matches";
+  $("memoryUp").textContent=samples?Math.round(Number(m.upRate||0)*100)+"%":"—";
+  $("memoryFlat").textContent=samples?Math.round(Number(m.flatRate||0)*100)+"%":"—";
+  $("memoryDown").textContent=samples?Math.round(Number(m.downRate||0)*100)+"%":"—";
+  $("memoryAvgReturn").textContent=samples
+    ? (Number(m.avgReturn||0)>=0?"+":"")+pct(Number(m.avgReturn||0))
+    : "—";
+  $("memoryWeight").textContent=samples
+    ? Math.round(Number(m.patternWeight||0)*100)+"%"
+    : "—";
+
+  if (!samples) {
+    $("memoryExplanation").textContent="Trading Eye has not found a stored historical setup matching this current state yet.";
+    return;
+  }
+
+  const rates=[
+    ["up",Number(m.upRate||0)],
+    ["flat",Number(m.flatRate||0)],
+    ["down",Number(m.downRate||0)]
+  ].sort((a,b)=>b[1]-a[1]);
+  const leader=rates[0];
+  const avg=(Number(m.avgReturn||0)*100).toFixed(2);
+  const weight=Math.round(Number(m.patternWeight||0)*100);
+
+  if (samples<12) {
+    $("memoryExplanation").textContent=
+      `Trading Eye found ${samples} similar stored setups, but that is below the 12-sample threshold required before historical memory can influence a prediction.`;
+  } else {
+    $("memoryExplanation").textContent=
+      `Across ${samples} similar stored setups, ${leader[0]} was most common at ${Math.round(leader[1]*100)}%. The average 15-minute move was ${Number(avg)>=0?"+":""}${avg}%. Historical memory currently contributes about ${weight}% of the combined forecast.`;
+  }
+}
+
 function renderAI() {
+  renderHistoricalMemory();
   const a=normalizeAnalysis(snapshot.analysis);
   const copy=directionCopy(a);
   $("decisionTitle").textContent=copy.title;
