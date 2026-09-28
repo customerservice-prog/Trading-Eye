@@ -30,7 +30,12 @@ let modelLabData={enabled:true,training:false,production:null,latestRun:null};
 let studyData={status:null,rows:[]};
 let scannerData={universe:null,scan:null,candidates:[],hotSymbols:[],pinnedSymbols:[]};
 let patternLabData={symbol:null,status:"WAITING",statsByHorizon:{},analogs:[]};
+let researchData={
+  running:false,heartbeatAt:null,lastResearchEventAt:null,
+  sources:{},coverage:{},jobs:[],events:[],findings:[]
+};
 let refreshTimer=null;
+let researchTimer=null;
 let symbolSearchTimer=null;
 let lastSymbolResults=[];
 
@@ -573,6 +578,111 @@ function renderScanner() {
     : '<tr><td colspan="10">Trading Eye has not completed a whole-market scan yet.</td></tr>';
 }
 
+function renderResearchBrain() {
+  if (!$("researchState")) return;
+  const r=researchData||{};
+  const coverage=r.coverage||{};
+  const intraday=coverage.intraday||{};
+  const longHistory=coverage.longHistory||{};
+  const findings=coverage.findings||{};
+  const models=coverage.models||{};
+  const jobs=Array.isArray(r.jobs)?r.jobs:[];
+  const events=Array.isArray(r.events)?r.events:[];
+  const patternFindings=Array.isArray(r.findings)?r.findings:[];
+
+  const runningJobs=jobs.filter(j=>j.status==="RUNNING");
+  const errorJobs=jobs.filter(j=>j.status==="ERROR");
+  const current=runningJobs.find(j=>j.job_key!=="research-brain-heartbeat")||runningJobs[0]||null;
+
+  $("researchState").textContent=errorJobs.length
+    ? "Research Brain running with an error to inspect"
+    : runningJobs.length
+      ? "Research Brain is working now"
+      : "Research Brain monitoring continuously";
+  $("researchPulse").classList.toggle("research-error",Boolean(errorJobs.length));
+  $("researchCurrentTask").textContent=current
+    ? `${String(current.job_type||"research").replaceAll("_"," ")} · ${String(current.phase||current.status||"running").replaceAll("_"," ")} · ${num(current.bars_processed||0)} bars processed`
+    : "No heavy job is running this second. Live observation, model shadow scoring, and research monitoring remain active.";
+  $("researchHeartbeat").textContent=r.heartbeatAt
+    ? ageText(r.heartbeatAt)
+    : r.lastResearchEventAt
+      ? ageText(r.lastResearchEventAt)
+      : "starting";
+
+  const intradayFirst=intraday.first?String(intraday.first).slice(0,10):"—";
+  const intradayLast=intraday.last?String(intraday.last).slice(0,10):"—";
+  $("researchIntradayCoverage").textContent=`${num(intraday.bars||0)} bars`;
+  $("researchIntradayMeta").textContent=`${num(intraday.symbols||0)} symbols · ${intradayFirst} → ${intradayLast} · Alpaca`;
+
+  const longFirst=longHistory.first?String(longHistory.first).slice(0,10):"not loaded";
+  const longLast=longHistory.last?String(longHistory.last).slice(0,10):"—";
+  $("researchLongCoverage").textContent=Number(longHistory.bars)
+    ? `${num(longHistory.bars)} bars`
+    : "1999+ waiting";
+  $("researchLongMeta").textContent=Number(longHistory.bars)
+    ? `${num(longHistory.symbols||0)} symbols · ${longFirst} → ${longLast} · ${r.sources?.longHistory?.provider||"long-history source"}`
+    : `${r.sources?.longHistory?.provider||"long-history source"} · target ${r.sources?.longHistory?.targetStart||"1999-01-01"}`;
+
+  $("researchFindingCount").textContent=num(findings.findings||0);
+  $("researchFindingMeta").textContent=`${num(findings.promoted||0)} promoted research findings · ${num((coverage.predictions||{}).scored||0)} predictions scored`;
+
+  $("researchModelCount").textContent=num(models.models||0);
+  $("researchModelMeta").textContent=`${num(models.production||0)} production · ${num(models.shadow||0)} live shadow · ${num(models.rejected||0)} rejected`;
+
+  $("researchJobSummary").textContent=`${runningJobs.length} running · ${errorJobs.length} errors · ${jobs.length} tracked`;
+  $("researchJobs").innerHTML=jobs.length?jobs.map(j=>{
+    const progress=clamp(Number(j.progress)||0,0,1);
+    const status=String(j.status||"UNKNOWN").toLowerCase();
+    const done=Number(j.items_done)||0;
+    const total=j.items_total==null?null:Number(j.items_total);
+    const bars=Number(j.bars_processed)||0;
+    return `<div class="research-job">
+      <div class="research-job-top">
+        <div class="research-job-name">
+          <strong>${String(j.job_type||j.job_key||"research").replaceAll("_"," ")}</strong>
+          <span>${String(j.phase||"").replaceAll("_"," ")} · ${j.provider||"internal"}</span>
+        </div>
+        <span class="research-job-status ${status}">${j.status||"—"}</span>
+        <span class="research-job-progress-value">${Math.round(progress*100)}%</span>
+      </div>
+      <div class="research-job-bar"><span style="width:${Math.max(progress*100,j.status==="RUNNING"?2:0)}%"></span></div>
+      <div class="research-job-meta">
+        <span>${bars?num(bars)+" bars":"monitoring"}</span>
+        <span>${total?num(done)+" / "+num(total)+" items":done?num(done)+" items":""}</span>
+        <span>updated ${ageText(j.updated_at)}</span>
+        ${j.error?`<span class="negative">${j.error}</span>`:""}
+      </div>
+    </div>`;
+  }).join(""):'<div class="research-job"><div class="research-job-name"><strong>No jobs recorded yet</strong><span>Research worker is initializing.</span></div></div>';
+
+  $("researchEventCount").textContent=`${num(events.length)} events`;
+  $("researchEventStream").innerHTML=events.length?events.slice(-120).reverse().map(e=>{
+    const level=String(e.level||"INFO").toLowerCase();
+    const d=new Date(e.event_ts);
+    const when=Number.isNaN(+d)?"—":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+    return `<div class="research-event ${level}">
+      <span class="research-event-time">${when}</span>
+      <span class="research-event-category">${e.category||"SYSTEM"}</span>
+      <span class="research-event-message"><strong>${e.title||"Research"}</strong>${e.message||""}</span>
+    </div>`;
+  }).join(""):'<div class="research-event"><span class="research-event-time">—</span><span class="research-event-category">SYSTEM</span><span class="research-event-message">Waiting for first research event.</span></div>';
+
+  $("researchFindingBody").innerHTML=patternFindings.length?patternFindings.map(f=>{
+    const evidence=f.evidence||{};
+    return `<tr class="${String(f.status||"candidate").toLowerCase()}">
+      <td>${f.status||"CANDIDATE"}</td>
+      <td><strong>${f.symbol||"MARKET"}</strong></td>
+      <td>${f.description||f.pattern_key||"—"}</td>
+      <td>${num(f.horizon_days)}d</td>
+      <td>${num(f.sample_count)}</td>
+      <td>${f.hit_rate==null?"—":pct(Number(f.hit_rate))}</td>
+      <td class="${Number(f.avg_forward_return)>0?"positive":Number(f.avg_forward_return)<0?"negative":"neutral"}">${f.avg_forward_return==null?"—":(Number(f.avg_forward_return)>=0?"+":"")+pct(Number(f.avg_forward_return))}</td>
+      <td>${Number(f.score||0).toFixed(2)}</td>
+      <td>${evidence.start||"—"} → ${evidence.end||"—"}</td>
+    </tr>`;
+  }).join(""):'<tr><td colspan="9">No 1999+ research findings yet. The long-history lane must ingest data before pattern mining can begin.</td></tr>';
+}
+
 function renderDeepStudy() {
   if (!$("deepStudyState")) return;
   const state=studyData.status||{};
@@ -623,17 +733,18 @@ function renderAll() {
   renderLearning();
   renderPatternLab();
   renderScanner();
+  renderResearchBrain();
   renderDeepStudy();
 }
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,lab]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,lab,research]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.modelLab()
+      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; modelLabData=lab;
+    paperData=paperState; modelLabData=lab; researchData=research;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -729,6 +840,18 @@ function applyRealtime(event) {
   }
   if (event.type==="deep_study_status" || event.type==="deep_study_complete") {
     client.studies(10).then(s=>{studyData=s;renderDeepStudy();}).catch(()=>{});
+  }
+  if (event.type==="research_event") {
+    const ev=event.data;
+    researchData.events=[...(researchData.events||[]).filter(x=>x.id!==ev?.id),ev].filter(Boolean).slice(-180);
+    researchData.lastResearchEventAt=ev?.event_ts||new Date().toISOString();
+    renderResearchBrain();
+    return;
+  }
+  if (event.type==="research_status") {
+    researchData={...researchData,...event.data};
+    renderResearchBrain();
+    return;
   }
   renderChart(); renderTapeAndBook(); renderPaper();
 }
@@ -870,6 +993,12 @@ client.connect();
 await refreshAll({quiet:true});
 clearInterval(refreshTimer);
 refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
+clearInterval(researchTimer);
+researchTimer=setInterval(()=>{
+  client.research()
+    .then(r=>{researchData=r;renderResearchBrain();})
+    .catch(()=>{});
+},10000);
 
 try {
   if (!localStorage.getItem("trading-eye-tour-seen-real")) setTimeout(()=>setTour(true),700);
