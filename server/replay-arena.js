@@ -459,12 +459,12 @@ export class ReplayArena {
         return {
           strategy:strategy.key,trades:rows.length,wins:wins.length,losses:losses.length,
           winRate:ratio(wins.length,rows.length),
-          avgReturn:mean(rows.map(t=>t.return)),
+          avgReturn:rows.length?mean(rows.map(t=>t.return)):null,
           sumReturn:rows.reduce((s,t)=>s+t.return,0),
           profitFactor:gl?gp/gl:(gp>0?Infinity:null),
           maxDrawdown:maxDd
         };
-      }).sort((a,b)=>b.avgReturn-a.avgReturn);
+      }).filter(x=>x.trades>0).sort((a,b)=>Number(b.avgReturn||0)-Number(a.avgReturn||0));
 
       const symbolMap=new Map();
       const timeMap=new Map();
