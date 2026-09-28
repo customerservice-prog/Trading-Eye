@@ -370,6 +370,10 @@ export class ResearchBrain extends EventEmitter {
           itemsDone:symbolsDone,itemsTotal:total,barsProcessed,
           details:{barsStored,filesSkipped,targetStart}
         });
+        console.log(JSON.stringify({
+          event:"research_long_history_progress",
+          symbolsDone,barsProcessed,barsStored,filesSkipped
+        }));
         this.emit("status",{jobKey,symbolsDone,barsProcessed,barsStored});
       }
     }
@@ -562,6 +566,15 @@ export class ResearchBrain extends EventEmitter {
     const saved=await this.db.addResearchEvent(event);
     if(saved){
       this.lastResearchEventAt=saved.event_ts;
+      console.log(JSON.stringify({
+        event:"research_event",
+        id:saved.id,
+        category:saved.category,
+        level:saved.level,
+        jobKey:saved.job_key,
+        title:saved.title,
+        message:saved.message
+      }));
       this.emit("event",saved);
     }
     return saved;
