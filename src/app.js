@@ -483,6 +483,16 @@ function renderAI() {
     reasons.innerHTML=`<div class="reason-item"><span class="reason-dot mixed"></span><div class="reason-copy"><strong>No synthetic fallback</strong><span>${status?.configured?"Waiting for sufficient real market history.":"Add real provider credentials to begin ingestion."}</span></div><span class="reason-value">—</span></div>`;
     return;
   }
+  const eventRisk=a.eventRisk||snapshot.eventRisk||null;
+  if (eventRisk?.events?.length) {
+    const top=eventRisk.events[0];
+    const item=document.createElement("div");
+    item.className="reason-item";
+    const level=eventRisk.blocked?"bad":eventRisk.elevated?"mixed":"good";
+    item.innerHTML=`<span class="reason-dot ${level}"></span><div class="reason-copy"><strong>Real event risk</strong><span>${top.source||"SOURCE"} · ${top.headline||top.type||"Market event"}${eventRisk.blocked?" · paper entry blocked":eventRisk.elevated?" · confidence reduced/caution":"."}</span></div><span class="reason-value">${Math.round(Number(eventRisk.risk||0)*100)}%</span>`;
+    reasons.appendChild(item);
+  }
+
   const broad=scannerData.regime||null;
   if (broad?.regime) {
     const item=document.createElement("div");
