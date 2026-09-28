@@ -98,6 +98,17 @@ const readiness=new ReadinessEvaluator({
   historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED
 });
 
+const startupReadiness=await readiness.evaluate();
+console.log(JSON.stringify({
+  event:"readiness_startup_check",
+  status:startupReadiness.status,
+  reviewEligible:startupReadiness.reviewEligible,
+  liveTradingEnabled:startupReadiness.liveTradingEnabled,
+  blockerKeys:(startupReadiness.blockers||[]).map(x=>x.key),
+  historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED,
+  drift:startupReadiness.evidence?.live?.drift?.level||"INSUFFICIENT"
+}));
+
 const app=express();
 app.disable("x-powered-by");
 app.use(express.json({limit:"100kb"}));
