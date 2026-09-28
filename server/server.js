@@ -14,6 +14,7 @@ import { ResearchBrain } from "./research-brain.js";
 import { MarketIntegrity } from "./market-integrity.js";
 import { DriftMonitor } from "./drift-monitor.js";
 import { ReadinessGate } from "./readiness.js";
+import { ContextPoller } from "./context-poller.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -78,6 +79,15 @@ const modelLab=new ModelLab({
 });
 await modelLab.init();
 
+const contextPoller=new ContextPoller({
+  db,
+  key:process.env.ALPACA_API_KEY_ID,
+  secret:process.env.ALPACA_API_SECRET_KEY,
+  modelLab,
+  feed:"iex"
+});
+await contextPoller.init();
+
 const paperBroker=new PaperBroker({
   db,marketEngine:engine,
   accountId:PAPER_ACCOUNT_ID,
@@ -135,6 +145,7 @@ app.get("/health",async(req,res)=>{
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
     marketIntegrity:marketIntegrity.status(),
+    contextPoller:contextPoller.status(),
     drift:driftMonitor.status(),
     readiness:readinessGate.status(),
     realMoneyEnabled:REAL_MONEY_ENABLED,
@@ -420,6 +431,7 @@ const shutdown=async()=>{
   researchBrain.stop();
   readinessGate.stop();
   driftMonitor.stop();
+  contextPoller.stop();
   marketIntegrity.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
