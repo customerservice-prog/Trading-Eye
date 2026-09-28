@@ -176,6 +176,58 @@ export class BoostedStumpModel {
   }
 }
 
+export class BaggedStumpEnsemble {
+  constructor({featureCount,members=null,name="bagged_boosted_stumps"}){
+    this.kind="bagged_boosted_stumps";
+    this.name=name;
+    this.featureCount=featureCount;
+    this.members=(members||[]).map(m=>m instanceof BoostedStumpModel?m:BoostedStumpModel.fromArtifact(m));
+  }
+
+  train(examples,{bags=5,rounds=14,learningRate=.18,maxSamples=12000}={}){
+    this.members=[];
+    if(!examples.length) return this;
+    for(let b=0;b<bags;b++){
+      const stride=Math.max(1,Math.floor(examples.length/Math.max(1,maxSamples)));
+      const sample=[];
+      for(let i=b;i<examples.length && sample.length<maxSamples;i+=stride){
+        const e=examples[(i*31+b*997)%examples.length];
+        if(e) sample.push(e);
+      }
+      const m=new BoostedStumpModel({
+        featureCount:this.featureCount,
+        name:`bag_${b+1}`
+      });
+      m.train(sample,{rounds,learningRate,maxSamples});
+      this.members.push(m);
+    }
+    return this;
+  }
+
+  predict(x){
+    if(!this.members.length) return [1/3,1/3,1/3];
+    const out=[0,0,0];
+    for(const m of this.members){
+      const p=m.predict(x);
+      for(let c=0;c<3;c++) out[c]+=p[c];
+    }
+    return out.map(v=>v/this.members.length);
+  }
+
+  artifact(){
+    return {
+      kind:this.kind,
+      name:this.name,
+      featureCount:this.featureCount,
+      members:this.members.map(m=>m.artifact())
+    };
+  }
+
+  static fromArtifact(a){
+    return new BaggedStumpEnsemble(a);
+  }
+}
+
 export class GaussianNBModel {
   constructor({featureCount,featureIndices=null,means=null,vars=null,priors=null,name="gaussian_nb"}){
     this.kind="gaussian_nb";
@@ -250,6 +302,7 @@ export function modelFromArtifact(a){
   if(a.kind==="softmax") return SoftmaxModel.fromArtifact(a);
   if(a.kind==="gaussian_nb") return GaussianNBModel.fromArtifact(a);
   if(a.kind==="boosted_stumps") return BoostedStumpModel.fromArtifact(a);
+  if(a.kind==="bagged_boosted_stumps") return BaggedStumpEnsemble.fromArtifact(a);
   return null;
 }
 
