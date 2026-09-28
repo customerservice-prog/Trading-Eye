@@ -429,6 +429,143 @@ export class Database {
       CREATE INDEX IF NOT EXISTS long_history_day
         ON long_history_bars_1d(day);
 
+      CREATE TABLE IF NOT EXISTS historical_security_master (
+        symbol TEXT PRIMARY KEY,
+        first_day DATE,
+        last_day DATE,
+        current_active BOOLEAN NOT NULL DEFAULT false,
+        survivorship_class TEXT NOT NULL DEFAULT 'UNKNOWN',
+        current_name TEXT,
+        current_exchange TEXT,
+        source TEXT NOT NULL DEFAULT 'long_history',
+        bars BIGINT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS historical_security_master_survivorship
+        ON historical_security_master(survivorship_class,last_day DESC);
+
+      CREATE TABLE IF NOT EXISTS corporate_action_flags (
+        flag_id BIGSERIAL PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        action_day DATE NOT NULL,
+        action_type TEXT NOT NULL,
+        confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+        source TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(symbol,action_day,action_type,source)
+      );
+      CREATE INDEX IF NOT EXISTS corporate_action_flags_symbol_day
+        ON corporate_action_flags(symbol,action_day DESC);
+
+      CREATE TABLE IF NOT EXISTS data_quality_flags (
+        flag_id BIGSERIAL PRIMARY KEY,
+        severity TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        symbol TEXT,
+        flag_type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS data_quality_flags_active
+        ON data_quality_flags(active,severity,created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS market_events (
+        event_id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        symbol TEXT,
+        event_type TEXT NOT NULL,
+        headline TEXT,
+        event_ts TIMESTAMPTZ NOT NULL,
+        importance DOUBLE PRECISION NOT NULL DEFAULT 0,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS market_events_symbol_ts
+        ON market_events(symbol,event_ts DESC);
+      CREATE INDEX IF NOT EXISTS market_events_type_ts
+        ON market_events(event_type,event_ts DESC);
+
+      ALTER TABLE model_shadow_predictions
+        ADD COLUMN IF NOT EXISTS regime TEXT;
+      ALTER TABLE model_shadow_predictions
+        ADD COLUMN IF NOT EXISTS time_bucket TEXT;
+      ALTER TABLE model_shadow_predictions
+        ADD COLUMN IF NOT EXISTS confidence_bucket TEXT;
+      ALTER TABLE model_shadow_predictions
+        ADD COLUMN IF NOT EXISTS model_details JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+      ALTER TABLE paper_orders
+        ADD COLUMN IF NOT EXISTS filled_qty INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE paper_orders
+        ADD COLUMN IF NOT EXISTS avg_fill_price DOUBLE PRECISION;
+      ALTER TABLE paper_orders
+        ADD COLUMN IF NOT EXISTS fees DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE paper_orders
+        ADD COLUMN IF NOT EXISTS execution_details JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+      ALTER TABLE paper_fills
+        ADD COLUMN IF NOT EXISTS fees DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE paper_fills
+        ADD COLUMN IF NOT EXISTS slippage_bps DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE paper_fills
+        ADD COLUMN IF NOT EXISTS impact_bps DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE paper_fills
+        ADD COLUMN IF NOT EXISTS participation_rate DOUBLE PRECISION;
+
+      CREATE TABLE IF NOT EXISTS readiness_gates (
+        gate_key TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        passed BOOLEAN NOT NULL DEFAULT false,
+        current_value JSONB NOT NULL DEFAULT '{}'::jsonb,
+        requirement JSONB NOT NULL DEFAULT '{}'::jsonb,
+        message TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS readiness_snapshots (
+        id BIGSERIAL PRIMARY KEY,
+        evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        status TEXT NOT NULL,
+        eligible BOOLEAN NOT NULL DEFAULT false,
+        score DOUBLE PRECISION NOT NULL DEFAULT 0,
+        gates JSONB NOT NULL DEFAULT '[]'::jsonb,
+        notes JSONB NOT NULL DEFAULT '[]'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS readiness_snapshots_recent
+        ON readiness_snapshots(evaluated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS drift_alerts (
+        alert_id BIGSERIAL PRIMARY KEY,
+        model_id TEXT,
+        status TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        baseline DOUBLE PRECISION,
+        recent DOUBLE PRECISION,
+        ratio DOUBLE PRECISION,
+        sample_count INTEGER NOT NULL DEFAULT 0,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        active BOOLEAN NOT NULL DEFAULT true,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ
+      );
+      CREATE INDEX IF NOT EXISTS drift_alerts_active
+        ON drift_alerts(active,status,created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS proof_scoreboard (
+        stage_key TEXT PRIMARY KEY,
+        stage_order INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        status TEXT NOT NULL,
+        progress DOUBLE PRECISION NOT NULL DEFAULT 0,
+        summary TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
       CREATE TABLE IF NOT EXISTS service_heartbeats (
         service_key TEXT PRIMARY KEY,
         status TEXT NOT NULL,
