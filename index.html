@@ -416,6 +416,27 @@
                 </table>
               </div>
             </div>
+            <div class="proof-table-block readiness-proof-block">
+              <div class="proof-table-head">
+                <div>
+                  <span class="eyebrow">Real-money readiness proof</span>
+                  <strong id="readinessProofTitle">LOCKED</strong>
+                </div>
+                <span id="readinessProofMeta">Every backend safety gate must pass; real money never auto-unlocks.</span>
+              </div>
+              <div class="metric-grid compact">
+                <div class="metric"><span>Readiness score</span><strong id="readinessScore">0%</strong></div>
+                <div class="metric"><span>Gates passed</span><strong id="readinessPassed">0 / 0</strong></div>
+                <div class="metric"><span>Drift status</span><strong id="readinessDrift">—</strong></div>
+                <div class="metric"><span>Open severe data incidents</span><strong id="readinessIncidents">—</strong></div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Gate</th><th>Status</th><th>Current evidence</th><th>Requirement</th></tr></thead>
+                  <tbody id="readinessGateBody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
 
           <div class="tab-pane" id="tab-research">
