@@ -1,6 +1,6 @@
-import { MarketClient } from "./market-client.js?v=20260928-1252";
-import { MarketChart } from "./chart.js?v=20260928-1252";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1252";
+import { MarketClient } from "./market-client.js?v=20260928-0935";
+import { MarketChart } from "./chart.js?v=20260928-0935";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-0935";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
