@@ -242,6 +242,9 @@ export class ReplayArena {
 
   async runCycle(){
     if(!this.enabled||this.running) return this.lastRun;
+    const openNow=regularSession(new Date());
+    const lastCompletedAt=this.lastRun?.completedAt?+new Date(this.lastRun.completedAt):0;
+    if(openNow&&lastCompletedAt&&Date.now()-lastCompletedAt<5*60*1000) return this.lastRun;
     this.running=true;
     this.lastError=null;
     const runId="REPLAY-"+crypto.randomUUID();
@@ -254,10 +257,11 @@ export class ReplayArena {
         "AMD","TSLA","AVGO","NFLX","PLTR","JPM","BAC","MU","UBER","XLF","XLK","SMH"
       ];
       const available=new Set(meta.map(x=>x.symbol));
+      const cycleMaxSymbols=openNow?Math.min(8,this.maxSymbols):this.maxSymbols;
       const symbols=[
         ...liquidPriority.filter(s=>available.has(s)),
         ...meta.map(x=>x.symbol).filter(s=>!liquidPriority.includes(s))
-      ].slice(0,this.maxSymbols);
+      ].slice(0,cycleMaxSymbols);
 
       if(symbols.length<5) throw new Error("Replay Arena needs at least 5 symbols with 3,000 stored minute bars.");
 
@@ -293,8 +297,15 @@ export class ReplayArena {
 
       const cursor=this.totals.runs%poolDays.length;
       const replayDay=poolDays[cursor];
-      const replayStart=new Date(replayDay+"T13:30:00.000Z");
-      const replayEnd=new Date(replayDay+"T21:00:00.000Z");
+      const sessionTimestamps=[];
+      for(const rows of histories.values()){
+        for(const row of rows){
+          if(etDay(row.ts)===replayDay&&regularSession(row.ts)) sessionTimestamps.push(+new Date(row.ts));
+        }
+      }
+      if(!sessionTimestamps.length) throw new Error("Replay session has no regular-hours minute bars.");
+      const replayStart=new Date(Math.min(...sessionTimestamps));
+      const replayEnd=new Date(Math.max(...sessionTimestamps)+60*1000);
 
       const preHistories=new Map();
       for(const [symbol,rows] of histories.entries()){
@@ -517,7 +528,9 @@ export class ReplayArena {
         strategies:STRATEGIES,
         modelSelection:"PRE_SESSION_VALIDATION_ONLY",
         entryRule:"NEXT_BAR_OPEN",
-        historicalQuoteApproximation:"FIXED_CONSERVATIVE_BPS_COST"
+        historicalQuoteApproximation:"FIXED_CONSERVATIVE_BPS_COST",
+        runtimeMode:openNow?"MARKET_OPEN_THROTTLED":"MARKET_CLOSED_AGGRESSIVE",
+        cycleMaxSymbols
       };
 
       await this.db.pool.query(`
