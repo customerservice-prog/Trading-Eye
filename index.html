@@ -318,6 +318,21 @@
               <div class="metric"><span>Avg winner / loser</span><strong id="paperAvgWinLoss">—</strong></div>
             </div>
             <div id="positionsTable" class="positions-area"></div>
+            <div class="proof-table-block">
+              <div class="proof-table-head">
+                <div>
+                  <span class="eyebrow">Deterministic execution ledger</span>
+                  <strong id="paperFillModel">Waiting for server broker</strong>
+                </div>
+                <span>Every fill is tied to the real top-of-book quote.</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Fill</th><th>Bid</th><th>Ask</th><th>Realized P/L</th></tr></thead>
+                  <tbody id="paperFillBody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
 
           <div class="tab-pane" id="tab-learning">
@@ -337,6 +352,21 @@
               <div class="learning-explainer">
                 <span class="learning-icon">◎</span>
                 <div id="modelLabSummary"><strong>No hindsight allowed.</strong><br>Model Lab trains challengers on older data, calibrates them separately, tests unseen periods, then compares them with production before any promotion.</div>
+              </div>
+            </div>
+            <div class="proof-table-block model-proof-block">
+              <div class="proof-table-head">
+                <div>
+                  <span class="eyebrow">Live shadow proving</span>
+                  <strong id="shadowProofTitle">No challenger in live shadow</strong>
+                </div>
+                <span>Challengers cannot replace production until future paired outcomes prove better.</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Model</th><th>Family</th><th>Live samples</th><th>Accuracy</th><th>Brier</th><th>ECE</th><th>Historical test</th><th>Status</th></tr></thead>
+                  <tbody id="shadowModelBody"></tbody>
+                </table>
               </div>
             </div>
           </div>
