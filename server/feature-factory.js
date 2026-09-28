@@ -15,7 +15,8 @@ export const MODEL_FEATURES=[
   "high20Dist","low20Dist","rangeCompression",
   "trendSlope10","trendSlope30","closeLocation",
   "spyRet5","qqqRet5","breadth5","relativeSpy5","relativeQqq5",
-  "timeSin","timeCos"
+  "timeSin","timeCos",
+  "iwmRet5","diaRet5","breadth20","dispersion5","relativeIwm5"
 ];
 
 function etMinute(ts){
@@ -127,27 +128,45 @@ export class FeatureFactory {
       relativeSpy5:clamp((pct(close,c(5))-(Number(context.spyRet5)||0))/0.025,-3,3),
       relativeQqq5:clamp((pct(close,c(5))-(Number(context.qqqRet5)||0))/0.03,-3,3),
       timeSin:Math.sin(angle),
-      timeCos:Math.cos(angle)
+      timeCos:Math.cos(angle),
+      iwmRet5:clamp((Number(context.iwmRet5)||0)/0.035,-3,3),
+      diaRet5:clamp((Number(context.diaRet5)||0)/0.02,-3,3),
+      breadth20:clamp(Number(context.breadth20)||0,-1,1),
+      dispersion5:clamp((Number(context.dispersion5)||0)/0.02,0,3),
+      relativeIwm5:clamp((pct(close,c(5))-(Number(context.iwmRet5)||0))/0.035,-3,3)
     };
     return feature;
   }
 
   buildContextMap(histories){
     const accum=new Map();
-    const core={SPY:new Map(),QQQ:new Map()};
+    const core={SPY:new Map(),QQQ:new Map(),IWM:new Map(),DIA:new Map()};
     for(const [symbol,rows] of histories.entries()){
       if(!Array.isArray(rows)||rows.length<6) continue;
       for(let i=5;i<rows.length;i++){
         const ts=+new Date(rows[i].ts||rows[i].time);
-        const prev=Number(rows[i-5].close),cur=Number(rows[i].close);
-        if(!Number.isFinite(ts)||!prev||!Number.isFinite(cur)) continue;
-        const r=(cur-prev)/prev;
+        const prev5=Number(rows[i-5].close),cur=Number(rows[i].close);
+        if(!Number.isFinite(ts)||!prev5||!Number.isFinite(cur)) continue;
+        const r5=(cur-prev5)/prev5;
         let a=accum.get(ts);
-        if(!a){ a={up:0,total:0}; accum.set(ts,a); }
-        a.total++;
-        if(r>0) a.up++;
-        if(symbol==="SPY") core.SPY.set(ts,r);
-        if(symbol==="QQQ") core.QQQ.set(ts,r);
+        if(!a){
+          a={up5:0,total5:0,up20:0,total20:0,returns5:[]};
+          accum.set(ts,a);
+        }
+        a.total5++;
+        if(r5>0) a.up5++;
+        a.returns5.push(r5);
+
+        if(i>=20){
+          const prev20=Number(rows[i-20].close);
+          if(prev20>0){
+            const r20=(cur-prev20)/prev20;
+            a.total20++;
+            if(r20>0) a.up20++;
+          }
+        }
+
+        if(core[symbol]) core[symbol].set(ts,r5);
       }
     }
     const out=new Map();
@@ -155,7 +174,11 @@ export class FeatureFactory {
       out.set(ts,{
         spyRet5:core.SPY.get(ts)||0,
         qqqRet5:core.QQQ.get(ts)||0,
-        breadth5:a.total?((a.up/a.total)-.5)*2:0
+        iwmRet5:core.IWM.get(ts)||0,
+        diaRet5:core.DIA.get(ts)||0,
+        breadth5:a.total5?((a.up5/a.total5)-.5)*2:0,
+        breadth20:a.total20?((a.up20/a.total20)-.5)*2:0,
+        dispersion5:stdev(a.returns5)
       });
     }
     return out;
@@ -163,22 +186,38 @@ export class FeatureFactory {
 
   contextAt(histories,ts){
     const target=+new Date(ts);
-    let up=0,total=0,spyRet5=0,qqqRet5=0;
+    let up5=0,total5=0,up20=0,total20=0;
+    let spyRet5=0,qqqRet5=0,iwmRet5=0,diaRet5=0;
+    const returns5=[];
     for(const [symbol,rows] of histories.entries()){
       if(!rows?.length) continue;
       let idx=rows.length-1;
       while(idx>5 && +new Date(rows[idx].ts||rows[idx].time)>target) idx--;
       if(idx<5) continue;
-      const prev=Number(rows[idx-5].close),cur=Number(rows[idx].close);
-      if(!prev||!Number.isFinite(cur)) continue;
-      const r=(cur-prev)/prev;
-      total++; if(r>0) up++;
-      if(symbol==="SPY") spyRet5=r;
-      if(symbol==="QQQ") qqqRet5=r;
+      const prev5=Number(rows[idx-5].close),cur=Number(rows[idx].close);
+      if(!prev5||!Number.isFinite(cur)) continue;
+      const r5=(cur-prev5)/prev5;
+      total5++; if(r5>0) up5++;
+      returns5.push(r5);
+
+      if(idx>=20){
+        const prev20=Number(rows[idx-20].close);
+        if(prev20>0){
+          const r20=(cur-prev20)/prev20;
+          total20++; if(r20>0) up20++;
+        }
+      }
+
+      if(symbol==="SPY") spyRet5=r5;
+      if(symbol==="QQQ") qqqRet5=r5;
+      if(symbol==="IWM") iwmRet5=r5;
+      if(symbol==="DIA") diaRet5=r5;
     }
     return {
-      spyRet5,qqqRet5,
-      breadth5:total?((up/total)-.5)*2:0
+      spyRet5,qqqRet5,iwmRet5,diaRet5,
+      breadth5:total5?((up5/total5)-.5)*2:0,
+      breadth20:total20?((up20/total20)-.5)*2:0,
+      dispersion5:stdev(returns5)
     };
   }
 
