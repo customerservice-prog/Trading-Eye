@@ -292,17 +292,18 @@
               <div class="learning-score">
                 <span class="eyebrow">Verified score</span>
                 <div class="score-big" id="accuracyValue">—</div>
-                <span>scored prediction accuracy</span>
+                <span>live scored prediction accuracy</span>
               </div>
               <div class="metric-grid compact">
                 <div class="metric"><span>Predictions made</span><strong id="predictionCount">0</strong></div>
                 <div class="metric"><span>Scored</span><strong id="scoredCount">0</strong></div>
-                <div class="metric"><span>High-confidence accuracy</span><strong id="highConfidenceAccuracy">—</strong></div>
+                <div class="metric"><span>Live high-confidence accuracy</span><strong id="highConfidenceAccuracy">—</strong></div>
+                <div class="metric"><span>Historical holdout</span><strong id="historicalHoldoutAccuracy">—</strong></div>
                 <div class="metric"><span>Learning updates</span><strong id="learningUpdates">0</strong></div>
               </div>
               <div class="learning-explainer">
                 <span class="learning-icon">◎</span>
-                <div><strong>No hindsight allowed.</strong><br>Every forecast is locked before its result is known. After the horizon expires, Trading Eye grades itself and updates its model from the mistake or success.</div>
+                <div><strong>No hindsight allowed.</strong><br>Historical training uses an older time-ordered segment and a separate holdout segment. Live forecasts are then stored before the outcome exists, scored later, and tracked separately.</div>
               </div>
             </div>
           </div>
