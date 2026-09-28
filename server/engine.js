@@ -5,10 +5,11 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const pct=(a,b)=>b?(a-b)/b:0;
 
 export class RealMarketEngine extends EventEmitter {
-  constructor({db,provider,symbols,backfillDays=30,predictEvery=5,horizonMinutes=15}) {
+  constructor({db,provider,symbols,backfillDays=30,predictEvery=5,horizonMinutes=15,enabled=true}) {
     super();
     this.db=db;
     this.provider=provider;
+    this.enabled=enabled;
     this.symbols=symbols;
     this.backfillDays=backfillDays;
     this.predictEvery=predictEvery;
@@ -39,6 +40,11 @@ export class RealMarketEngine extends EventEmitter {
     this.flushTimer=setInterval(()=>this.#flushRaw().catch(err=>this.#recordError("raw_flush",err)),1000);
     this.heartbeatTimer=setInterval(()=>this.#heartbeat().catch(()=>{}),15000);
     await this.#heartbeat();
+    if (!this.enabled) {
+      this.providerStatus={state:"DISABLED",provider:"alpaca",feed:this.provider.feed};
+      await this.#heartbeat();
+      return;
+    }
     if (this.provider.configured()) {
       this.#backfill().catch(err=>{
         this.backfill.state="ERROR";
@@ -317,6 +323,7 @@ export class RealMarketEngine extends EventEmitter {
   status() {
     return {
       mode:"REAL_DATA_ONLY",
+      engineEnabled:this.enabled,
       configured:this.provider.configured(),
       provider:this.providerStatus,
       symbols:this.symbols,
