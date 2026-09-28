@@ -107,7 +107,7 @@ export class PaperBroker {
     const gross=marked.reduce((s,p)=>s+Math.abs(p.qty*p.mark),0);
 
     const fills=await this.db.pool.query(`
-      SELECT fill_id,order_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model,created_at
+      SELECT fill_id,order_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model,realized_pnl,created_at
       FROM paper_fills WHERE account_id=$1
       ORDER BY created_at DESC LIMIT 100
     `,[this.accountId]);
@@ -115,6 +115,31 @@ export class PaperBroker {
       "SELECT COUNT(*)::int AS n FROM paper_fills WHERE account_id=$1",
       [this.accountId]
     );
+    const closed=await this.db.pool.query(`
+      SELECT realized_pnl
+      FROM paper_fills
+      WHERE account_id=$1 AND ABS(realized_pnl) > 0.0000001
+      ORDER BY created_at
+    `,[this.accountId]);
+    const outcomes=closed.rows.map(r=>Number(r.realized_pnl)||0);
+    const winners=outcomes.filter(x=>x>0);
+    const losers=outcomes.filter(x=>x<0);
+    const grossProfit=winners.reduce((a,b)=>a+b,0);
+    const grossLoss=Math.abs(losers.reduce((a,b)=>a+b,0));
+
+    const dd=await this.db.pool.query(`
+      WITH ordered AS (
+        SELECT ts,equity,
+          MAX(equity) OVER (
+            PARTITION BY account_id ORDER BY ts
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS peak
+        FROM paper_equity_snapshots
+        WHERE account_id=$1
+      )
+      SELECT COALESCE(MIN((equity-peak)/NULLIF(peak,0)),0) AS max_drawdown
+      FROM ordered
+    `,[this.accountId]);
 
     return {
       accountId:this.accountId,
@@ -126,12 +151,18 @@ export class PaperBroker {
       autopilotEnabled:Boolean(account?.autopilot_enabled),
       fillModel:`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`,
       fillCount:Number(fillCount.rows[0]?.n)||0,
+      closedOutcomes:outcomes.length,
+      winRate:outcomes.length?winners.length/outcomes.length:null,
+      avgWinner:winners.length?grossProfit/winners.length:null,
+      avgLoser:losers.length?losers.reduce((a,b)=>a+b,0)/losers.length:null,
+      profitFactor:grossLoss?grossProfit/grossLoss:(grossProfit>0?Infinity:null),
+      maxDrawdown:Number(dd.rows[0]?.max_drawdown)||0,
       positions:marked,
       fills:fills.rows.map(r=>({
         fillId:r.fill_id,orderId:r.order_id,symbol:r.symbol,side:r.side,qty:Number(r.qty),
         fillPrice:Number(r.fill_price),marketBid:r.market_bid==null?null:Number(r.market_bid),
         marketAsk:r.market_ask==null?null:Number(r.market_ask),quoteTs:r.quote_ts,
-        fillModel:r.fill_model,createdAt:r.created_at
+        fillModel:r.fill_model,realizedPnl:Number(r.realized_pnl)||0,createdAt:r.created_at
       }))
     };
   }
@@ -197,9 +228,10 @@ export class PaperBroker {
       if(side==="BUY" && signed>0 && oldQty>=0 && fillPrice*qty>snapshot.cash){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"INSUFFICIENT_CASH"});
       }
-      if(snapshot.equity<=snapshot.startingCash*(1-this.dailyLossPct)){
+      const dayBase=await this.#dailyEquityBaseline();
+      if(dayBase>0 && snapshot.equity<=dayBase*(1-this.dailyLossPct)){
         await this.setAutopilot(false);
-        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"PAPER_LOSS_LIMIT"});
+        return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"PAPER_DAILY_LOSS_LIMIT"});
       }
 
       return await this.#fillOrder({
@@ -209,6 +241,19 @@ export class PaperBroker {
     }finally{
       this.processing.delete(lockKey);
     }
+  }
+
+  async #dailyEquityBaseline(){
+    const q=await this.db.pool.query(`
+      SELECT equity
+      FROM paper_equity_snapshots
+      WHERE account_id=$1
+        AND (ts AT TIME ZONE 'America/New_York')::date =
+            (NOW() AT TIME ZONE 'America/New_York')::date
+      ORDER BY ts ASC
+      LIMIT 1
+    `,[this.accountId]);
+    return q.rowCount?Number(q.rows[0].equity)||0:0;
   }
 
   async #rejectOrder({symbol,side,qty,source,modelId,reason}){
@@ -255,11 +300,11 @@ export class PaperBroker {
 
       await client.query(`
         INSERT INTO paper_fills(
-          fill_id,order_id,account_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model
-        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          fill_id,order_id,account_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model,realized_pnl
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       `,[
         fillId,orderId,this.accountId,symbol,side,qty,fillPrice,
-        market.bid,market.ask,quoteTs,`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`
+        market.bid,market.ask,quoteTs,`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`,realized
       ]);
 
       await client.query(`
