@@ -40,10 +40,10 @@
       </div>
 
       <div class="status-strip">
-        <div class="feed-state"><span class="dot dot-green"></span><span id="feedStatus">Demo feed running</span></div>
+        <div class="feed-state"><span class="dot dot-green"></span><span id="feedStatus">Connecting real data…</span></div>
         <div class="paper-pill">PAPER MODE</div>
         <button id="helpBtn" class="top-action" type="button" aria-label="Explain this screen">?</button>
-        <button id="pauseBtn" class="top-action" type="button" title="Pause demo feed" aria-label="Pause demo feed">Ⅱ</button>
+        <button id="pauseBtn" class="top-action" type="button" title="Refresh real-data status" aria-label="Refresh real-data status">↻</button>
       </div>
     </header>
 
@@ -51,8 +51,8 @@
       <div class="mode-banner-main">
         <span class="mode-icon">🧠</span>
         <div>
-          <strong>AI is learning in simulation</strong>
-          <span>Every prediction is locked, scored, and used to update the model. No real money is connected.</span>
+          <strong>Real-data-only learning</strong>
+          <span>Market numbers must come from the named provider. Predictions are locked, scored, and learned from server-side 24/7.</span>
         </div>
       </div>
       <div class="mode-steps">
@@ -71,7 +71,7 @@
             <span class="eyebrow">Your market</span>
             <h2>Watchlist</h2>
           </div>
-          <span class="tiny-status"><i></i> SIMULATED</span>
+          <span class="tiny-status"><i></i> PROVIDER DATA</span>
         </div>
 
         <div class="watchlist-columns" aria-hidden="true">
@@ -85,15 +85,15 @@
             <span id="marketRegimeBadge" class="soft-badge">Neutral</span>
           </div>
           <div class="pulse-row">
-            <span><i class="pulse-icon tech"></i>Technology</span>
+            <span><i class="pulse-icon tech"></i>Provider</span>
             <strong id="techPulse">—</strong>
           </div>
           <div class="pulse-row">
-            <span><i class="pulse-icon breadth"></i>Breadth</span>
+            <span><i class="pulse-icon breadth"></i>Coverage</span>
             <strong id="breadthPulse">—</strong>
           </div>
           <div class="pulse-row">
-            <span><i class="pulse-icon vol"></i>Volatility</span>
+            <span><i class="pulse-icon vol"></i>Last real bar</span>
             <strong id="volPulse">—</strong>
           </div>
         </section>
@@ -115,7 +115,7 @@
                 <span id="symbolName" class="symbol-name">QQQ</span>
                 <span class="market-tag">NASDAQ</span>
               </div>
-              <span id="symbolDescription" class="symbol-desc">Nasdaq 100 ETF · demo</span>
+              <span id="symbolDescription" class="symbol-desc">Nasdaq 100 ETF · real provider data</span>
             </div>
             <div class="quote-line">
               <span id="lastPrice" class="last-price">—</span>
@@ -133,7 +133,7 @@
         <div class="chart-stage" id="chartStage">
           <canvas id="marketChart"></canvas>
           <div class="chart-top-overlay">
-            <span>LIVE SIMULATION</span>
+            <span>REAL PROVIDER DATA</span>
             <span>•</span>
             <span>Prediction horizon ≈ 15 min</span>
           </div>
@@ -246,7 +246,7 @@
       <section class="lower-panel panel">
         <div class="lower-tabs" id="lowerTabs">
           <button class="active" data-tab="tape" type="button"><span class="tab-icon">↕</span><span>Time & Sales</span></button>
-          <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Level II</span></button>
+          <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
           <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
           <button data-tab="predictions" type="button"><span class="tab-icon">✦</span><span>Predictions</span></button>
@@ -265,11 +265,11 @@
           <div class="tab-pane" id="tab-level2">
             <div class="level2-grid">
               <div>
-                <div class="book-head bid"><span>BIDS</span><span>Price / Size / Orders</span></div>
+                <div class="book-head bid"><span>BEST BID</span><span>Price / Size / Exchange</span></div>
                 <div id="bidBook"></div>
               </div>
               <div>
-                <div class="book-head ask"><span>ASKS</span><span>Price / Size / Orders</span></div>
+                <div class="book-head ask"><span>BEST ASK</span><span>Price / Size / Exchange</span></div>
                 <div id="askBook"></div>
               </div>
             </div>
@@ -334,7 +334,7 @@
       <div class="tour-grid">
         <div class="tour-step">
           <span class="tour-number">1</span>
-          <div><strong>Start with the chart</strong><p>The candles show price. The shaded area on the right is where the AI thinks price is most likely to travel—not a guarantee.</p></div>
+          <div><strong>Start with the chart</strong><p>The candles are stored real provider bars. The shaded area appears only after the server model has enough real history; it is a probability, not a guarantee.</p></div>
         </div>
         <div class="tour-step">
           <span class="tour-number">2</span>
@@ -342,15 +342,15 @@
         </div>
         <div class="tour-step">
           <span class="tour-number">3</span>
-          <div><strong>Read the reasons</strong><p>Trading Eye translates trend, volume, order flow, breadth and VWAP into plain English so you know why the model thinks what it thinks.</p></div>
+          <div><strong>Read the reasons</strong><p>Trading Eye derives features only from stored provider data and explains them in plain English so you know exactly what the model used.</p></div>
         </div>
         <div class="tour-step">
           <span class="tour-number">4</span>
-          <div><strong>Watch AI Learning</strong><p>The learning tab is the proof. Predictions are locked first, then graded later. You can see whether accuracy is actually improving.</p></div>
+          <div><strong>Watch AI Learning</strong><p>The learning tab is the audit trail. Predictions are stored in Postgres first, graded after their horizon, and cannot be rewritten with hindsight.</p></div>
         </div>
         <div class="tour-step">
           <span class="tour-number">5</span>
-          <div><strong>Keep it paper-only</strong><p>The Buy/Sell buttons use simulated money. Real execution is intentionally unavailable until the system earns trust over a long test period.</p></div>
+          <div><strong>Keep it paper-only</strong><p>The Buy/Sell buttons use paper money and simulated fills, but their reference prices must come from the real feed. Real execution remains unavailable.</p></div>
         </div>
       </div>
 
