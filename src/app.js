@@ -600,8 +600,9 @@ function renderLearning() {
     const run=modelLabData?.latestRun||predictionData.modelLab?.latestRun||null;
     const wf=production?.walkForwardMetrics||{};
     const challengers=modelLabData?.shadowModels||[];
+    const drift=production?.drift||modelLabData?.drift||{};
     $("modelLabSummary").innerHTML=production
-      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · walk-forward ${wf.accuracy==null?"—":pct(Number(wf.accuracy))} · ${num(wf.folds?.length||0)} folds · live shadow challengers ${challengers.length}.<br>${run?.promotionReason||"Production remains locked until a challenger proves better on future paired outcomes."}`
+      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · walk-forward ${wf.accuracy==null?"—":pct(Number(wf.accuracy))} · ${num(wf.folds?.length||0)} folds · live shadow challengers ${challengers.length}.<br>Drift guard: <strong>${String(drift.level||"INSUFFICIENT").replaceAll("_"," ")}</strong> · ${drift.reason||"collecting recent future outcomes"}.<br>${run?.promotionReason||"Production remains locked until a challenger proves better on future paired outcomes."}`
       : `<strong>Model Lab is building the first production model.</strong><br>Predictions stay on the legacy fallback until a challenger passes calibration, unseen-test, walk-forward and final-holdout guards.`;
   }
 
@@ -862,7 +863,15 @@ function renderResearchBrain() {
       <td>${f.hit_rate==null?"—":pct(Number(f.hit_rate))}</td>
       <td class="${Number(f.avg_forward_return)>0?"positive":Number(f.avg_forward_return)<0?"negative":"neutral"}">${f.avg_forward_return==null?"—":(Number(f.avg_forward_return)>=0?"+":"")+pct(Number(f.avg_forward_return))}</td>
       <td>${Number(f.score||0).toFixed(2)}</td>
-      <td>${evidence.start||"—"} → ${evidence.end||"—"}</td>
+      <td>${
+        evidence.holdoutWindow?.start
+          ? evidence.holdoutWindow.start+" → "+evidence.holdoutWindow.end
+          : evidence.validationWindow?.start
+            ? evidence.validationWindow.start+" → "+evidence.validationWindow.end
+            : evidence.discoveryWindow?.start
+              ? evidence.discoveryWindow.start+" → "+evidence.discoveryWindow.end
+              : "—"
+      }</td>
     </tr>`;
   }).join(""):'<tr><td colspan="9">No 1999+ research findings yet. The long-history lane must ingest data before pattern mining can begin.</td></tr>';
 }
