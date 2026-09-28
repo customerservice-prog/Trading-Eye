@@ -68,6 +68,24 @@ export class MarketClient {
     return r.json();
   }
 
+  async proofScoreboard() {
+    const r=await fetch("/api/proof-scoreboard",{cache:"no-store"});
+    if (!r.ok) throw new Error("Proof scoreboard request failed: "+r.status);
+    return r.json();
+  }
+
+  async readiness() {
+    const r=await fetch("/api/readiness",{cache:"no-store"});
+    if (!r.ok) throw new Error("Readiness request failed: "+r.status);
+    return r.json();
+  }
+
+  async drift() {
+    const r=await fetch("/api/drift",{cache:"no-store"});
+    if (!r.ok) throw new Error("Drift request failed: "+r.status);
+    return r.json();
+  }
+
   async researchEvents(afterId=null,limit=120) {
     const qs=new URLSearchParams({limit:String(limit)});
     if (afterId!=null) qs.set("afterId",String(afterId));
