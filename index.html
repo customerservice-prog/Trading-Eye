@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#070b11" />
+  <title>Trading Eye — AI Market Terminal</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app" class="terminal-shell">
+    <header class="topbar">
+      <div class="brand-wrap">
+        <div class="brand-mark">TE</div>
+        <div>
+          <div class="brand">Trading Eye</div>
+          <div class="brand-sub">AI market terminal</div>
+        </div>
+      </div>
+
+      <div class="symbol-command">
+        <span class="search-icon">⌕</span>
+        <input id="symbolInput" value="QQQ" aria-label="Symbol" maxlength="8" />
+        <button id="loadSymbolBtn" class="ghost-btn">Load</button>
+      </div>
+
+      <div class="timeframes" id="timeframes" aria-label="Timeframes">
+        <button data-tf="1m">1m</button>
+        <button data-tf="5m" class="active">5m</button>
+        <button data-tf="15m">15m</button>
+        <button data-tf="1h">1H</button>
+        <button data-tf="1d">1D</button>
+      </div>
+
+      <div class="status-strip">
+        <div><span class="dot dot-green"></span><span id="feedStatus">Demo feed running</span></div>
+        <div class="paper-pill">PAPER ONLY</div>
+        <button id="pauseBtn" class="icon-btn" title="Pause demo feed">Ⅱ</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="watchlist-panel panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Markets</span>
+            <h2>Watchlist</h2>
+          </div>
+          <span class="tiny-muted">DEMO</span>
+        </div>
+        <div id="watchlist" class="watchlist"></div>
+
+        <div class="market-pulse">
+          <div class="section-title-row">
+            <span>Market pulse</span>
+            <span id="marketRegimeBadge" class="soft-badge">Neutral</span>
+          </div>
+          <div class="pulse-row"><span>Technology</span><strong id="techPulse">—</strong></div>
+          <div class="pulse-row"><span>Breadth</span><strong id="breadthPulse">—</strong></div>
+          <div class="pulse-row"><span>Volatility</span><strong id="volPulse">—</strong></div>
+        </div>
+      </aside>
+
+      <section class="chart-panel panel">
+        <div class="chart-toolbar">
+          <div class="instrument">
+            <div>
+              <span id="symbolName" class="symbol-name">QQQ</span>
+              <span id="symbolDescription" class="symbol-desc">Nasdaq 100 ETF · demo</span>
+            </div>
+            <div class="quote-line">
+              <span id="lastPrice" class="last-price">—</span>
+              <span id="priceChange" class="price-change">—</span>
+            </div>
+          </div>
+
+          <div class="chart-actions">
+            <button class="toolbar-btn active" id="candlesBtn">Candles</button>
+            <button class="toolbar-btn" id="predictionToggle">AI forecast on</button>
+            <button class="toolbar-btn" id="beginnerToggle">Beginner labels on</button>
+          </div>
+        </div>
+
+        <div class="chart-stage" id="chartStage">
+          <canvas id="marketChart"></canvas>
+          <div id="chartTooltip" class="chart-tooltip hidden"></div>
+          <div id="aiChartCallout" class="chart-callout">
+            <span class="callout-kicker">AI VIEW</span>
+            <strong id="chartCalloutTitle">Watching</strong>
+            <span id="chartCalloutBody">Waiting for enough evidence.</span>
+          </div>
+          <div class="chart-legend">
+            <span><i class="legend-line price"></i>Price</span>
+            <span><i class="legend-box forecast"></i>AI expected area</span>
+            <span><i class="legend-dot prediction"></i>Locked prediction</span>
+          </div>
+        </div>
+
+        <div class="chart-bottom-strip">
+          <div><span>VWAP</span><strong id="vwapValue">—</strong></div>
+          <div><span>Volume</span><strong id="volumeValue">—</strong></div>
+          <div><span>Spread</span><strong id="spreadValue">—</strong></div>
+          <div><span>AI horizon</span><strong>~15 min</strong></div>
+        </div>
+      </section>
+
+      <aside class="ai-panel panel">
+        <div class="ai-title-row">
+          <div>
+            <span class="eyebrow">Built-in intelligence</span>
+            <h2>AI Market Brain</h2>
+          </div>
+          <span id="brainStateBadge" class="brain-badge">LEARNING</span>
+        </div>
+
+        <section class="decision-card" id="decisionCard">
+          <div class="decision-top">
+            <div>
+              <span class="tiny-muted">RIGHT NOW</span>
+              <h3 id="decisionTitle">Watching</h3>
+            </div>
+            <div id="confidenceRing" class="confidence-ring">
+              <span id="confidenceValue">50%</span>
+            </div>
+          </div>
+          <p id="decisionSummary">The model is collecting evidence before taking a side.</p>
+          <div class="prob-grid">
+            <div><span>UP</span><strong id="probUp">—</strong></div>
+            <div><span>FLAT</span><strong id="probFlat">—</strong></div>
+            <div><span>DOWN</span><strong id="probDown">—</strong></div>
+          </div>
+        </section>
+
+        <section class="why-section">
+          <div class="section-title-row">
+            <span>Why the AI thinks this</span>
+            <button id="simplifyBtn" class="text-btn">Simplify</button>
+          </div>
+          <div id="reasonList" class="reason-list"></div>
+        </section>
+
+        <section class="beginner-card">
+          <span class="eyebrow">Explain it like I’m new</span>
+          <p id="beginnerExplanation">The AI is comparing buying pressure, trend, volume and the broader market before making a prediction.</p>
+        </section>
+
+        <section class="paper-controls">
+          <div class="section-title-row">
+            <span>Paper trade controls</span>
+            <label class="switch-label">
+              <input type="checkbox" id="autopilotToggle" />
+              <span>AI autopilot</span>
+            </label>
+          </div>
+          <div class="paper-buttons">
+            <button id="paperBuyBtn" class="trade-btn buy">Paper buy</button>
+            <button id="paperSellBtn" class="trade-btn sell">Paper sell</button>
+            <button id="flattenBtn" class="trade-btn flat">Flatten</button>
+          </div>
+          <div class="lock-note">🔒 Real-money execution is not connected in this build.</div>
+        </section>
+      </aside>
+
+      <section class="lower-panel panel">
+        <div class="lower-tabs" id="lowerTabs">
+          <button class="active" data-tab="tape">Time & Sales</button>
+          <button data-tab="level2">Level II</button>
+          <button data-tab="paper">Paper Account</button>
+          <button data-tab="learning">AI Learning</button>
+          <button data-tab="predictions">Predictions</button>
+        </div>
+
+        <div class="lower-content">
+          <div class="tab-pane active" id="tab-tape">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Time</th><th>Price</th><th>Size</th><th>Side</th></tr></thead>
+                <tbody id="tapeBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-level2">
+            <div class="level2-grid">
+              <div>
+                <div class="book-head bid">BIDS</div>
+                <div id="bidBook"></div>
+              </div>
+              <div>
+                <div class="book-head ask">ASKS</div>
+                <div id="askBook"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-paper">
+            <div class="metric-grid">
+              <div class="metric"><span>Starting balance</span><strong>$100,000.00</strong></div>
+              <div class="metric"><span>Equity</span><strong id="paperEquity">—</strong></div>
+              <div class="metric"><span>Cash</span><strong id="paperCash">—</strong></div>
+              <div class="metric"><span>Open P/L</span><strong id="openPnl">—</strong></div>
+              <div class="metric"><span>Realized P/L</span><strong id="realizedPnl">—</strong></div>
+              <div class="metric"><span>Trades</span><strong id="paperTrades">0</strong></div>
+            </div>
+            <div id="positionsTable" class="positions-area"></div>
+          </div>
+
+          <div class="tab-pane" id="tab-learning">
+            <div class="learning-layout">
+              <div class="learning-score">
+                <span class="eyebrow">Proof, not hype</span>
+                <div class="score-big" id="accuracyValue">—</div>
+                <span>scored prediction accuracy</span>
+              </div>
+              <div class="metric-grid compact">
+                <div class="metric"><span>Predictions</span><strong id="predictionCount">0</strong></div>
+                <div class="metric"><span>Scored</span><strong id="scoredCount">0</strong></div>
+                <div class="metric"><span>High-confidence accuracy</span><strong id="highConfidenceAccuracy">—</strong></div>
+                <div class="metric"><span>Learning updates</span><strong id="learningUpdates">0</strong></div>
+              </div>
+              <div class="learning-explainer">
+                Every forecast is locked before its result is known. When the horizon expires, Trading Eye scores the forecast and nudges its model weights toward what actually happened.
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-predictions">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Time</th><th>Symbol</th><th>Forecast</th><th>Confidence</th><th>Result</th></tr></thead>
+                <tbody id="predictionBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
