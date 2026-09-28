@@ -107,6 +107,7 @@ export class ResearchBrain extends EventEmitter {
   }
 
   async init(){
+    const demoted=await this.db.demoteLegacyResearchFindings();
     const startEvent=await this.#event({
       category:"SYSTEM",
       title:"Research Brain online",
@@ -116,9 +117,19 @@ export class ResearchBrain extends EventEmitter {
         longHistoryStart:this.longHistoryStart,
         intradaySource:"Alpaca",
         longHistorySource:this.longHistoryProvider,
-        role:this.role
+        role:this.role,
+        legacyPromotionsDemoted:demoted
       }
     });
+    if(demoted){
+      await this.#event({
+        category:"PATTERN",
+        level:"IMPORTANT",
+        title:"Legacy pattern promotions reset for stronger validation",
+        message:`${demoted} older findings were relabeled LEGACY_UNVALIDATED until they pass the new discovery → validation → holdout pipeline.`,
+        details:{demoted,validationVersion:"v2_chrono_60_20_20"}
+      });
+    }
     this.sessionStartEventId=Number(startEvent?.id)||null;
 
     if(this.role!=="long_history") await this.#syncJobMirror();
