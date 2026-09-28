@@ -161,7 +161,7 @@ export class ReadinessEvaluator {
       ),
       this.#gate(
         "paper_profit_factor","Paper profit factor",
-        pf!=null && Number.isFinite(pf) && pf>=1.20,
+        pf!=null && (pf===Infinity || (Number.isFinite(pf) && pf>=1.20)),
         pf==null?"none":Number.isFinite(pf)?Number(pf.toFixed(2)):"∞",">= 1.20",
         "Gross paper winners must meaningfully exceed gross paper losers after execution costs.",
         {quality:true}
