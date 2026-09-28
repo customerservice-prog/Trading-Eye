@@ -353,6 +353,8 @@ export class ModelLab {
     const direction=directionFromProbs(probs);
     const confidence=Math.max(...probs);
     const edge=edgeFromProbs(probs);
+    const eventVeto=Number(features.eventRisk||0)>=.85;
+    const corporateActionVeto=Number(features.corporateActionRisk||0)>=.5;
     const classIdx=classIndex(direction);
     const contributions=localContributions(this.productionModel,x,classIdx);
     return {
@@ -362,7 +364,9 @@ export class ModelLab {
       pUp:probs[0],
       pFlat:probs[1],
       pDown:probs[2],
-      noTrade:confidence<.46||edge<.055,
+      noTrade:confidence<.46||edge<.055||eventVeto||corporateActionVeto,
+      eventVeto,
+      corporateActionVeto,
       modelId:this.productionRecord.model_id,
       modelVersion:Math.floor(new Date(this.productionRecord.trained_at).getTime()/1000),
       family:this.productionRecord.family,
