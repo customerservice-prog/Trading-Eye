@@ -11,6 +11,7 @@ import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } fro
 import { ModelLab } from "./model-lab.js";
 import { PaperBroker } from "./paper-broker.js";
 import { ResearchBrain } from "./research-brain.js";
+import { ReadinessEvaluator } from "./readiness.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -34,6 +35,7 @@ const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
 const LONG_HISTORY_URL=String(process.env.LONG_HISTORY_URL || "https://static.stooq.com/db/h/d_us_txt.zip");
 const LONG_HISTORY_API_KEY=String(process.env.LONG_HISTORY_API_KEY || "");
 const RESEARCH_BRAIN_ROLE=String(process.env.RESEARCH_BRAIN_ROLE || "all");
+const HISTORICAL_INTEGRITY_VERIFIED=String(process.env.HISTORICAL_INTEGRITY_VERIFIED ?? "false").toLowerCase()==="true";
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
@@ -86,9 +88,15 @@ const researchBrain=new ResearchBrain({
   longHistoryStart:LONG_HISTORY_START,
   longHistoryUrl:LONG_HISTORY_URL,
   longHistoryApiKey:LONG_HISTORY_API_KEY,
+  historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED,
   role:RESEARCH_BRAIN_ROLE
 });
 await researchBrain.init();
+
+const readiness=new ReadinessEvaluator({
+  db,marketEngine:engine,modelLab,paperBroker,researchBrain,
+  historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED
+});
 
 const app=express();
 app.disable("x-powered-by");
@@ -117,7 +125,8 @@ app.get("/health",async(req,res)=>{
       longHistoryProvider:LONG_HISTORY_PROVIDER,
       longHistoryStart:LONG_HISTORY_START,
       longHistoryKeyConfigured:Boolean(LONG_HISTORY_API_KEY),
-      role:RESEARCH_BRAIN_ROLE
+      role:RESEARCH_BRAIN_ROLE,
+      historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED
     },
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
@@ -134,6 +143,10 @@ app.get("/api/status",async(req,res)=>{
 
 app.get("/api/model-lab",async(req,res)=>{
   res.json(modelLab.status());
+});
+
+app.get("/api/readiness",async(req,res)=>{
+  res.json(await readiness.evaluate());
 });
 
 app.get("/api/research",async(req,res)=>{
