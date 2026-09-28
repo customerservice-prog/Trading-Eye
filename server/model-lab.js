@@ -172,13 +172,14 @@ export class ModelLab {
     await this.refreshLiveShadowMetrics();
     this.latestRun=await this.#loadLatestRun();
     this.timer=setInterval(()=>this.tick().catch(err=>this.#capture(err)),5*60*1000);
+    this.contextTimer=setInterval(()=>this.refreshContextHistories().catch(()=>{}),5*60*1000);
     setTimeout(()=>{
       if(this.forceTrainOnStart) this.trainNow("forced_preview_validation").catch(err=>this.#capture(err));
       else this.tick().catch(err=>this.#capture(err));
     },12000);
   }
 
-  stop(){ clearInterval(this.timer); }
+  stop(){ clearInterval(this.timer); clearInterval(this.contextTimer); }
 
   async refreshContextHistories(){
     const symbols=["SPY","QQQ",...this.sectorEtfs];
@@ -777,6 +778,7 @@ export class ModelLab {
 
     try{
       const coverage=await this.#ensureTrainingCoverage();
+      await this.refreshContextHistories();
       const trainingHistories=await this.#trainingHistories();
       const usableSymbols=[...trainingHistories.keys()];
       if(this.marketIntegrity){
