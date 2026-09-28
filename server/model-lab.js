@@ -211,8 +211,175 @@ export class ModelLab {
     };
   }
 
+  async shadowPredict(symbol,bar){
+    if(!this.shadowModels.length||!bar) return;
+    const features=this.currentFeatures(symbol);
+    if(!features) return;
+    const x=this.factory.vector(features);
+    const createdAt=new Date(bar.ts);
+    const targetAt=new Date(createdAt.getTime()+this.horizonMinutes*60*1000);
+
+    for(const item of this.shadowModels){
+      const raw=item.model.predict(x);
+      const p=applyTemperature(raw,item.temperature);
+      const direction=directionFromProbs(p);
+      const confidence=Math.max(...p);
+      await this.db.pool.query(`
+        INSERT INTO model_shadow_predictions(
+          model_id,symbol,created_at,target_at,reference_price,direction,confidence,
+          p_up,p_flat,p_down,status
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'PENDING')
+        ON CONFLICT(model_id,symbol,created_at) DO NOTHING
+      `,[
+        item.record.model_id,String(symbol).toUpperCase(),createdAt,targetAt,Number(bar.close),
+        direction,confidence,p[0],p[1],p[2]
+      ]);
+    }
+  }
+
+  async scoreShadowDue(bar){
+    if(!bar?.symbol||!this.shadowModels.length) return;
+    const q=await this.db.pool.query(`
+      SELECT * FROM model_shadow_predictions
+      WHERE symbol=$1 AND status='PENDING' AND target_at <= $2
+      ORDER BY target_at
+    `,[bar.symbol,bar.ts]);
+    if(!q.rowCount) return;
+
+    for(const row of q.rows){
+      const ret=(Number(bar.close)-Number(row.reference_price))/Number(row.reference_price);
+      const actual=ret>.001?"UP":ret<-.001?"DOWN":"FLAT";
+      const correct=row.direction===actual;
+      await this.db.pool.query(`
+        UPDATE model_shadow_predictions SET
+          status='SCORED',result_price=$4,result_return=$5,
+          actual_direction=$6,correct=$7,scored_at=$8
+        WHERE model_id=$1 AND symbol=$2 AND created_at=$3
+      `,[
+        row.model_id,row.symbol,row.created_at,Number(bar.close),ret,actual,correct,bar.ts
+      ]);
+    }
+    this.shadowScoreCounter+=q.rowCount;
+    if(this.shadowScoreCounter>=20){
+      this.shadowScoreCounter=0;
+      await this.refreshLiveShadowMetrics();
+      await this.evaluateShadowPromotion();
+    }
+  }
+
+  async refreshLiveShadowMetrics(){
+    const map={};
+    for(const item of this.shadowModels){
+      const q=await this.db.pool.query(`
+        SELECT p_up,p_flat,p_down,actual_direction
+        FROM model_shadow_predictions
+        WHERE model_id=$1 AND status='SCORED'
+        ORDER BY created_at
+      `,[item.record.model_id]);
+      const metrics=liveMetrics(q.rows);
+      map[item.record.model_id]=metrics;
+      await this.db.pool.query(`
+        UPDATE model_registry SET live_shadow_metrics=$2::jsonb
+        WHERE model_id=$1
+      `,[item.record.model_id,JSON.stringify(metrics)]);
+      item.record.live_shadow_metrics=metrics;
+    }
+    this.liveShadowMetrics=map;
+    return map;
+  }
+
+  async #pairedProductionMetrics(shadowModelId){
+    if(!this.productionRecord?.model_id) return null;
+    const q=await this.db.pool.query(`
+      SELECT p.p_up,p.p_flat,p.p_down,p.actual_direction
+      FROM model_shadow_predictions s
+      JOIN predictions p
+        ON p.symbol=s.symbol
+       AND p.created_at=s.created_at
+       AND p.status='SCORED'
+       AND p.model_id=$2
+      WHERE s.model_id=$1 AND s.status='SCORED'
+      ORDER BY s.created_at
+    `,[shadowModelId,this.productionRecord.model_id]);
+    return liveMetrics(q.rows);
+  }
+
+  async evaluateShadowPromotion(){
+    if(!this.productionRecord||!this.shadowModels.length) return null;
+    for(const item of [...this.shadowModels]){
+      const challenger=this.liveShadowMetrics[item.record.model_id]||item.record.live_shadow_metrics||{};
+      if(Number(challenger.samples||0)<this.shadowMinSamples) continue;
+      const incumbent=await this.#pairedProductionMetrics(item.record.model_id);
+      if(!incumbent||incumbent.samples<Math.floor(this.shadowMinSamples*.8)) continue;
+
+      const challengerTest=item.record.test_metrics||{};
+      const incumbentTest=this.productionRecord.test_metrics||{};
+      const liveBrierBetter=challenger.brier<=incumbent.brier*.985;
+      const liveAccuracySafe=challenger.accuracy>=incumbent.accuracy-.005;
+      const liveCalibrationSafe=challenger.ece<=incumbent.ece+.015;
+      const historicalSafe=!incumbentTest.brier||challengerTest.brier<=Number(incumbentTest.brier)*1.01;
+      const pass=liveBrierBetter&&liveAccuracySafe&&liveCalibrationSafe&&historicalSafe;
+
+      if(pass){
+        const reason=`Live-shadow promotion: challenger Brier ${challenger.brier.toFixed(4)} vs production ${incumbent.brier.toFixed(4)} across ${challenger.samples} paired real-time outcomes; calibration/accuracy/historical guards passed.`;
+        const client=await this.db.pool.connect();
+        try{
+          await client.query("BEGIN");
+          await client.query(`
+            UPDATE model_registry SET status='RETIRED'
+            WHERE horizon_minutes=$1 AND status='PRODUCTION'
+          `,[this.horizonMinutes]);
+          await client.query(`
+            UPDATE model_registry SET
+              status='PRODUCTION',promoted_at=NOW(),live_shadow_metrics=$2::jsonb,notes=COALESCE(notes,'')||$3
+            WHERE model_id=$1
+          `,[item.record.model_id,JSON.stringify(challenger),"\n"+reason]);
+          await client.query(`
+            UPDATE model_registry SET status='REJECTED'
+            WHERE horizon_minutes=$1 AND status='SHADOW' AND model_id<>$2
+          `,[this.horizonMinutes,item.record.model_id]);
+          await client.query("COMMIT");
+        }catch(err){
+          await client.query("ROLLBACK");
+          throw err;
+        }finally{
+          client.release();
+        }
+        await this.db.pool.query(`
+          UPDATE model_lab_runs SET promotion_reason=$2
+          WHERE winner_model_id=$1
+        `,[item.record.model_id,reason]);
+        console.log(JSON.stringify({
+          event:"model_live_shadow_promoted",
+          modelId:item.record.model_id,
+          challenger,
+          incumbent
+        }));
+        await this.loadProduction();
+        await this.loadShadowModels();
+        await this.refreshLiveShadowMetrics();
+        return {promoted:item.record.model_id,reason};
+      }
+
+      if(Number(challenger.samples||0)>=1000 && challenger.brier>=incumbent.brier*.995){
+        const reason=`Live shadow rejected after ${challenger.samples} outcomes: Brier ${challenger.brier.toFixed(4)} did not beat production ${incumbent.brier.toFixed(4)}.`;
+        await this.db.pool.query(`
+          UPDATE model_registry SET status='REJECTED',notes=COALESCE(notes,'')||$2
+          WHERE model_id=$1
+        `,[item.record.model_id,"\n"+reason]);
+        console.log(JSON.stringify({event:"model_live_shadow_rejected",modelId:item.record.model_id,reason}));
+        await this.loadShadowModels();
+      }
+    }
+    return null;
+  }
+
   async tick(){
     if(!this.enabled||this.training) return;
+    if(this.shadowModels.length){
+      await this.refreshLiveShadowMetrics();
+      await this.evaluateShadowPromotion();
+    }
     if(this.marketEngine.backfill.state!=="COMPLETE") return;
     const now=etParts();
     const minute=Number(now.hour)*60+Number(now.minute);
