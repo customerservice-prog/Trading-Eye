@@ -112,9 +112,14 @@ export class PaperBroker {
     const gross=marked.reduce((s,p)=>s+Math.abs(p.qty*p.mark),0);
 
     const fills=await this.db.pool.query(`
-      SELECT fill_id,order_id,symbol,side,qty,fill_price,market_bid,market_ask,quote_ts,fill_model,realized_pnl,created_at
-      FROM paper_fills WHERE account_id=$1
-      ORDER BY created_at DESC LIMIT 100
+      SELECT
+        f.fill_id,f.order_id,f.symbol,f.side,f.qty,f.fill_price,f.market_bid,f.market_ask,
+        f.quote_ts,f.fill_model,f.realized_pnl,f.created_at,
+        o.source
+      FROM paper_fills f
+      LEFT JOIN paper_orders o ON o.order_id=f.order_id
+      WHERE f.account_id=$1
+      ORDER BY f.created_at DESC LIMIT 100
     `,[this.accountId]);
     const fillCount=await this.db.pool.query(
       "SELECT COUNT(*)::int AS n FROM paper_fills WHERE account_id=$1",
@@ -167,7 +172,8 @@ export class PaperBroker {
         fillId:r.fill_id,orderId:r.order_id,symbol:r.symbol,side:r.side,qty:Number(r.qty),
         fillPrice:Number(r.fill_price),marketBid:r.market_bid==null?null:Number(r.market_bid),
         marketAsk:r.market_ask==null?null:Number(r.market_ask),quoteTs:r.quote_ts,
-        fillModel:r.fill_model,realizedPnl:Number(r.realized_pnl)||0,createdAt:r.created_at
+        fillModel:r.fill_model,source:r.source||null,
+        realizedPnl:Number(r.realized_pnl)||0,createdAt:r.created_at
       }))
     };
   }
