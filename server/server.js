@@ -194,6 +194,36 @@ engine.attachIntelligence({
   mistakeLab
 });
 
+let explorationSweepTimer=null;
+async function runExplorationSweep(){
+  if(!explorationBroker) return;
+  let evaluated=0;
+  for(const symbol of engine.hotSymbols()){
+    const prediction=modelLab.predict(symbol);
+    if(!prediction?.modelId) continue;
+    evaluated++;
+    try{
+      await explorationBroker.handlePrediction({symbol,...prediction});
+    }catch(err){
+      console.log(JSON.stringify({
+        event:"exploration_sweep_symbol_error",symbol,message:String(err?.message||err)
+      }));
+    }
+  }
+  const snap=await explorationBroker.snapshot();
+  console.log(JSON.stringify({
+    event:"exploration_sweep",
+    evaluated,
+    openPositions:(snap.positions||[]).length,
+    fillCount:snap.fillCount,
+    grossExposure:snap.grossExposure,
+    grossExposurePct:snap.grossExposurePct,
+    equity:snap.equity
+  }));
+}
+setTimeout(()=>runExplorationSweep().catch(()=>{}),45*1000);
+explorationSweepTimer=setInterval(()=>runExplorationSweep().catch(()=>{}),2*60*1000);
+
 const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
 await deepStudy.init();
 
@@ -522,6 +552,7 @@ server.listen(PORT,"0.0.0.0",()=>{
 
 const shutdown=async()=>{
   clearInterval(learningHotSetTimer);
+  clearInterval(explorationSweepTimer);
   provider.stop();
   universe.stop();
   deepStudy.stop();
