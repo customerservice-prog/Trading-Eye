@@ -56,6 +56,12 @@ export class MarketClient {
     return r.json();
   }
 
+  async scanner(limit=50) {
+    const r=await fetch("/api/scanner/latest?limit="+encodeURIComponent(limit),{cache:"no-store"});
+    if (!r.ok) throw new Error("Scanner request failed: "+r.status);
+    return r.json();
+  }
+
   async studyStatus() {
     const r=await fetch("/api/studies/status",{cache:"no-store"});
     if (!r.ok) throw new Error("Study status request failed: "+r.status);
