@@ -11,16 +11,18 @@ export class RealMarketEngine extends EventEmitter {
     this.db=db;
     this.provider=provider;
     this.enabled=enabled;
-    this.symbols=symbols;
+    this.coreSymbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))];
+    this.symbols=[...this.coreSymbols];
+    this.hotLastUsed=new Map(this.symbols.map(s=>[s,Date.now()]));
     this.backfillDays=backfillDays;
     this.predictEvery=predictEvery;
     this.horizonMinutes=horizonMinutes;
     this.historyRetention=Math.min(100000,Math.max(5000,this.backfillDays*600));
     this.model=new OnlineModel(db);
-    this.histories=new Map(symbols.map(s=>[s,[]]));
+    this.histories=new Map(this.symbols.map(s=>[s,[]]));
     this.latestQuotes=new Map();
     this.latestTrades=new Map();
-    this.barCounters=new Map(symbols.map(s=>[s,0]));
+    this.barCounters=new Map(this.symbols.map(s=>[s,0]));
     this.latestPatternInsight=new Map();
     this.rawQueue=[];
     this.providerStatus={state:"STARTING",provider:"alpaca",feed:provider.feed};
@@ -63,6 +65,66 @@ export class RealMarketEngine extends EventEmitter {
       this.provider.start().catch(err=>this.#recordError("provider_start",err));
     } else {
       this.providerStatus={state:"NOT_CONFIGURED",provider:"alpaca",feed:this.provider.feed};
+    }
+  }
+
+  hotSymbols() {
+    return [...this.symbols];
+  }
+
+  async activateSymbol(symbol,{backfill=true}={}) {
+    symbol=String(symbol||"").trim().toUpperCase();
+    if (!symbol) throw new Error("Symbol required");
+    this.hotLastUsed.set(symbol,Date.now());
+
+    if (!this.symbols.includes(symbol)) {
+      if (this.symbols.length>=30) {
+        const removable=this.symbols
+          .filter(s=>!this.coreSymbols.includes(s))
+          .sort((a,b)=>(this.hotLastUsed.get(a)||0)-(this.hotLastUsed.get(b)||0));
+        const drop=removable[0] || this.symbols.find(s=>!this.coreSymbols.includes(s));
+        if (!drop) throw new Error("Live hot set is full");
+        this.symbols=this.symbols.filter(s=>s!==drop);
+        this.histories.delete(drop);
+        this.latestQuotes.delete(drop);
+        this.latestTrades.delete(drop);
+        this.barCounters.delete(drop);
+        this.hotLastUsed.delete(drop);
+      }
+      this.symbols.push(symbol);
+      this.histories.set(symbol,[]);
+      this.barCounters.set(symbol,0);
+      this.provider.setSymbols(this.symbols);
+    }
+
+    const existing=this.histories.get(symbol)||[];
+    if (backfill && existing.length<120) {
+      this.#backfillSymbol(symbol).catch(err=>this.#recordError("symbol_backfill",err));
+    }
+    return {symbol,hotSymbols:this.hotSymbols()};
+  }
+
+  async #backfillSymbol(symbol) {
+    const end=new Date(Date.now()-20*60*1000);
+    const start=new Date(end.getTime()-Math.min(this.backfillDays,90)*24*60*60*1000);
+    const collected=[];
+    await this.provider.historicalBarsForSymbols({
+      symbols:[symbol],start,end,timeframe:"1Min",
+      onPage:async barsBySymbol=>{
+        const rows=barsBySymbol[symbol]||[];
+        const batch=rows.map(r=>({
+          provider:"alpaca",feed:this.provider.historicalFeed||"iex",symbol,ts:new Date(r.t),
+          open:r.o,high:r.h,low:r.l,close:r.c,volume:r.v,
+          tradeCount:r.n??null,vwap:r.vw??null,source:"historical"
+        }));
+        for(let i=0;i<batch.length;i+=700) await this.db.upsertBarsBatch(batch.slice(i,i+700));
+        collected.push(...batch);
+      }
+    });
+    if (collected.length) {
+      collected.sort((a,b)=>+a.ts-+b.ts);
+      this.histories.set(symbol,collected.slice(-this.historyRetention));
+      console.log(JSON.stringify({event:"symbol_backfill_complete",symbol,bars:collected.length}));
     }
   }
 
@@ -385,6 +447,7 @@ export class RealMarketEngine extends EventEmitter {
       configured:this.provider.configured(),
       provider:this.providerStatus,
       symbols:this.symbols,
+      coreSymbols:this.coreSymbols,
       lastEventAt:this.lastEventAt,
       lastBarAt:this.lastBarAt,
       backfill:this.backfill,
