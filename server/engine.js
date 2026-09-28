@@ -91,7 +91,7 @@ export class RealMarketEngine extends EventEmitter {
         for (const [symbol,rows] of Object.entries(barsBySymbol)) {
           for (const r of rows) {
             batch.push({
-              provider:"alpaca",feed:this.provider.feed,symbol,ts:new Date(r.t),
+              provider:"alpaca",feed:this.provider.historicalFeed||"iex",symbol,ts:new Date(r.t),
               open:r.o,high:r.h,low:r.l,close:r.c,volume:r.v,
               tradeCount:r.n ?? null,vwap:r.vw ?? null,source:"historical"
             });
