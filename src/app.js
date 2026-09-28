@@ -378,6 +378,12 @@ function renderScanner() {
     : "Waiting for first full-market scan";
   $("hotSetCount").textContent=num((scannerData.hotSymbols||[]).length);
 
+  const regime=scannerData.regime||null;
+  $("broadRegime").textContent=regime?.regime?String(regime.regime).replaceAll("_"," "):"—";
+  $("broadRegimeMeta").textContent=regime
+    ? `as of ${regime.scan_date} · ${Math.round(Number(regime.confidence||0)*100)}% classifier confidence`
+    : "Waiting for completed scan";
+
   $("scannerBody").innerHTML=candidates.length
     ? candidates.map((r,i)=>`
       <tr data-symbol="${r.symbol}">
@@ -390,8 +396,9 @@ function renderScanner() {
         <td>${Number(r.relative_volume||0).toFixed(2)}×</td>
         <td>${Number(r.interesting_score||0).toFixed(2)}</td>
         <td>${r.deep_score==null?"—":Number(r.deep_score).toFixed(2)}</td>
+        <td>${Array.isArray(r.attention_reasons)&&r.attention_reasons.length?r.attention_reasons.join(" · "):"—"}</td>
       </tr>`).join("")
-    : '<tr><td colspan="9">Trading Eye has not completed a whole-market scan yet.</td></tr>';
+    : '<tr><td colspan="10">Trading Eye has not completed a whole-market scan yet.</td></tr>';
 }
 
 function renderDeepStudy() {
