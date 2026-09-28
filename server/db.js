@@ -125,7 +125,7 @@ export class Database {
     const rows=[];
     bars.forEach((bar,i)=>{
       const n=i*12;
-      rows.push(`(${n+1},${n+2},${n+3},${n+4},${n+5},${n+6},${n+7},${n+8},${n+9},${n+10},${n+11},${n+12})`);
+      rows.push("(" + Array.from({length:12},(_,j)=>"$"+(n+j+1)).join(",") + ")");
       values.push(
         bar.provider,bar.feed,bar.symbol,bar.ts,bar.open,bar.high,bar.low,bar.close,
         bar.volume,bar.tradeCount ?? null,bar.vwap ?? null,bar.source || "historical"
