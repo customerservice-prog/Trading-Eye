@@ -1982,7 +1982,7 @@ body.research-focus .research-brain-layout {
 .aggressive-learning-strip{
   grid-column:1/-1;
   display:grid;
-  grid-template-columns:minmax(300px,1.8fr) repeat(5,minmax(115px,1fr));
+  grid-template-columns:minmax(300px,1.8fr) repeat(6,minmax(110px,1fr));
   gap:1px;
   background:var(--line);
   border-top:1px solid rgba(156,140,255,.18);
@@ -2031,4 +2031,91 @@ body.research-focus .research-brain-layout {
 @media(max-width:650px){
   .aggressive-learning-strip{grid-template-columns:1fr 1fr}
   .aggressive-learning-title{grid-column:1/-1}
+}
+
+
+/* 24/7 replay arena */
+.replay-top-stat{background:linear-gradient(145deg,#0b1320,#090d17)}
+.replay-top-stat strong{color:var(--cyan)}
+.replay-top-stat small{margin-top:3px;color:var(--muted);font-size:6px;line-height:1.35}
+
+.replay-arena-layout{padding:12px;display:grid;gap:12px}
+.replay-hero{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:14px;border:1px solid rgba(88,216,255,.18);border-radius:10px;
+  background:
+    radial-gradient(circle at 0 0,rgba(88,216,255,.08),transparent 45%),
+    #080f18;
+}
+.replay-title-line{display:flex;align-items:center;gap:8px;margin-top:4px}
+.replay-title-line strong{font-size:20px;letter-spacing:-.025em}
+.replay-live-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 12px rgba(73,226,154,.65);
+}
+.replay-hero p{margin:6px 0 0;max-width:760px;color:var(--muted-2);font-size:8px;line-height:1.5}
+.replay-hero-actions{display:flex;flex-direction:column;align-items:flex-end;gap:7px}
+.replay-hero-actions span{font-size:7px;color:var(--muted)}
+.replay-hero-actions button{
+  min-height:32px;padding:0 11px;border-radius:7px;
+  border:1px solid rgba(88,216,255,.22);
+  background:rgba(88,216,255,.06);color:var(--cyan);
+  font-size:8px;font-weight:900;cursor:pointer;
+}
+.replay-hero-actions button:hover{background:rgba(88,216,255,.11)}
+.replay-hero-actions button:disabled{opacity:.55;cursor:wait}
+
+.replay-metrics{
+  display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:10px;overflow:hidden
+}
+.replay-metrics>div{
+  min-height:72px;padding:10px;background:#080e16;
+  display:flex;flex-direction:column;justify-content:center
+}
+.replay-metrics span{font-size:7px;color:var(--muted)}
+.replay-metrics strong{margin-top:5px;font-size:14px;color:var(--text-2);font-variant-numeric:tabular-nums}
+
+.replay-proof-note{
+  display:flex;align-items:flex-start;gap:12px;padding:10px 12px;
+  border:1px solid rgba(244,190,93,.16);border-radius:8px;
+  background:rgba(244,190,93,.035)
+}
+.replay-proof-note strong{color:var(--amber);font-size:8px;white-space:nowrap}
+.replay-proof-note span{color:var(--muted-2);font-size:8px;line-height:1.45}
+
+.replay-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:12px}
+.replay-panel{
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#080e16
+}
+.replay-panel-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 13px;border-bottom:1px solid var(--line)
+}
+.replay-panel-head strong{display:block;margin-top:3px;font-size:12px;color:var(--text)}
+.replay-panel-head>span{font-size:7px;color:var(--muted)}
+.replay-focus-list{display:grid;gap:7px;padding:10px}
+.replay-focus-item{
+  display:grid;grid-template-columns:auto 1fr;gap:9px;padding:9px;
+  border:1px solid rgba(156,140,255,.16);border-radius:8px;background:#07101a
+}
+.replay-focus-item>span{
+  align-self:start;padding:3px 5px;border-radius:5px;
+  background:rgba(156,140,255,.07);border:1px solid rgba(156,140,255,.15);
+  color:#c7bcff;font-size:6px;font-weight:900;letter-spacing:.08em
+}
+.replay-focus-item strong{display:block;color:var(--text-2);font-size:10px}
+.replay-focus-item small{display:block;margin-top:3px;color:var(--muted);font-size:7px}
+.replay-focus-empty{padding:12px;color:var(--muted);font-size:8px;line-height:1.45}
+.replay-runs-panel .table-wrap{max-height:300px}
+
+@media(max-width:1050px){
+  .replay-metrics{grid-template-columns:repeat(3,1fr)}
+  .replay-grid{grid-template-columns:1fr}
+}
+@media(max-width:650px){
+  .replay-hero{align-items:flex-start;flex-direction:column}
+  .replay-hero-actions{align-items:flex-start}
+  .replay-metrics{grid-template-columns:repeat(2,1fr)}
+  .replay-proof-note{flex-direction:column;gap:5px}
 }
