@@ -445,8 +445,10 @@ async function selectSymbol(symbol,{activate=false}={}) {
     $("symbolResults").classList.add("hidden");
     snapshot=await client.snapshot(symbol);
     renderAll();
+    return true;
   } catch (err) {
     toast(String(err.message||err));
+    return false;
   }
 }
 
@@ -454,10 +456,8 @@ async function loadSymbol() {
   const raw=$("symbolInput").value.trim();
   if (!raw) return;
   const ticker=raw.toUpperCase();
-  try {
-    await selectSymbol(ticker,{activate:true});
-    return;
-  } catch (_) {}
+  const direct=await selectSymbol(ticker,{activate:true});
+  if (direct) return;
   try {
     const found=await client.searchAssets(raw,10);
     const first=found.rows?.find(x=>x.data_supported!==false);
