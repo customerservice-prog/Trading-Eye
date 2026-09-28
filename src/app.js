@@ -810,6 +810,30 @@ function renderResearchBrain() {
   $("researchModelCount").textContent=num(models.models||0);
   $("researchModelMeta").textContent=`${num(models.production||0)} production · ${num(models.shadow||0)} live shadow · ${num(models.rejected||0)} rejected`;
 
+  const proofRows=Array.isArray(proofData?.rows)?proofData.rows:[];
+  const readiness=proofData?.governance?.readiness||null;
+  const drift=proofData?.governance?.drift||null;
+  if ($("proofPipelineSummary")) {
+    $("proofPipelineSummary").textContent=readiness
+      ? `${String(readiness.status).replaceAll("_"," ")} · ${Math.round(Number(readiness.score||0)*100)}% of automated proof complete · drift ${drift?.status||"UNKNOWN"}`
+      : "Proof gates are initializing…";
+  }
+  if ($("proofPipeline")) {
+    $("proofPipeline").innerHTML=proofRows.length?proofRows.map((row,i)=>{
+      const status=String(row.status||"PROVING").toLowerCase();
+      const progress=clamp(Number(row.progress)||0,0,1);
+      return `<div class="proof-stage ${status}">
+        <div class="proof-stage-top">
+          <span class="proof-stage-index">${Number(row.stage_order)||i+1}</span>
+          <strong>${row.label||row.stage_key}</strong>
+          <span class="proof-stage-status">${row.status||"PROVING"}</span>
+        </div>
+        <div class="proof-stage-bar"><i style="width:${Math.round(progress*100)}%"></i></div>
+        <p>${row.summary||"Waiting for evidence."}</p>
+      </div>`;
+    }).join(""):'<div class="proof-stage proving"><p>Proof scoreboard is initializing.</p></div>';
+  }
+
   $("researchJobSummary").textContent=`${runningJobs.length} running · ${errorJobs.length} errors · ${jobs.length} tracked`;
   $("researchJobs").innerHTML=jobs.length?jobs.map(j=>{
     const progress=clamp(Number(j.progress)||0,0,1);
@@ -850,18 +874,23 @@ function renderResearchBrain() {
 
   $("researchFindingBody").innerHTML=patternFindings.length?patternFindings.map(f=>{
     const evidence=f.evidence||{};
+    const hold=f.holdout_metrics||{};
+    const hit=hold.hitRate==null?f.hit_rate:Number(hold.hitRate);
+    const avg=hold.avgReturn==null?f.avg_forward_return:Number(hold.avgReturn);
+    const windowStart=hold.start||evidence.holdoutWindow?.[0]||evidence.start||"—";
+    const windowEnd=hold.end||evidence.holdoutWindow?.[1]||evidence.end||"—";
     return `<tr class="${String(f.status||"candidate").toLowerCase()}">
       <td>${f.status||"CANDIDATE"}</td>
       <td><strong>${f.symbol||"MARKET"}</strong></td>
       <td>${f.description||f.pattern_key||"—"}</td>
       <td>${num(f.horizon_days)}d</td>
       <td>${num(f.sample_count)}</td>
-      <td>${f.hit_rate==null?"—":pct(Number(f.hit_rate))}</td>
-      <td class="${Number(f.avg_forward_return)>0?"positive":Number(f.avg_forward_return)<0?"negative":"neutral"}">${f.avg_forward_return==null?"—":(Number(f.avg_forward_return)>=0?"+":"")+pct(Number(f.avg_forward_return))}</td>
+      <td>${hit==null?"—":pct(Number(hit))}</td>
+      <td class="${Number(avg)>0?"positive":Number(avg)<0?"negative":"neutral"}">${avg==null?"—":(Number(avg)>=0?"+":"")+pct(Number(avg))}</td>
       <td>${Number(f.score||0).toFixed(2)}</td>
-      <td>${evidence.start||"—"} → ${evidence.end||"—"}</td>
+      <td>${windowStart} → ${windowEnd}</td>
     </tr>`;
-  }).join(""):'<tr><td colspan="9">No 1999+ research findings yet. The long-history lane must ingest data before pattern mining can begin.</td></tr>';
+  }).join(""):'<tr><td colspan="9">No validated long-history findings yet. Research is still ingesting and testing unseen periods.</td></tr>';
 }
 
 function renderDeepStudy() {
