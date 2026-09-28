@@ -1,7 +1,7 @@
-import { MarketClient } from "./market-client.js";
-import { PaperEngine } from "./paper-engine.js";
-import { MarketChart } from "./chart.js";
-import { FEATURE_LABELS } from "./ui-labels.js";
+import { MarketClient } from "./market-client.js?v=20260928-0304";
+import { PaperEngine } from "./paper-engine.js?v=20260928-0304";
+import { MarketChart } from "./chart.js?v=20260928-0304";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-0304";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
