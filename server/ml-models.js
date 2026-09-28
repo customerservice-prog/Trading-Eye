@@ -176,6 +176,62 @@ export class BoostedStumpModel {
   }
 }
 
+export class BaggedBoostedModel {
+  constructor({featureCount,members=null,name="bagged_boosted"}){
+    this.kind="bagged_boosted";
+    this.name=name;
+    this.featureCount=featureCount;
+    this.members=members||[];
+  }
+
+  train(examples,{bags=5,rounds=14,learningRate=.18,maxSamples=12000}={}){
+    this.members=[];
+    if(!examples.length) return this;
+    const featurePool=Array.from({length:this.featureCount},(_,i)=>i);
+    for(let b=0;b<bags;b++){
+      const featureIndices=featurePool.filter((_,i)=>((i*7+b*3)%5)!==0);
+      const sampled=[];
+      const stride=Math.max(1,Math.floor(examples.length/Math.max(1,maxSamples)));
+      for(let i=b;i<examples.length && sampled.length<maxSamples;i+=stride){
+        if(((i+b*11)%4)!==0 || sampled.length<1500) sampled.push(examples[i]);
+      }
+      const transformed=sampled.map(e=>({
+        ...e,
+        x:featureIndices.map(idx=>Number(e.x[idx])||0)
+      }));
+      const model=new BoostedStumpModel({
+        featureCount:featureIndices.length,
+        name:`bag_${b+1}`
+      });
+      model.train(transformed,{rounds,learningRate,maxSamples});
+      this.members.push({featureIndices,artifact:model.artifact()});
+    }
+    return this;
+  }
+
+  predict(x){
+    if(!this.members.length) return [1/3,1/3,1/3];
+    const out=[0,0,0];
+    for(const m of this.members){
+      const model=BoostedStumpModel.fromArtifact(m.artifact);
+      const xx=m.featureIndices.map(i=>Number(x[i])||0);
+      const p=model.predict(xx);
+      for(let c=0;c<3;c++) out[c]+=p[c];
+    }
+    return out.map(v=>v/this.members.length);
+  }
+
+  artifact(){
+    return {
+      kind:this.kind,name:this.name,featureCount:this.featureCount,members:this.members
+    };
+  }
+
+  static fromArtifact(a){
+    return new BaggedBoostedModel(a);
+  }
+}
+
 export class GaussianNBModel {
   constructor({featureCount,featureIndices=null,means=null,vars=null,priors=null,name="gaussian_nb"}){
     this.kind="gaussian_nb";
@@ -250,6 +306,7 @@ export function modelFromArtifact(a){
   if(a.kind==="softmax") return SoftmaxModel.fromArtifact(a);
   if(a.kind==="gaussian_nb") return GaussianNBModel.fromArtifact(a);
   if(a.kind==="boosted_stumps") return BoostedStumpModel.fromArtifact(a);
+  if(a.kind==="bagged_boosted") return BaggedBoostedModel.fromArtifact(a);
   return null;
 }
 
