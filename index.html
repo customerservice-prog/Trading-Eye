@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#050810" />
   <title>Trading Eye — AI Market Terminal</title>
-  <link rel="stylesheet" href="./styles.css?v=20260928-1830" />
+  <link rel="stylesheet" href="./styles.css?v=20260928-1905" />
 </head>
 <body>
   <div id="app" class="terminal-shell">
@@ -318,6 +318,7 @@
           <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
           <button class="active" data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Money</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
+          <button data-tab="mistakes" type="button"><span class="tab-icon">!</span><span>Mistake Lab</span></button>
           <button data-tab="research" type="button"><span class="tab-icon">∞</span><span>Research Brain</span><span class="tab-live-dot"></span></button>
           <button data-tab="patterns" type="button"><span class="tab-icon">⌘</span><span>Pattern Lab</span></button>
           <button data-tab="scanner" type="button"><span class="tab-icon">⌁</span><span>Market Scanner</span></button>
@@ -365,6 +366,25 @@
               <div class="metric"><span>Avg winner / loser</span><strong id="paperAvgWinLoss">—</strong></div>
             </div>
             <div id="positionsTable" class="positions-area"></div>
+
+            <section class="exploration-paper-panel">
+              <div class="exploration-head">
+                <div>
+                  <span class="eyebrow">Exploration paper account</span>
+                  <strong>AI practice account — mistakes allowed</strong>
+                </div>
+                <span id="explorationState" class="soft-badge">LEARNING</span>
+              </div>
+              <div class="exploration-grid">
+                <div><span>Fake balance</span><strong id="explorationEquity">$100,000.00</strong></div>
+                <div><span>Total P/L</span><strong id="explorationPnl">$0.00</strong></div>
+                <div><span>Open trades</span><strong id="explorationPositions">0</strong></div>
+                <div><span>Practice fills</span><strong id="explorationFills">0</strong></div>
+              </div>
+              <p id="explorationExplanation">This separate account tests weaker setups with fake money. Its results never count toward real-money readiness.</p>
+              <div id="explorationPositionList" class="exploration-position-list"></div>
+            </section>
+
             <div class="proof-table-block">
               <div class="proof-table-head">
                 <div>
@@ -433,6 +453,51 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-mistakes">
+            <div class="mistake-lab-layout">
+              <section class="mistake-summary">
+                <div>
+                  <span class="eyebrow">Continuous self-review</span>
+                  <strong id="mistakeGuardTitle">Mistake Lab is starting</strong>
+                  <p id="mistakeGuardDetail">Trading Eye reviews wrong future predictions and uses them to tighten the strict lane.</p>
+                </div>
+                <div class="mistake-metric-grid">
+                  <div><span>Recent outcomes studied</span><strong id="mistakeSamples">0</strong></div>
+                  <div><span>Mistakes</span><strong id="mistakeCount">0</strong></div>
+                  <div><span>High-confidence mistakes</span><strong id="mistakeHighConf">0</strong></div>
+                  <div><span>Missed moves</span><strong id="mistakeMissedMoves">0</strong></div>
+                </div>
+              </section>
+
+              <section class="mistake-lessons-panel">
+                <div class="mistake-section-head">
+                  <div>
+                    <span class="eyebrow">What the AI learned from being wrong</span>
+                    <strong>Current lessons</strong>
+                  </div>
+                  <span id="mistakeAnalyzedAt">Waiting for first analysis</span>
+                </div>
+                <div id="mistakeLessons" class="mistake-lessons"></div>
+              </section>
+
+              <section class="mistake-table-panel">
+                <div class="mistake-section-head">
+                  <div>
+                    <span class="eyebrow">Recent wrong calls</span>
+                    <strong>Prediction → actual result</strong>
+                  </div>
+                  <span>Future outcomes only — no hindsight rewriting</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead><tr><th>Time</th><th>Symbol</th><th>Predicted</th><th>Actual</th><th>Confidence</th><th>Move</th><th>Model</th></tr></thead>
+                    <tbody id="mistakeTableBody"></tbody>
+                  </table>
+                </div>
+              </section>
             </div>
           </div>
 
@@ -685,6 +750,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./src/app.js?v=20260928-1830"></script>
+  <script type="module" src="./src/app.js?v=20260928-1905"></script>
 </body>
 </html>
