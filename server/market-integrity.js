@@ -181,6 +181,11 @@ export class MarketIntegrity {
 
   async syncSecHotSet(){
     const symbols=[...new Set(this.hotSymbols().map(s=>String(s).toUpperCase()))].slice(0,24);
+    return this.syncSecSymbols(symbols);
+  }
+
+  async syncSecSymbols(inputSymbols){
+    const symbols=[...new Set((inputSymbols||[]).map(s=>String(s).toUpperCase()))].slice(0,80);
     if(!symbols.length) return;
     const tickersRes=await fetch("https://www.sec.gov/files/company_tickers.json",{
       headers:{"user-agent":"Trading Eye customerservice@friendlypartyrental.com","accept":"application/json"}
