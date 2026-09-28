@@ -779,6 +779,9 @@ export class ModelLab {
       const coverage=await this.#ensureTrainingCoverage();
       const trainingHistories=await this.#trainingHistories();
       const usableSymbols=[...trainingHistories.keys()];
+      if(this.marketIntegrity){
+        await this.marketIntegrity.syncSecSymbols(usableSymbols).catch(()=>{});
+      }
       const sectorProxyBySymbol=await this.#sectorProxyMap(usableSymbols);
       const allRows=[...trainingHistories.values()].flatMap(x=>x);
       const rangeStart=allRows.length
