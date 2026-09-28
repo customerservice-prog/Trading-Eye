@@ -8,7 +8,9 @@ export class PaperBroker {
     fillBufferBps=1.5,maxPositionPct=.10,maxGrossPct=.50,maxPositions=6,
     dailyLossPct=.03,autopilotMinConfidence=.50,autopilotMinEdge=.07,
     autopilotEnabled=true,respectNoTrade=true,entryPositionPct=.05,
-    sourceTag="AI_PAPER"
+    sourceTag="AI_PAPER",allowFlatProbes=false,flatProbePositionPct=.03,
+    flatProbeMinDirectionalDiff=.02,stopPct=.005,targetPct=.009,
+    timeExitMinutes=75
   }){
     this.db=db;
     this.marketEngine=marketEngine;
@@ -25,6 +27,12 @@ export class PaperBroker {
     this.respectNoTrade=Boolean(respectNoTrade);
     this.entryPositionPct=clamp(Number(entryPositionPct)||.05,.005,this.maxPositionPct);
     this.sourceTag=String(sourceTag||"AI_PAPER").toUpperCase().replace(/[^A-Z0-9_]/g,"_");
+    this.allowFlatProbes=Boolean(allowFlatProbes);
+    this.flatProbePositionPct=clamp(Number(flatProbePositionPct)||.03,.005,this.maxPositionPct);
+    this.flatProbeMinDirectionalDiff=clamp(Number(flatProbeMinDirectionalDiff)||.02,0,.25);
+    this.stopPct=clamp(Number(stopPct)||.005,.001,.10);
+    this.targetPct=clamp(Number(targetPct)||.009,.001,.20);
+    this.timeExitMs=Math.max(5,Number(timeExitMinutes)||75)*60*1000;
     this.snapshotTimer=null;
     this.processing=new Set();
   }
@@ -161,6 +169,14 @@ export class PaperBroker {
       sourceTag:this.sourceTag,
       respectNoTrade:this.respectNoTrade,
       entryPositionPct:this.entryPositionPct,
+      allowFlatProbes:this.allowFlatProbes,
+      flatProbePositionPct:this.flatProbePositionPct,
+      stopPct:this.stopPct,
+      targetPct:this.targetPct,
+      timeExitMinutes:Math.round(this.timeExitMs/60000),
+      maxPositionPct:this.maxPositionPct,
+      maxGrossPct:this.maxGrossPct,
+      maxPositions:this.maxPositions,
       startingCash:Number(account?.starting_cash)||this.startingCash,
       cash,equity,openPnl,
       realizedPnl:Number(account?.realized_pnl)||0,
@@ -424,29 +440,52 @@ export class PaperBroker {
     if(!account?.autopilot_enabled||!prediction) return;
     if(!this.#regularSessionNow()) return;
     if(!prediction.modelId) return;
-    if(this.respectNoTrade&&prediction.noTrade) return;
-    if(Number(prediction.confidence)<this.autopilotMinConfidence) return;
-    if(Number(prediction.edge)<this.autopilotMinEdge) return;
-    if(!["UP","DOWN"].includes(prediction.direction)) return;
+
+    const pUp=Number(prediction.pUp)||0;
+    const pDown=Number(prediction.pDown)||0;
+    let tradeDirection=String(prediction.direction||"").toUpperCase();
+    let positionPct=this.entryPositionPct;
+    let sourceSuffix="_ENTRY";
+    let isProbe=false;
+
+    if(tradeDirection==="FLAT"){
+      if(!this.allowFlatProbes) return;
+      const directionalDiff=Math.abs(pUp-pDown);
+      if(directionalDiff<this.flatProbeMinDirectionalDiff) return;
+      tradeDirection=pUp>=pDown?"UP":"DOWN";
+      positionPct=this.flatProbePositionPct;
+      sourceSuffix="_FLAT_PROBE_ENTRY";
+      isProbe=true;
+    }else{
+      if(this.respectNoTrade&&prediction.noTrade) return;
+      if(Number(prediction.confidence)<this.autopilotMinConfidence) return;
+      if(Number(prediction.edge)<this.autopilotMinEdge) return;
+      if(!["UP","DOWN"].includes(tradeDirection)) return;
+    }
 
     const snap=await this.snapshot();
     const pos=snap.positions.find(p=>p.symbol===prediction.symbol);
-    const desired=prediction.direction==="UP"?1:-1;
+    const desired=tradeDirection==="UP"?1:-1;
 
     if(pos){
       if(Math.sign(pos.qty)!==desired){
-        await this.flatten(prediction.symbol,{source:this.sourceTag+"_EXIT",modelId:prediction.modelId});
+        await this.flatten(prediction.symbol,{
+          source:this.sourceTag+(isProbe?"_FLAT_PROBE_EXIT":"_EXIT"),
+          modelId:prediction.modelId
+        });
       }
       return;
     }
 
-    const qty=await this.suggestedQty(prediction.symbol,{positionPct:this.entryPositionPct});
+    if(snap.grossExposurePct>=this.maxGrossPct*.98) return;
+
+    const qty=await this.suggestedQty(prediction.symbol,{positionPct});
     if(!qty) return;
     await this.submitMarketOrder({
       symbol:prediction.symbol,
       side:desired>0?"BUY":"SELL",
       qty,
-      source:this.sourceTag+"_ENTRY",
+      source:this.sourceTag+sourceSuffix,
       modelId:prediction.modelId
     });
   }
@@ -462,11 +501,11 @@ export class PaperBroker {
       : (pos.avgPrice-Number(bar.close))/pos.avgPrice;
     const age=Date.now()-new Date(pos.openedAt).getTime();
 
-    if(ret<=-.005){
+    if(ret<=-this.stopPct){
       await this.flatten(bar.symbol,{source:this.sourceTag+"_STOP"});
-    }else if(ret>=.009){
+    }else if(ret>=this.targetPct){
       await this.flatten(bar.symbol,{source:this.sourceTag+"_TARGET"});
-    }else if(age>=75*60*1000){
+    }else if(age>=this.timeExitMs){
       await this.flatten(bar.symbol,{source:this.sourceTag+"_TIME_EXIT"});
     }
   }
