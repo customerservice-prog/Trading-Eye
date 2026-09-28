@@ -9,7 +9,8 @@ export class AlpacaProvider {
     this.feedMode=feed;
     this.historicalFeed=historicalFeed;
     this.feed=this.#desiredFeed();
-    this.symbols=symbols;
+    this.symbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))].slice(0,30);
+    this.subscribedSymbols=new Set();
     this.onEvent=onEvent;
     this.onStatus=onStatus;
     this.ws=null;
@@ -122,6 +123,7 @@ export class AlpacaProvider {
               quotes:this.symbols,
               bars:this.symbols
             }));
+            this.subscribedSymbols=new Set(this.symbols);
             this.onStatus({state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols});
             continue;
           }
@@ -157,13 +159,35 @@ export class AlpacaProvider {
     });
   }
 
-  async historicalBars({start,end,limit=10000,onPage=()=>{}}) {
+  setSymbols(symbols) {
+    const next=[...new Set(symbols.map(s=>String(s).toUpperCase()).filter(Boolean))].slice(0,30);
+    const current=new Set(this.symbols);
+    const add=next.filter(s=>!current.has(s));
+    const remove=this.symbols.filter(s=>!next.includes(s));
+    this.symbols=next;
+    if (this.ws && this.authenticated && this.ws.readyState===1) {
+      if (remove.length) {
+        this.ws.send(JSON.stringify({action:"unsubscribe",trades:remove,quotes:remove,bars:remove}));
+        remove.forEach(s=>this.subscribedSymbols.delete(s));
+      }
+      if (add.length) {
+        this.ws.send(JSON.stringify({action:"subscribe",trades:add,quotes:add,bars:add}));
+        add.forEach(s=>this.subscribedSymbols.add(s));
+      }
+      this.onStatus({state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols});
+    }
+    return this.symbols;
+  }
+
+  async historicalBarsForSymbols({symbols,start,end,timeframe="1Min",limit=10000,onPage=()=>{}}) {
     if (!this.configured()) throw new Error("Alpaca is not configured");
+    const requested=[...new Set((symbols||[]).map(s=>String(s).toUpperCase()).filter(Boolean))];
+    if (!requested.length) return;
     let token=null;
     do {
       const params=new URLSearchParams({
-        symbols:this.symbols.join(","),
-        timeframe:"1Min",
+        symbols:requested.join(","),
+        timeframe,
         start:new Date(start).toISOString(),
         end:new Date(end).toISOString(),
         limit:String(limit),
@@ -186,5 +210,12 @@ export class AlpacaProvider {
       await onPage(data.bars || {});
       token=data.next_page_token || null;
     } while(token && !this.stopped);
+  }
+
+  async historicalBars({start,end,limit=10000,onPage=()=>{}}) {
+    if (!this.configured()) throw new Error("Alpaca is not configured");
+    return this.historicalBarsForSymbols({
+      symbols:this.symbols,start,end,timeframe:"1Min",limit,onPage
+    });
   }
 }
