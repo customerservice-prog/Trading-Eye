@@ -99,10 +99,11 @@ export class ResearchBrain extends EventEmitter {
     this.lastResearchEventAt=null;
     this.lastHeartbeatAt=null;
     this.lastObserved={};
+    this.sessionStartEventId=null;
   }
 
   async init(){
-    await this.#event({
+    const startEvent=await this.#event({
       category:"SYSTEM",
       title:"Research Brain online",
       message:"Continuous research worker started. All activity shown here is backed by real jobs/events stored in Postgres.",
@@ -114,6 +115,7 @@ export class ResearchBrain extends EventEmitter {
         role:this.role
       }
     });
+    this.sessionStartEventId=Number(startEvent?.id)||null;
 
     if(this.role!=="long_history") await this.#syncJobMirror();
     this.timer=setInterval(()=>this.tick().catch(err=>this.#error("tick",err)),15000);
@@ -127,12 +129,15 @@ export class ResearchBrain extends EventEmitter {
   }
 
   async status(){
-    const [coverage,jobs,events,findings]=await Promise.all([
+    const [coverage,jobs,allEvents,findings]=await Promise.all([
       this.db.researchCoverage(),
       this.db.researchJobs(),
-      this.db.recentResearchEvents({limit:100}),
+      this.db.recentResearchEvents({limit:160}),
       this.db.topResearchFindings({limit:60})
     ]);
+    const events=this.sessionStartEventId
+      ? allEvents.filter(e=>Number(e.id)>=this.sessionStartEventId)
+      : allEvents.slice(-100);
     return {
       running:true,
       heartbeatAt:this.lastHeartbeatAt,
