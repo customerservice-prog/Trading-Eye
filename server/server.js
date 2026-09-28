@@ -5,6 +5,7 @@ import { Database } from "./db.js";
 import { AlpacaProvider } from "./alpaca.js";
 import { RealMarketEngine } from "./engine.js";
 import { DeepStudyEngine } from "./deep-study.js";
+import { AssetUniverse } from "./universe.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -16,6 +17,13 @@ const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowe
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
+
+const universe=new AssetUniverse({
+  db,
+  key:process.env.ALPACA_API_KEY_ID,
+  secret:process.env.ALPACA_API_SECRET_KEY
+});
+await universe.init();
 
 const provider=new AlpacaProvider({
   key:process.env.ALPACA_API_KEY_ID,
@@ -57,22 +65,54 @@ app.get("/api/status",async(req,res)=>{
   res.json({...engine.status(),database:await db.ping()});
 });
 
+app.get("/api/assets/stats",async(req,res)=>{
+  res.json(await universe.stats());
+});
+
+app.get("/api/assets/search",async(req,res)=>{
+  const q=String(req.query.q||"").trim();
+  if (!q) return res.json({rows:[]});
+  res.json({rows:await universe.search(q,Number(req.query.limit)||25)});
+});
+
+app.post("/api/activate/:symbol",async(req,res)=>{
+  const symbol=String(req.params.symbol||"").trim().toUpperCase();
+  const asset=await universe.get(symbol);
+  if (!asset || asset.status!=="active") return res.status(404).json({error:"Unknown or inactive US equity"});
+  if (!asset.data_supported) return res.status(400).json({error:"This symbol is not available on the current free Alpaca data feed",asset});
+  try {
+    const hot=await engine.activateSymbol(symbol,{backfill:true});
+    res.json({ok:true,asset,...hot});
+  } catch(err) {
+    res.status(400).json({error:String(err?.message||err)});
+  }
+});
+
+app.get("/api/hot-set",async(req,res)=>{
+  const symbols=engine.hotSymbols();
+  const assets=await Promise.all(symbols.map(s=>universe.get(s)));
+  res.json({symbols,assets});
+});
+
 app.get("/api/snapshot/:symbol",async(req,res)=>{
   const symbol=req.params.symbol.toUpperCase();
-  if (!SYMBOLS.includes(symbol)) return res.status(404).json({error:"Symbol is not in the monitored universe"});
+  if (!engine.hotSymbols().includes(symbol)) return res.status(404).json({error:"Symbol is not active in the live hot set"});
   const snap=engine.snapshot(symbol);
   const predictions=await db.recentPredictions({symbol,limit:80});
   res.json({...snap,predictions});
 });
 
 app.get("/api/watchlist",async(req,res)=>{
-  const latest=await db.getLatestBars(SYMBOLS);
-  const rows=SYMBOLS.map(symbol=>{
+  const hotSymbols=engine.hotSymbols();
+  const latest=await db.getLatestBars(hotSymbols);
+  const rows=await Promise.all(hotSymbols.map(async symbol=>{
     const snap=engine.snapshot(symbol);
     const bar=latest[symbol]||snap.bars.at(-1)||null;
-    return {symbol,bar,quote:snap.quote,analysis:snap.analysis};
-  });
-  res.json({provider:"alpaca",feed:engine.status().provider.feed,feedMode:FEED,mode:"REAL_DATA_ONLY",rows});
+    const asset=await universe.get(symbol);
+    return {symbol,name:asset?.name||symbol,exchange:asset?.exchange||null,bar,quote:snap.quote,analysis:snap.analysis};
+  }));
+  const universeStats=await universe.stats();
+  res.json({provider:"alpaca",feed:engine.status().provider.feed,feedMode:FEED,mode:"REAL_DATA_ONLY",rows,universe:universeStats});
 });
 
 app.get("/api/studies/status",async(req,res)=>{
@@ -131,6 +171,7 @@ server.listen(PORT,"0.0.0.0",()=>{
 
 const shutdown=async()=>{
   provider.stop();
+  universe.stop();
   deepStudy.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
