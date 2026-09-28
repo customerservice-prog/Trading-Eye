@@ -29,6 +29,7 @@ let snapshot={bars:[],quote:null,trades:[],analysis:null,features:null,predictio
 let watchlist={rows:[],provider:"alpaca",feed:"iex"};
 let predictionData={rows:[],stats:null,model:null};
 let studyData={status:null,rows:[]};
+let scannerData={universe:null,scan:null,candidates:[],hotSymbols:[],pinnedSymbols:[]};
 let lastAutoTradeAt=0;
 let refreshTimer=null;
 let symbolSearchTimer=null;
@@ -364,6 +365,34 @@ function renderLearning() {
     </tr>`).join(""):`<tr><td colspan="5">No real-data predictions have been recorded yet.</td></tr>`;
 }
 
+function renderScanner() {
+  if (!$("scannerBody")) return;
+  const universe=scannerData.universe||{};
+  const scan=scannerData.scan||null;
+  const candidates=Array.isArray(scannerData.candidates)?scannerData.candidates:[];
+
+  $("universeAssetCount").textContent=num(universe.dataSupported||universe.active||0);
+  $("scannerDate").textContent=scan?.scan_date?String(scan.scan_date).slice(0,10):"—";
+  $("scannerStatus").textContent=scan
+    ? `${scan.status||"UNKNOWN"} · ${num(scan.assets_scanned||0)} stocks scanned`
+    : "Waiting for first full-market scan";
+  $("hotSetCount").textContent=num((scannerData.hotSymbols||[]).length);
+
+  $("scannerBody").innerHTML=candidates.length
+    ? candidates.map((r,i)=>`
+      <tr data-symbol="${r.symbol}">
+        <td>${i+1}</td>
+        <td><strong>${r.symbol}</strong></td>
+        <td>${r.name||"—"}</td>
+        <td class="${Number(r.return_1d)>0?"positive":Number(r.return_1d)<0?"negative":"neutral"}">${pct(Number(r.return_1d)||0)}</td>
+        <td class="${Number(r.return_5d)>0?"positive":Number(r.return_5d)<0?"negative":"neutral"}">${pct(Number(r.return_5d)||0)}</td>
+        <td class="${Number(r.return_20d)>0?"positive":Number(r.return_20d)<0?"negative":"neutral"}">${pct(Number(r.return_20d)||0)}</td>
+        <td>${Number(r.relative_volume||0).toFixed(2)}×</td>
+        <td>${Number(r.interesting_score||0).toFixed(2)}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="8">Trading Eye has not completed a whole-market scan yet.</td></tr>';
+}
+
 function renderDeepStudy() {
   if (!$("deepStudyState")) return;
   const state=studyData.status||{};
@@ -412,15 +441,16 @@ function renderAll() {
   renderTapeAndBook();
   renderPaper();
   renderLearning();
+  renderScanner();
   renderDeepStudy();
 }
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies]=await Promise.all([
-      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),client.studies(10)
+    const [st,wl,snap,preds,studies,scanner]=await Promise.all([
+      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),client.studies(10),client.scanner(50)
     ]);
-    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies;
+    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -617,6 +647,12 @@ $("flattenBtn").addEventListener("click",()=>{
   toast(t?"Paper position flattened. Fill is simulated.":"No open paper position in "+activeSymbol+".");
   renderPaper();
 });
+$("scannerBody")?.addEventListener("click",e=>{
+  const row=e.target.closest("tr[data-symbol]");
+  if (!row) return;
+  selectSymbol(row.dataset.symbol,{activate:true});
+});
+
 $("lowerTabs").addEventListener("click",e=>{
   const btn=e.target.closest("button[data-tab]");
   if (!btn) return;
