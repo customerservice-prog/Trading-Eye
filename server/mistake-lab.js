@@ -378,14 +378,33 @@ export class MistakeLab extends EventEmitter {
   }
 
   async #maybeRetrain(guard){
-    if(!this.modelLab||this.modelLab.training) return;
+    if(!this.modelLab){
+      console.log(JSON.stringify({event:"mistake_lab_retrain_skipped",reason:"NO_MODEL_LAB"}));
+      return;
+    }
+    if(this.modelLab.training){
+      console.log(JSON.stringify({event:"mistake_lab_retrain_skipped",reason:"MODEL_LAB_BUSY"}));
+      return;
+    }
 
     const isAlert=guard.level==="ALERT";
     const isWarn=guard.level==="WARN"&&Number(guard.recentSamples)>=200;
-    if(!isAlert&&!isWarn) return;
+    if(!isAlert&&!isWarn){
+      console.log(JSON.stringify({
+        event:"mistake_lab_retrain_skipped",reason:"NO_ALERT_OR_QUALIFIED_WARN",
+        guardLevel:guard.level,recentSamples:guard.recentSamples
+      }));
+      return;
+    }
 
     const latest=this.modelLab.status?.().latestRun;
-    if(String(latest?.status||"").toUpperCase()==="RUNNING") return;
+    if(String(latest?.status||"").toUpperCase()==="RUNNING"){
+      console.log(JSON.stringify({
+        event:"mistake_lab_retrain_skipped",reason:"LATEST_RUN_STILL_RUNNING",
+        runId:latest?.runId||null,startedAt:latest?.startedAt||null
+      }));
+      return;
+    }
 
     const latestReason=String(latest?.dataset?.reason||"");
     const latestWasMistakeRun=latestReason.startsWith("mistake_lab_");
@@ -398,7 +417,14 @@ export class MistakeLab extends EventEmitter {
       latestWasMistakeRun?(lastRunAt||0):0,
       this.lastRetrainRequestedAt||0
     );
-    if(Date.now()-lastRequest<cooldown) return;
+    if(Date.now()-lastRequest<cooldown){
+      console.log(JSON.stringify({
+        event:"mistake_lab_retrain_skipped",reason:"COOLDOWN",
+        latestReason,latestWasMistakeRun,cooldown,lastRequest,
+        msRemaining:cooldown-(Date.now()-lastRequest)
+      }));
+      return;
+    }
 
     this.lastRetrainRequestedAt=Date.now();
     const reason=isAlert?"mistake_lab_alert":"mistake_lab_warn_refresh";
