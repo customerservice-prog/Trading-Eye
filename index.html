@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#050810" />
   <title>Trading Eye — AI Market Terminal</title>
-  <link rel="stylesheet" href="./styles.css?v=20260928-1415" />
+  <link rel="stylesheet" href="./styles.css?v=20260928-1830" />
 </head>
 <body>
   <div id="app" class="terminal-shell">
@@ -71,46 +71,49 @@
       </div>
     </div>
 
-    <section class="beginner-command-center" id="beginnerCommandCenter">
-      <div class="beginner-command-copy">
-        <span class="eyebrow">Beginner command center</span>
-        <strong id="beginnerCommandTitle">Trading Eye is watching the market</strong>
-        <span id="beginnerCommandSubtitle">You should never have to guess what the AI is doing.</span>
+    <section class="beginner-command-center paper-command-center" id="beginnerCommandCenter">
+      <div class="paper-money-main">
+        <div class="paper-money-heading">
+          <span class="eyebrow">Your paper money · fake account</span>
+          <span id="heroPaperLive" class="paper-live-pill">LIVE PAPER</span>
+        </div>
+        <strong id="heroPaperEquity" class="paper-money-balance">$100,000.00</strong>
+        <span id="heroPaperPnl" class="paper-money-pnl">$0.00 total profit / loss</span>
+        <small id="heroPaperBalanceNote">No paper trade is open, so the fake balance is supposed to stay still.</small>
       </div>
 
-      <div class="beginner-command-grid">
-        <div class="beginner-command-item">
-          <span>Market right now</span>
-          <strong id="beginnerSession">—</strong>
-          <small id="beginnerSessionDetail">Checking U.S. market session…</small>
-        </div>
-        <div class="beginner-command-item action">
-          <span>AI paper action</span>
-          <strong id="beginnerAction">WAIT</strong>
-          <small id="beginnerActionDetail">Waiting for a real edge.</small>
-        </div>
-        <div class="beginner-command-item">
-          <span>Real market data</span>
-          <strong id="beginnerDataAge">—</strong>
-          <small id="beginnerDataDetail">Checking latest provider update…</small>
-        </div>
-        <div class="beginner-command-item research">
-          <span>AI research</span>
-          <strong id="beginnerResearchState">WORKING</strong>
-          <small id="beginnerResearchDetail">Loading the current research job…</small>
-        </div>
-        <div class="beginner-command-item readiness">
-          <span>Real-money readiness</span>
-          <strong id="beginnerReadiness">LOCKED</strong>
-          <small id="beginnerReadinessDetail">Paper + live-shadow proof must come first.</small>
-        </div>
+      <div class="paper-simple-card action" id="heroActionCard">
+        <span>What the AI is doing</span>
+        <strong id="beginnerAction">WAITING</strong>
+        <small id="beginnerActionDetail">Waiting for a strong enough setup.</small>
       </div>
 
-      <button id="beginnerResearchBtn" class="beginner-research-btn" type="button">
-        <span class="research-top-dot"></span>
-        <span>Watch AI Research Full Screen</span>
-        <b>→</b>
-      </button>
+      <div class="paper-simple-card position">
+        <span>Open paper trade</span>
+        <strong id="heroPaperPosition">NONE</strong>
+        <small id="heroPaperPositionDetail">No fake money is in a trade right now.</small>
+      </div>
+
+      <div class="paper-simple-card last-move">
+        <span>Last paper move</span>
+        <strong id="heroPaperLastAction">NO TRADES YET</strong>
+        <small id="heroPaperLastDetail">The AI has not filled a paper order yet.</small>
+      </div>
+
+      <div class="paper-simple-card autopilot">
+        <span>AI paper autopilot</span>
+        <strong id="heroPaperAutopilot">—</strong>
+        <small>Fake money only. Real money stays locked.</small>
+        <button id="paperDetailsBtn" class="paper-details-btn" type="button">Open Paper Money Details →</button>
+      </div>
+
+      <div class="paper-status-strip">
+        <span><b>Market</b><strong id="beginnerSession">—</strong></span>
+        <span><b>Real data</b><strong id="beginnerDataAge">—</strong></span>
+        <span><b>AI research</b><strong id="beginnerResearchState">—</strong></span>
+        <span><b>Real money</b><strong id="beginnerReadiness">LOCKED</strong></span>
+        <button id="beginnerResearchBtn" class="paper-research-link" type="button">Research details</button>
+      </div>
     </section>
 
     <main class="workspace">
@@ -229,7 +232,7 @@
             <div id="confidenceRing" class="confidence-ring" aria-label="AI confidence">
               <div class="confidence-core">
                 <span id="confidenceValue">50%</span>
-                <small>confidence</small>
+                <small id="confidenceLabel">model read</small>
               </div>
             </div>
           </div>
@@ -314,9 +317,9 @@
 
       <section class="lower-panel panel">
         <div class="lower-tabs" id="lowerTabs">
-          <button class="active" data-tab="tape" type="button"><span class="tab-icon">↕</span><span>Time & Sales</span></button>
+          <button data-tab="tape" type="button"><span class="tab-icon">↕</span><span>Time & Sales</span></button>
           <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
-          <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
+          <button class="active" data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Money</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
           <button data-tab="research" type="button"><span class="tab-icon">∞</span><span>Research Brain</span><span class="tab-live-dot"></span></button>
           <button data-tab="patterns" type="button"><span class="tab-icon">⌘</span><span>Pattern Lab</span></button>
@@ -326,7 +329,7 @@
         </div>
 
         <div class="lower-content">
-          <div class="tab-pane active" id="tab-tape">
+          <div class="tab-pane" id="tab-tape">
             <div class="table-wrap">
               <table>
                 <thead><tr><th>Time</th><th>Price</th><th>Size</th><th>Side</th></tr></thead>
@@ -348,7 +351,7 @@
             </div>
           </div>
 
-          <div class="tab-pane" id="tab-paper">
+          <div class="tab-pane active" id="tab-paper">
             <div class="metric-grid">
               <div class="metric"><span>Starting balance</span><strong>$100,000.00</strong></div>
               <div class="metric highlight"><span>Equity</span><strong id="paperEquity">—</strong></div>
@@ -685,6 +688,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./src/app.js?v=20260928-1415"></script>
+  <script type="module" src="./src/app.js?v=20260928-1830"></script>
 </body>
 </html>
