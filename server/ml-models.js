@@ -225,7 +225,8 @@ export class EnsembleModel {
     for(let i=0;i<this.members.length;i++){
       const w=Math.max(0,Number(this.weights[i])||0);
       if(!w) continue;
-      const p=this.members[i].model.predict(x);
+      const raw=this.members[i].model.predict(x);
+      const p=applyTemperature(raw,this.members[i].temperature||1);
       for(let c=0;c<3;c++) out[c]+=w*p[c];
       total+=w;
     }
