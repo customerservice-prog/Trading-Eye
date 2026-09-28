@@ -157,6 +157,23 @@ export class Database {
     `,values);
   }
 
+  async getBackfillStart(symbols,defaultStart) {
+    if (!this.ready || !symbols.length) return defaultStart;
+    const q=await this.pool.query(`
+      WITH latest AS (
+        SELECT symbol, MAX(ts) AS latest_ts
+        FROM market_bars_1m
+        WHERE symbol = ANY($1::text[])
+        GROUP BY symbol
+      )
+      SELECT COUNT(*)::int AS covered, MIN(latest_ts) AS oldest_latest
+      FROM latest
+    `,[symbols]);
+    const row=q.rows[0];
+    if (!row || Number(row.covered)!==symbols.length || !row.oldest_latest) return defaultStart;
+    return new Date(new Date(row.oldest_latest).getTime()-10*60*1000);
+  }
+
   async getBars(symbol,{limit=500,start=null,end=null}={}) {
     if (!this.ready) return [];
     const params=[symbol];
