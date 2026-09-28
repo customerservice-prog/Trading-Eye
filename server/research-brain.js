@@ -95,6 +95,7 @@ export class ResearchBrain extends EventEmitter {
     this.longHistoryAuthNoticeSent=false;
     this.githubMirrorManifest=null;
     this.githubMirrorCursor=0;
+    this.integrityCursor=0;
     this.timer=null;
     this.heartbeatTimer=null;
     this.longHistoryRunning=false;
@@ -134,6 +135,10 @@ export class ResearchBrain extends EventEmitter {
     this.sessionStartEventId=Number(startEvent?.id)||null;
 
     if(this.role!=="long_history") await this.#syncJobMirror();
+    const histStats=await this.db.historicalUniverseStats().catch(()=>({symbols:0}));
+    if(!Number(histStats.symbols)){
+      await this.db.refreshHistoricalSecurityMaster().catch(()=>{});
+    }
     this.timer=setInterval(()=>this.tick().catch(err=>this.#error("tick",err)),15000);
     this.heartbeatTimer=setInterval(()=>this.#heartbeat().catch(()=>{}),60000);
     setTimeout(()=>this.tick().catch(err=>this.#error("initial_tick",err)),3500);
@@ -240,6 +245,10 @@ export class ResearchBrain extends EventEmitter {
           .catch(err=>this.#error("long_history",err))
           .finally(()=>{this.longHistoryRunning=false;});
       }
+    }
+
+    if(this.role!=="orchestrator" && Number(coverage.longHistory?.bars)>0){
+      await this.#auditHistoricalIntegrityBatch().catch(err=>this.#error("historical_integrity",err));
     }
 
     if(this.role!=="orchestrator" && Number(coverage.longHistory?.bars)>0 && !this.miningRunning){
@@ -863,6 +872,28 @@ export class ResearchBrain extends EventEmitter {
       });
     }
     return out;
+  }
+
+  async #auditHistoricalIntegrityBatch(){
+    const symbols=await this.db.longHistorySymbols({limit:50000});
+    if(!symbols.length) return;
+    if(this.integrityCursor>=symbols.length) this.integrityCursor=0;
+    const batch=symbols.slice(this.integrityCursor,this.integrityCursor+30).map(x=>x.symbol);
+    this.integrityCursor=(this.integrityCursor+batch.length)%symbols.length;
+    if(!batch.length) return;
+
+    await this.db.refreshHistoricalSecurityMaster(batch);
+    const audit=await this.db.auditCorporateActionCandidates(batch);
+    await this.db.upsertResearchJob({
+      jobKey:"historical-integrity-audit",
+      jobType:"DATA_INTEGRITY",
+      status:"RUNNING",
+      phase:"SURVIVORSHIP_AND_CORPORATE_ACTIONS",
+      provider:"internal",
+      progress:symbols.length?this.integrityCursor/symbols.length:0,
+      itemsDone:this.integrityCursor,itemsTotal:symbols.length,
+      details:{lastBatch:batch,corporateActionFlags:audit.actions,qualityFlags:audit.quality}
+    });
   }
 
   async #mineNextBatch(){
