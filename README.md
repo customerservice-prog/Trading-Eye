@@ -1,32 +1,126 @@
 # Trading Eye
 
-Trading Eye is a beginner-first trading terminal inspired by the workflow of thinkorswim/TradingView, with an AI learning layer built directly into the charting experience.
+Trading Eye is a beginner-first market terminal with a persistent learning engine.
 
-## What this first build does
+## Production integrity rule
 
-- Thinkorswim-style multi-panel desktop terminal
-- Live-feeling candlestick chart with volume and prediction cone
-- Watchlist, time & sales, synthetic Level II, paper account and learning stats
-- Beginner explanations beside every AI prediction
-- Adaptive prediction engine that learns from its own locked predictions
-- Every prediction is scored after its horizon expires
-- Paper trading only; real-money trading is intentionally locked
-- Optional AI autopilot can place simulated paper trades when confidence is high
-- Persistent learning statistics in the browser
-- Clear provider boundary for replacing the demo feed with licensed real market data later
+Trading Eye is now **REAL-DATA-ONLY**.
 
-## Safety / integrity rule
+It does not generate fallback prices, synthetic candles, fake trades, fake quotes, or fake Level II depth.
 
-The current repository ships in **DEMO MARKET / PAPER MONEY** mode. It does not pretend generated prices are live exchange data and it cannot place real orders.
+If a real provider is unavailable, the UI shows that data is unavailable.
 
-That is intentional. A real feed should be connected through a market-data adapter before any claim of live market coverage is made. Real brokerage execution should remain a separate, explicit later phase after long out-of-sample and paper-trading validation.
+## Current production architecture
 
-## Run locally
+- Node.js service running continuously on Railway
+- PostgreSQL persistent database
+- Alpaca real-time market-data adapter
+- Authenticated WebSocket ingestion for real trades, quotes, and 1-minute bars
+- Historical real-bar backfill
+- Raw provider events stored with provider, feed, and source timestamp
+- Persistent model state
+- Server-side prediction creation and scoring
+- 15-minute prediction horizon
+- Historical time-ordered training segment
+- Separate historical holdout validation segment
+- Separate live prediction accuracy
+- Browser frontend consumes only backend real-data APIs/WebSockets
+- Paper account only; real brokerage execution is not connected
 
-This is a dependency-free static web application.
+## Feed coverage
+
+The configured default is:
+
+```
+ALPACA_FEED=iex
+```
+
+That means real-time data from **IEX only**. It must not be described as the entire U.S. market.
+
+If the connected Alpaca subscription permits SIP:
+
+```
+ALPACA_FEED=sip
+```
+
+SIP is consolidated U.S. stock-market coverage.
+
+The exact active feed is shown in the UI.
+
+## 24/7 behavior
+
+The Trading Eye service itself runs continuously even when no browser is open.
+
+During periods when the configured stock feed has no market events, Trading Eye does not manufacture candles. It remains online, preserves model/data state, maintains health checks, and resumes ingestion when the provider sends real events.
+
+## Required Railway variables
+
+```
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+ALPACA_API_KEY_ID=<real Alpaca key>
+ALPACA_API_SECRET_KEY=<real Alpaca secret>
+PORT=80
+```
+
+Optional:
+
+```
+ALPACA_FEED=iex
+TRADING_SYMBOLS=SPY,QQQ,NVDA,AAPL,AMD,TSLA
+BACKFILL_DAYS=30
+```
+
+## What is stored
+
+### raw_market_events
+Provider-native trade, quote, and bar messages.
+
+### market_bars_1m
+Normalized real one-minute bars.
+
+### predictions
+Predictions stored before their result exists, including probability, features, model version, target time, and later scored outcome.
+
+### model_state
+Persistent model weights and learning statistics.
+
+### service_heartbeats
+24/7 engine health and provider status.
+
+## Learning integrity
+
+Historical training and live proof are deliberately separated.
+
+Historical data:
+1. Older chronological portion is used for training.
+2. Later holdout portion is evaluated without learning from those answers.
+
+Live data:
+1. Prediction is written to Postgres.
+2. Its target timestamp is fixed.
+3. After the target time arrives, the real market result is scored.
+4. Only then can the model learn from that result.
+
+Historical holdout accuracy is **not** presented as live accuracy.
+
+## Paper trading
+
+Paper-money fills are simulations and are labeled as such.
+
+The reference market prices must come from the real provider.
+
+There is currently no code path that can send a real brokerage order.
+
+## Local run
 
 ```bash
-python -m http.server 8080
+npm install
+DATABASE_URL=... \
+ALPACA_API_KEY_ID=... \
+ALPACA_API_SECRET_KEY=... \
+ALPACA_FEED=iex \
+PORT=8080 \
+npm start
 ```
 
 Then open:
@@ -35,47 +129,19 @@ Then open:
 http://localhost:8080
 ```
 
-You can also serve the repository with any static host.
+## Next data layers
 
-## Docker / Railway
+The architecture is designed to add real sources for:
 
-```bash
-docker build -t trading-eye .
-docker run -p 8080:80 trading-eye
-```
+- consolidated SIP stock data
+- true depth / Level II or Level III
+- options chains and Greeks
+- futures
+- market breadth
+- news
+- SEC filings
+- macroeconomic releases
+- corporate actions
+- earnings/analyst events
 
-The included `Dockerfile` serves the app with nginx.
-
-## Architecture
-
-```
-src/
-  app.js               terminal UI controller
-  chart.js             canvas candlestick/volume/prediction renderer
-  learning-engine.js   online adaptive probability model + scoring
-  market-sim.js        correlated demo market feed
-  paper-engine.js      simulated account, fills, positions and P/L
-```
-
-The next production phase should add:
-
-1. Licensed historical + streaming market-data provider
-2. Server-side ingestion and normalized market-event storage
-3. Options, futures, breadth, news, filings and macro feeds
-4. Feature store and historical market-state search
-5. Walk-forward backtesting and leakage guards
-6. Server-side model registry / experiment tracking
-7. Broker paper-account integration
-8. Only after validation: separately permissioned, capped real-money execution
-
-## Product principle
-
-The UI always answers five beginner questions:
-
-1. What is the market doing?
-2. What does the AI think happens next?
-3. Why?
-4. How confident is it?
-5. Has the AI actually earned trust over time?
-
-Trading Eye should make complex market information understandable without pretending uncertainty does not exist.
+Each source must remain explicitly identified in the stored data and UI.
