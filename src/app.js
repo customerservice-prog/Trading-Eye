@@ -396,9 +396,19 @@ function renderLearning() {
   $("predictionCount").textContent=num(s?.predictions||0);
   $("scoredCount").textContent=num(scored);
   $("highConfidenceAccuracy").textContent=hiScored?pct(hiCorrect/hiScored):"Not enough yet";
-  const historicalHoldout=predictionData.model?.stats?.historicalHoldoutAccuracy;
-  $("historicalHoldoutAccuracy").textContent=historicalHoldout==null?"Not trained yet":pct(historicalHoldout);
-  $("learningUpdates").textContent=num(predictionData.model?.stats?.learningUpdates||0);
+
+  const production=modelLabData?.production||predictionData.modelLab?.production||null;
+  const testAcc=production?.testMetrics?.accuracy;
+  const shadowBrier=production?.shadowMetrics?.brier;
+  $("historicalHoldoutAccuracy").textContent=testAcc==null?"No production model":pct(testAcc);
+  $("learningUpdates").textContent=shadowBrier==null?"—":Number(shadowBrier).toFixed(4);
+
+  if ($("modelLabSummary")) {
+    const run=modelLabData?.latestRun||predictionData.modelLab?.latestRun||null;
+    $("modelLabSummary").innerHTML=production
+      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · shadow Brier ${Number(production.shadowMetrics?.brier||0).toFixed(4)} · ${run?.promotionReason||"production locked until a challenger proves better"}`
+      : `<strong>Model Lab is building the first production model.</strong><br>Predictions stay on the legacy fallback until a challenger passes calibration, unseen-test and shadow guards.`;
+  }
 
   const rows=predictionData.rows||[];
   $("predictionBody").innerHTML=rows.length?rows.map(p=>`
@@ -559,11 +569,12 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,lab]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50)
+      client.studies(10),client.scanner(50),client.paper(),client.modelLab()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
+    paperData=paperState; modelLabData=lab;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -624,21 +635,6 @@ async function loadSymbol() {
   }
 }
 
-function maybeAutopilot() {
-  if (!autopilot) return;
-  const a=normalizeAnalysis(snapshot.analysis);
-  const price=currentRealPrice();
-  if (!a || price==null || !providerConnected()) return;
-  if (Date.now()-lastAutoTradeAt<60000) return;
-  const pos=paper.positions[activeSymbol];
-  if (!pos && a.confidence>=.60 && ["UP","DOWN"].includes(a.direction)) {
-    const qty=paper.suggestedQty(price,.009);
-    paper.trade(activeSymbol,a.direction==="UP"?"BUY":"SELL",qty,price,"AI PAPER · REAL DATA");
-    lastAutoTradeAt=Date.now();
-    toast(`AI paper trade using real ${sourceName()} market price.`);
-  }
-}
-
 function applyRealtime(event) {
   if (event.type==="status") {
     status={...(status||{}),...event.data};
@@ -662,7 +658,6 @@ function applyRealtime(event) {
       .then(s=>{
         snapshot=s;
         renderAll();
-        maybeAutopilot();
         client.patternLab(activeSymbol,40)
           .then(p=>{patternLabData=p;renderPatternLab();})
           .catch(()=>{});
