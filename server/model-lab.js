@@ -82,6 +82,7 @@ export class ModelLab {
     this.latestRun=null;
     this.shadowModels=[];
     this.liveShadowMetrics={};
+    this.productionLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
     this.shadowMinSamples=300;
     this.shadowScoreCounter=0;
     this.training=false;
@@ -150,6 +151,7 @@ export class ModelLab {
         validationMetrics:p.validation_metrics,
         testMetrics:p.test_metrics,
         shadowMetrics:p.shadow_metrics,
+        liveMetrics:this.productionLiveMetrics,
         liveShadowMetrics:p.live_shadow_metrics,
         dataset:p.dataset,
         calibration:p.calibration
@@ -268,6 +270,18 @@ export class ModelLab {
   }
 
   async refreshLiveShadowMetrics(){
+    if(this.productionRecord?.model_id){
+      const prod=await this.db.pool.query(`
+        SELECT p_up,p_flat,p_down,actual_direction
+        FROM predictions
+        WHERE model_id=$1 AND status='SCORED'
+        ORDER BY created_at
+      `,[this.productionRecord.model_id]);
+      this.productionLiveMetrics=liveMetrics(prod.rows);
+    }else{
+      this.productionLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+    }
+
     const map={};
     for(const item of this.shadowModels){
       const q=await this.db.pool.query(`
@@ -376,8 +390,8 @@ export class ModelLab {
 
   async tick(){
     if(!this.enabled||this.training) return;
+    await this.refreshLiveShadowMetrics();
     if(this.shadowModels.length){
-      await this.refreshLiveShadowMetrics();
       await this.evaluateShadowPromotion();
     }
     if(this.marketEngine.backfill.state!=="COMPLETE") return;
