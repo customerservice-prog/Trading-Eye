@@ -276,7 +276,7 @@ export class MistakeLab extends EventEmitter {
         baselineErrorRate,
         errorRateDelta:delta,
         highConfidenceSamples:highConf.length,
-        highConfidenceErrorRate,
+        highConfidenceErrorRate:highConfErrorRate,
         hardReversalRate:ratio(hardReversals.length,recent.length),
         reason:level==="ALERT"
           ?"Recent mistakes deteriorated materially. Strict paper entries are blocked while a challenger is retrained."
