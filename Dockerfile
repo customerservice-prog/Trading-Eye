@@ -1,4 +1,8 @@
-FROM nginx:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY . /usr/share/nginx/html
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json ./
+RUN npm install --omit=dev
+COPY . .
+ENV NODE_ENV=production
 EXPOSE 80
+CMD ["npm","start"]
