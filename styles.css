@@ -1857,3 +1857,41 @@ body.research-focus .research-brain-layout {
   .paper-status-strip{align-items:flex-start;flex-direction:column;gap:6px}
   .paper-research-link{margin-left:0}
 }
+
+
+/* simplified beginner mode banner */
+.simple-mode-banner{
+  min-height:54px;
+  padding:9px 14px;
+}
+.simple-mode-pills{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.paper-mode-simple,
+.real-lock-simple{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:0 10px;
+  border-radius:999px;
+  font-size:8px;
+  font-weight:900;
+  letter-spacing:.06em;
+}
+.paper-mode-simple{
+  color:var(--green);
+  border:1px solid rgba(73,226,154,.24);
+  background:rgba(73,226,154,.06);
+}
+.real-lock-simple{
+  color:var(--amber);
+  border:1px solid rgba(244,190,93,.22);
+  background:rgba(244,190,93,.05);
+}
+@media(max-width:720px){
+  .simple-mode-banner{gap:8px}
+  .simple-mode-pills{width:100%}
+}
