@@ -8,6 +8,8 @@ import { DeepStudyEngine } from "./deep-study.js";
 import { AssetUniverse } from "./universe.js";
 import { explainAttention } from "./regime.js";
 import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } from "./patterns.js";
+import { ModelLab } from "./model-lab.js";
+import { PaperBroker } from "./paper-broker.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -20,6 +22,9 @@ const OVERNIGHT_LIVE_SYMBOL_LIMIT=Math.max(
   5,Math.min(LIVE_SYMBOL_LIMIT,Number(process.env.ALPACA_OVERNIGHT_SYMBOL_LIMIT || 14))
 );
 const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowerCase() === "true";
+const MODEL_LAB_ENABLED=String(process.env.MODEL_LAB_ENABLED ?? "true").toLowerCase() === "true";
+const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
+const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
@@ -43,6 +48,21 @@ const provider=new AlpacaProvider({
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
 await engine.init();
 
+const modelLab=new ModelLab({
+  db,marketEngine:engine,horizonMinutes:15,enabled:MODEL_LAB_ENABLED
+});
+await modelLab.init();
+
+const paperBroker=new PaperBroker({
+  db,marketEngine:engine,
+  startingCash:100000,
+  fillBufferBps:PAPER_FILL_BUFFER_BPS,
+  autopilotEnabled:PAPER_AUTOPILOT_ENABLED
+});
+await paperBroker.init();
+
+engine.attachIntelligence({modelLab,paperBroker});
+
 const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
 await deepStudy.init();
 
@@ -65,13 +85,58 @@ app.get("/health",async(req,res)=>{
     marketScope:"US_EQUITIES_ONLY",
     engineEnabled:s.engineEnabled,
     deepStudy:deepStudy.status(),
+    modelLab:modelLab.status(),
+    paperAutopilot:(await paperBroker.snapshot()).autopilotEnabled,
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
   });
 });
 
 app.get("/api/status",async(req,res)=>{
-  res.json({...engine.status(),database:await db.ping()});
+  res.json({
+    ...engine.status(),
+    database:await db.ping(),
+    modelLab:modelLab.status()
+  });
+});
+
+app.get("/api/model-lab",async(req,res)=>{
+  res.json(modelLab.status());
+});
+
+app.get("/api/paper",async(req,res)=>{
+  res.json(await paperBroker.snapshot());
+});
+
+app.post("/api/paper/autopilot",async(req,res)=>{
+  const enabled=Boolean(req.body?.enabled);
+  res.json(await paperBroker.setAutopilot(enabled));
+});
+
+app.post("/api/paper/order",async(req,res)=>{
+  try{
+    const symbol=String(req.body?.symbol||"").trim().toUpperCase();
+    const side=String(req.body?.side||"").trim().toUpperCase();
+    let qty=Number(req.body?.qty);
+    if(!qty) qty=await paperBroker.suggestedQty(symbol,{positionPct:.05});
+    const result=await paperBroker.submitMarketOrder({
+      symbol,side,qty,
+      source:String(req.body?.source||"MANUAL_PAPER"),
+      modelId:req.body?.modelId||null
+    });
+    res.status(result.ok?200:400).json(result);
+  }catch(err){
+    res.status(400).json({ok:false,error:String(err?.message||err)});
+  }
+});
+
+app.post("/api/paper/flatten/:symbol",async(req,res)=>{
+  try{
+    const result=await paperBroker.flatten(req.params.symbol,{source:"MANUAL_FLATTEN"});
+    res.status(result.ok?200:400).json(result);
+  }catch(err){
+    res.status(400).json({ok:false,error:String(err?.message||err)});
+  }
 });
 
 app.get("/api/assets/stats",async(req,res)=>{
@@ -199,7 +264,14 @@ app.get("/api/predictions",async(req,res)=>{
   const symbol=req.query.symbol?String(req.query.symbol).toUpperCase():null;
   const rows=await db.recentPredictions({symbol,limit:Number(req.query.limit)||200});
   const stats=await db.predictionStats();
-  res.json({rows,stats,model:engine.model.snapshot(),provider:"alpaca",feed:engine.status().provider.feed,feedMode:FEED});
+  res.json({
+    rows,stats,
+    legacyModel:engine.model.snapshot(),
+    modelLab:modelLab.status(),
+    provider:"alpaca",
+    feed:engine.status().provider.feed,
+    feedMode:FEED
+  });
 });
 
 app.use(express.static(".",{
@@ -237,7 +309,8 @@ server.listen(PORT,"0.0.0.0",()=>{
     event:"server_started",port:PORT,mode:"REAL_DATA_ONLY",
     provider:"alpaca",feed:provider.feed,feedMode:FEED,marketScope:"US_EQUITIES_ONLY",
     liveSymbolLimit:LIVE_SYMBOL_LIMIT,overnightLiveSymbolLimit:OVERNIGHT_LIVE_SYMBOL_LIMIT,
-    symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED
+    symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED,
+    modelLabEnabled:MODEL_LAB_ENABLED,paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED
   }));
 });
 
@@ -245,6 +318,8 @@ const shutdown=async()=>{
   provider.stop();
   universe.stop();
   deepStudy.stop();
+  modelLab.stop();
+  paperBroker.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
 };
