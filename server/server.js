@@ -11,9 +11,12 @@ const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
   .split(",").map(s=>s.trim().toUpperCase()).filter(Boolean);
 const FEED=(process.env.ALPACA_FEED || "auto").trim().toLowerCase();
-const HISTORICAL_FEED=(process.env.ALPACA_HISTORICAL_FEED || "iex").trim().toLowerCase();
+const HISTORICAL_FEED=(process.env.ALPACA_HISTORICAL_FEED || "sip").trim().toLowerCase();
 const BACKFILL_DAYS=Math.max(1,Math.min(365,Number(process.env.BACKFILL_DAYS || 30)));
 const LIVE_SYMBOL_LIMIT=Math.max(5,Math.min(30,Number(process.env.ALPACA_LIVE_SYMBOL_LIMIT || 28)));
+const OVERNIGHT_LIVE_SYMBOL_LIMIT=Math.max(
+  5,Math.min(LIVE_SYMBOL_LIMIT,Number(process.env.ALPACA_OVERNIGHT_SYMBOL_LIMIT || 14))
+);
 const ENGINE_ENABLED=String(process.env.TRADING_ENGINE_ENABLED ?? "true").toLowerCase() === "true";
 
 const db=new Database(process.env.DATABASE_URL);
@@ -32,6 +35,7 @@ const provider=new AlpacaProvider({
   feed:FEED,
   historicalFeed:HISTORICAL_FEED,
   maxSymbols:LIVE_SYMBOL_LIMIT,
+  overnightMaxSymbols:OVERNIGHT_LIVE_SYMBOL_LIMIT,
   symbols:SYMBOLS
 });
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
@@ -188,7 +192,8 @@ server.listen(PORT,"0.0.0.0",()=>{
   console.log(JSON.stringify({
     event:"server_started",port:PORT,mode:"REAL_DATA_ONLY",
     provider:"alpaca",feed:provider.feed,feedMode:FEED,marketScope:"US_EQUITIES_ONLY",
-    liveSymbolLimit:LIVE_SYMBOL_LIMIT,symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED
+    liveSymbolLimit:LIVE_SYMBOL_LIMIT,overnightLiveSymbolLimit:OVERNIGHT_LIVE_SYMBOL_LIMIT,
+    symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED
   }));
 });
 
