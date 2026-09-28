@@ -31,6 +31,8 @@ let predictionData={rows:[],stats:null,model:null};
 let studyData={status:null,rows:[]};
 let lastAutoTradeAt=0;
 let refreshTimer=null;
+let symbolSearchTimer=null;
+let lastSymbolResults=[];
 
 function toast(message) {
   const el=$("toast");
@@ -212,7 +214,7 @@ function renderWatchlist() {
     el.innerHTML=`
       <div>
         <div class="watch-symbol">${symbol}</div>
-        <div class="watch-name">${NAMES[symbol]||symbol}</div>
+        <div class="watch-name">${row.name||NAMES[symbol]||symbol}</div>
       </div>
       <div class="watch-price">
         <strong>${price==null?"—":price.toFixed(2)}</strong>
@@ -419,7 +421,8 @@ async function refreshAll({quiet=false}={}) {
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),client.studies(10)
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies;
-    monitoredSymbols=st.symbols||monitoredSymbols;
+    monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
+    if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
     if (!quiet) toast(st.configured?`Connected: ${sourceName()}`:"Backend online; real market provider still needs credentials.");
   } catch (err) {
@@ -428,24 +431,42 @@ async function refreshAll({quiet=false}={}) {
   }
 }
 
-async function selectSymbol(symbol) {
-  if (!monitoredSymbols.includes(symbol)) return;
-  activeSymbol=symbol;
-  $("symbolInput").value=symbol;
+async function selectSymbol(symbol,{activate=false}={}) {
+  symbol=String(symbol||"").trim().toUpperCase();
+  if (!symbol) return;
   try {
+    if (activate || !monitoredSymbols.includes(symbol)) {
+      const activated=await client.activate(symbol);
+      monitoredSymbols=activated.hotSymbols||monitoredSymbols;
+      watchlist=await client.watchlist();
+    }
+    activeSymbol=symbol;
+    $("symbolInput").value=symbol;
+    $("symbolResults").classList.add("hidden");
     snapshot=await client.snapshot(symbol);
     renderAll();
-  } catch (err) { toast(String(err.message||err)); }
+  } catch (err) {
+    toast(String(err.message||err));
+  }
 }
 
-function loadSymbol() {
-  const symbol=$("symbolInput").value.trim().toUpperCase();
-  if (!monitoredSymbols.includes(symbol)) {
-    toast("This backend is currently monitoring: "+monitoredSymbols.join(", "));
-    $("symbolInput").value=activeSymbol;
+async function loadSymbol() {
+  const raw=$("symbolInput").value.trim();
+  if (!raw) return;
+  const ticker=raw.toUpperCase();
+  try {
+    await selectSymbol(ticker,{activate:true});
     return;
+  } catch (_) {}
+  try {
+    const found=await client.searchAssets(raw,10);
+    const first=found.rows?.find(x=>x.data_supported!==false);
+    if (!first) throw new Error("No supported US stock found for "+raw);
+    await selectSymbol(first.symbol,{activate:true});
+  } catch(err) {
+    toast(String(err.message||err));
+    $("symbolInput").value=activeSymbol;
   }
-  selectSymbol(symbol);
 }
 
 function maybeAutopilot() {
@@ -503,7 +524,47 @@ function setTour(open,markSeen=false) {
 }
 
 $("loadSymbolBtn").addEventListener("click",loadSymbol);
-$("symbolInput").addEventListener("keydown",e=>{if(e.key==="Enter")loadSymbol();});
+$("symbolInput").addEventListener("keydown",e=>{
+  if(e.key==="Enter") loadSymbol();
+  if(e.key==="Escape") $("symbolResults").classList.add("hidden");
+});
+$("symbolInput").addEventListener("input",e=>{
+  clearTimeout(symbolSearchTimer);
+  const q=e.target.value.trim();
+  if (q.length<1) {
+    $("symbolResults").classList.add("hidden");
+    return;
+  }
+  symbolSearchTimer=setTimeout(async()=>{
+    try {
+      const found=await client.searchAssets(q,12);
+      lastSymbolResults=found.rows||[];
+      const box=$("symbolResults");
+      if (!lastSymbolResults.length) {
+        box.innerHTML='<div class="symbol-result disabled"><span>No matching US stocks</span></div>';
+        box.classList.remove("hidden");
+        return;
+      }
+      box.innerHTML=lastSymbolResults.map((a,i)=>`
+        <div class="symbol-result ${a.data_supported===false?"disabled":""}" data-result-index="${i}">
+          <strong>${a.symbol}</strong>
+          <span>${a.name||"US equity"}</span>
+          <em>${a.exchange||""}${a.data_supported===false?" · unavailable on free feed":""}</em>
+        </div>`).join("");
+      box.classList.remove("hidden");
+    } catch {}
+  },180);
+});
+$("symbolResults").addEventListener("click",e=>{
+  const row=e.target.closest("[data-result-index]");
+  if (!row) return;
+  const asset=lastSymbolResults[Number(row.dataset.resultIndex)];
+  if (!asset || asset.data_supported===false) return;
+  selectSymbol(asset.symbol,{activate:true});
+});
+document.addEventListener("click",e=>{
+  if (!e.target.closest(".symbol-search-wrap")) $("symbolResults").classList.add("hidden");
+});
 $("timeframes").addEventListener("click",e=>{
   const btn=e.target.closest("button[data-tf]");
   if (!btn) return;
