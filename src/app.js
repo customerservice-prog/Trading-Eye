@@ -1,445 +1,521 @@
-import { MarketSimulator, SYMBOLS } from "./market-sim.js";
-import { LearningEngine, FEATURE_LABELS } from "./learning-engine.js";
+import { MarketClient } from "./market-client.js";
 import { PaperEngine } from "./paper-engine.js";
 import { MarketChart } from "./chart.js";
+import { FEATURE_LABELS } from "./ui-labels.js";
 
-const $ = id => document.getElementById(id);
-const money = v => Number(v || 0).toLocaleString(undefined, { style: "currency", currency: "USD" });
-const pct = v => (v * 100).toFixed(2) + "%";
-const num = v => Number(v || 0).toLocaleString();
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const $=id=>document.getElementById(id);
+const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
+const num=v=>Number(v||0).toLocaleString();
+const pct=v=>(Number(v||0)*100).toFixed(2)+"%";
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
-const sim = new MarketSimulator();
-const learner = new LearningEngine({ horizonSteps: 15, predictionEvery: 5, learningRate: 0.055 });
-const paper = new PaperEngine(100_000);
-const chart = new MarketChart($("marketChart"), $("chartTooltip"));
+const NAMES={
+  SPY:"S&P 500 ETF",QQQ:"Nasdaq 100 ETF",NVDA:"NVIDIA",AAPL:"Apple",AMD:"AMD",TSLA:"Tesla"
+};
 
-let activeSymbol = "QQQ";
-let timeframe = "5m";
-let forecastOn = true;
-let beginnerOn = true;
-let simpleReasons = false;
-let autopilot = false;
-let latestAnalysis = null;
-let lastAutoTradeAt = 0;
+const client=new MarketClient();
+const paper=new PaperEngine(100_000);
+const chart=new MarketChart($("marketChart"),$("chartTooltip"));
+
+let activeSymbol="QQQ";
+let timeframe="5m";
+let forecastOn=true;
+let beginnerOn=true;
+let simpleReasons=true;
+let autopilot=false;
+let monitoredSymbols=["SPY","QQQ","NVDA","AAPL","AMD","TSLA"];
+let status=null;
+let snapshot={bars:[],quote:null,trades:[],analysis:null,features:null,predictions:[]};
+let watchlist={rows:[],provider:"alpaca",feed:"iex"};
+let predictionData={rows:[],stats:null,model:null};
+let lastAutoTradeAt=0;
+let refreshTimer=null;
 
 function toast(message) {
-  const el = $("toast");
-  el.textContent = message;
+  const el=$("toast");
+  el.textContent=message;
   el.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => el.classList.remove("show"), 2600);
+  toast.timer=setTimeout(()=>el.classList.remove("show"),2800);
 }
 
-function valueClass(v) {
-  return v > 0 ? "positive" : v < 0 ? "negative" : "neutral";
+function safeTime(value) {
+  if (!value) return "—";
+  const d=new Date(value);
+  return Number.isNaN(+d)?"—":d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit",second:"2-digit"});
 }
 
-function directionCopy(analysis) {
-  if (!analysis) return { title: "Watching", summary: "Collecting enough evidence to form a view." };
-  const p = analysis.probabilities;
-  const directionalGap = Math.abs(p.up - p.down);
-  if (analysis.confidence < 0.61 || directionalGap < 0.15) {
-    return {
-      title: "Wait — unclear",
-      summary: "Buyers and sellers are too evenly matched. The AI would rather do nothing than force a weak prediction."
-    };
-  }
-  if (analysis.direction === "UP") {
-    return {
-      title: analysis.confidence >= 0.76 ? "Buyers look stronger" : "Leaning upward",
-      summary: "Several current signals favor an upward move, but this is still a probability—not a promise."
-    };
-  }
+function ageText(value) {
+  if (!value) return "no real event yet";
+  const ms=Date.now()-new Date(value).getTime();
+  if (!Number.isFinite(ms)) return "unknown";
+  if (ms<60000) return Math.max(0,Math.floor(ms/1000))+"s ago";
+  if (ms<3600000) return Math.floor(ms/60000)+"m ago";
+  return Math.floor(ms/3600000)+"h ago";
+}
+
+function sourceName() {
+  const feed=(status?.provider?.feed || watchlist.feed || "unknown").toUpperCase();
+  return "Alpaca "+feed;
+}
+
+function providerConnected() {
+  return Boolean(status?.configured && ["LIVE","CONNECTED"].includes(status?.provider?.state));
+}
+
+function currentRealPrice() {
+  const trades=snapshot.trades||[];
+  if (trades.length && Number.isFinite(Number(trades[0].price))) return Number(trades[0].price);
+  const b=snapshot.bars?.at(-1);
+  if (b && Number.isFinite(Number(b.close))) return Number(b.close);
+  return null;
+}
+
+function normalizeAnalysis(a) {
+  if (!a) return null;
   return {
-    title: analysis.confidence >= 0.76 ? "Sellers look stronger" : "Leaning downward",
-    summary: "Several current signals favor a downward move, but the model can still be wrong."
+    direction:a.direction,
+    confidence:Number(a.confidence),
+    probabilities:{up:Number(a.pUp),flat:Number(a.pFlat),down:Number(a.pDown)},
+    contributions:Array.isArray(a.contributions)?a.contributions:[]
   };
 }
 
-function beginnerExplanation(analysis) {
-  if (!analysis) return "Trading Eye is watching the chart, activity and the broader market before taking a side.";
-  const top = analysis.contributions.slice(0, 3);
-  const positives = top.filter(x => x.contribution > 0).length;
-  const negatives = top.filter(x => x.contribution < 0).length;
-
-  if (analysis.confidence < 0.61) {
-    return "Think of a tug-of-war: neither side is clearly winning. The computer sees mixed clues, so the safest paper decision is to keep watching.";
+function aggregateBars(rows,tf) {
+  const minutes={"1m":1,"5m":5,"15m":15,"1h":60}[tf];
+  if (!minutes) {
+    const byDay=new Map();
+    for (const row of rows) {
+      const d=new Date(row.ts);
+      const key=d.toISOString().slice(0,10);
+      const b=byDay.get(key);
+      if (!b) byDay.set(key,{...row,time:+d,open:Number(row.open),high:Number(row.high),low:Number(row.low),close:Number(row.close),volume:Number(row.volume)});
+      else {
+        b.high=Math.max(b.high,Number(row.high));
+        b.low=Math.min(b.low,Number(row.low));
+        b.close=Number(row.close);
+        b.volume+=Number(row.volume);
+      }
+    }
+    return [...byDay.values()];
   }
-  if (analysis.direction === "UP") {
-    return positives >= 2
-      ? "The strongest clues are lining up toward buyers. The AI sees more evidence for price rising than falling, so it is leaning up while continuing to watch for a reversal."
-      : "The AI leans upward, but some important clues disagree. Treat this as a weak forecast, not a green light.";
+  const size=minutes*60000;
+  const groups=new Map();
+  for (const row of rows) {
+    const t=+new Date(row.ts);
+    const key=Math.floor(t/size)*size;
+    let b=groups.get(key);
+    if (!b) {
+      b={time:key,open:Number(row.open),high:Number(row.high),low:Number(row.low),close:Number(row.close),volume:Number(row.volume)};
+      groups.set(key,b);
+    } else {
+      b.high=Math.max(b.high,Number(row.high));
+      b.low=Math.min(b.low,Number(row.low));
+      b.close=Number(row.close);
+      b.volume+=Number(row.volume);
+    }
   }
-  return negatives >= 2
-    ? "The strongest clues are lining up toward sellers. The AI sees more evidence for price falling than rising, so it is leaning down while watching for buyers to return."
-    : "The AI leans downward, but some important clues disagree. Treat this as a weak forecast, not a certainty.";
+  return [...groups.values()].sort((a,b)=>a.time-b.time);
 }
 
-function renderWatchlist(snapshot) {
-  const wrap = $("watchlist");
-  wrap.innerHTML = "";
-  for (const [symbol, meta] of Object.entries(SYMBOLS)) {
-    const q = snapshot.quotes[symbol];
-    const row = document.createElement("div");
-    row.className = "watch-row" + (symbol === activeSymbol ? " active" : "");
-    row.dataset.symbol = symbol;
-    row.innerHTML = `
+function chartPredictions(rows) {
+  return (rows||[]).map(p=>({
+    time:+new Date(p.created_at || p.createdAt),
+    direction:p.direction,
+    actual:p.actual_direction || null,
+    correct:p.correct
+  }));
+}
+
+function directionCopy(a) {
+  if (!a) return {title:"Waiting for real data",summary:"No prediction is shown until enough real market bars have been received."};
+  const gap=Math.abs(a.probabilities.up-a.probabilities.down);
+  if (a.confidence<.46 || gap<.10) return {
+    title:"Wait — unclear",
+    summary:"The real-data signals do not agree strongly enough for the model to take a clear side."
+  };
+  if (a.direction==="UP") return {
+    title:a.confidence>=.60?"Buyers look stronger":"Leaning upward",
+    summary:"The current model assigns the highest probability to an upward move over its prediction horizon."
+  };
+  if (a.direction==="DOWN") return {
+    title:a.confidence>=.60?"Sellers look stronger":"Leaning downward",
+    summary:"The current model assigns the highest probability to a downward move over its prediction horizon."
+  };
+  return {title:"Sideways is most likely",summary:"The current model assigns the highest probability to a flat move over its prediction horizon."};
+}
+
+function beginnerExplanation(a) {
+  if (!a) {
+    if (!status?.configured) return "A real market-data provider has not been connected yet. Trading Eye will not invent prices while it waits.";
+    return "The feed is connected, but the model needs enough real one-minute bars before it will form a prediction.";
+  }
+  const top=a.contributions.slice(0,3);
+  const names=top.map(x=>FEATURE_LABELS[x.key]?.title).filter(Boolean);
+  if (a.direction==="UP") return "The strongest real-data inputs currently lean upward"+(names.length?": "+names.join(", ")+".":".");
+  if (a.direction==="DOWN") return "The strongest real-data inputs currently lean downward"+(names.length?": "+names.join(", ")+".":".");
+  return "The strongest real-data inputs currently do not favor a large directional move.";
+}
+
+function renderStatus() {
+  const configured=Boolean(status?.configured);
+  const state=status?.provider?.state || "STARTING";
+  const feed=(status?.provider?.feed || "—").toUpperCase();
+
+  if (!configured) {
+    $("feedStatus").textContent="REAL DATA NOT CONNECTED";
+    $("brainStateBadge").innerHTML="<i></i> WAITING";
+  } else {
+    $("feedStatus").textContent=`ALPACA ${feed} · ${state}`;
+    $("brainStateBadge").innerHTML=`<i></i> ${snapshot.analysis?"LEARNING":"COLLECTING"}`;
+  }
+
+  $("techPulse").textContent=configured?"Alpaca":"Not connected";
+  $("techPulse").className=configured?"positive":"negative";
+  $("breadthPulse").textContent=feed==="SIP"?"Consolidated U.S.":"IEX only";
+  $("breadthPulse").className=feed==="SIP"?"positive":"neutral";
+  $("volPulse").textContent=ageText(status?.lastBarAt);
+  $("volPulse").className="neutral";
+  $("marketRegimeBadge").textContent=state;
+
+  const buttons=[$("paperBuyBtn"),$("paperSellBtn"),$("flattenBtn"),$("autopilotToggle")];
+  const usable=providerConnected() && currentRealPrice()!=null;
+  for (const b of buttons) if (b) b.disabled=!usable;
+
+  document.body.dataset.dataState=configured?"configured":"missing";
+}
+
+function renderWatchlist() {
+  const wrap=$("watchlist");
+  wrap.innerHTML="";
+  for (const row of watchlist.rows||[]) {
+    const symbol=row.symbol;
+    const bar=row.bar;
+    const price=bar?Number(bar.close):null;
+    const el=document.createElement("div");
+    el.className="watch-row"+(symbol===activeSymbol?" active":"");
+    el.dataset.symbol=symbol;
+    el.innerHTML=`
       <div>
         <div class="watch-symbol">${symbol}</div>
-        <div class="watch-name">${meta.name}</div>
+        <div class="watch-name">${NAMES[symbol]||symbol}</div>
       </div>
       <div class="watch-price">
-        <strong>${q.price.toFixed(2)}</strong>
-        <span class="${valueClass(q.change)}">${q.change >= 0 ? "+" : ""}${pct(q.changePct)}</span>
+        <strong>${price==null?"—":price.toFixed(2)}</strong>
+        <span class="neutral">${bar?"1m · "+safeTime(bar.ts):"no real bar"}</span>
       </div>`;
-    row.addEventListener("click", () => {
-      activeSymbol = symbol;
-      $("symbolInput").value = symbol;
-      renderAll(sim.snapshot());
-    });
-    wrap.appendChild(row);
+    el.addEventListener("click",()=>selectSymbol(symbol));
+    wrap.appendChild(el);
   }
 }
 
-function renderPulse(pulse) {
-  $("marketRegimeBadge").textContent = pulse.regime;
-  $("techPulse").textContent = pulse.tech >= 0 ? "Strengthening" : "Weakening";
-  $("techPulse").className = valueClass(pulse.tech);
-  $("breadthPulse").textContent = Math.round(pulse.breadth * 100) + "% rising";
-  $("breadthPulse").className = pulse.breadth >= 0.5 ? "positive" : "negative";
-  $("volPulse").textContent = pulse.volatility > 0.35 ? "High" : pulse.volatility < -0.2 ? "Calm" : "Normal";
-  $("volPulse").className = pulse.volatility > 0.35 ? "negative" : "neutral";
-}
+function renderAI() {
+  const a=normalizeAnalysis(snapshot.analysis);
+  const copy=directionCopy(a);
+  $("decisionTitle").textContent=copy.title;
+  $("decisionSummary").textContent=copy.summary;
+  $("decisionTitle").className=a?.direction==="UP"?"positive":a?.direction==="DOWN"?"negative":"neutral";
 
-function renderAI(analysis, features) {
-  latestAnalysis = analysis;
-  const copy = directionCopy(analysis);
-  $("decisionTitle").textContent = copy.title;
-  $("decisionSummary").textContent = copy.summary;
-  $("decisionTitle").className = analysis?.direction === "UP" ? "positive" : analysis?.direction === "DOWN" ? "negative" : "";
+  const conf=a?Math.round(a.confidence*100):0;
+  $("confidenceValue").textContent=a?conf+"%":"—";
+  $("confidenceRing").style.setProperty("--confidence",conf);
 
-  const confidence = analysis ? Math.round(analysis.confidence * 100) : 50;
-  $("confidenceValue").textContent = confidence + "%";
-  $("confidenceRing").style.setProperty("--confidence", confidence);
-  $("probUp").textContent = analysis ? Math.round(analysis.probabilities.up * 100) + "%" : "—";
-  $("probFlat").textContent = analysis ? Math.round(analysis.probabilities.flat * 100) + "%" : "—";
-  $("probDown").textContent = analysis ? Math.round(analysis.probabilities.down * 100) + "%" : "—";
-  $("probUpBar").style.width = analysis ? Math.round(analysis.probabilities.up * 100) + "%" : "0%";
-  $("probFlatBar").style.width = analysis ? Math.round(analysis.probabilities.flat * 100) + "%" : "0%";
-  $("probDownBar").style.width = analysis ? Math.round(analysis.probabilities.down * 100) + "%" : "0%";
-  $("beginnerExplanation").textContent = beginnerExplanation(analysis);
+  const vals=a
+    ? [Math.round(a.probabilities.up*100),Math.round(a.probabilities.flat*100),Math.round(a.probabilities.down*100)]
+    : [0,0,0];
+  $("probUp").textContent=a?vals[0]+"%":"—";
+  $("probFlat").textContent=a?vals[1]+"%":"—";
+  $("probDown").textContent=a?vals[2]+"%":"—";
+  $("probUpBar").style.width=vals[0]+"%";
+  $("probFlatBar").style.width=vals[1]+"%";
+  $("probDownBar").style.width=vals[2]+"%";
 
-  if (analysis) {
-    $("chartCalloutTitle").textContent = copy.title;
-    $("chartCalloutBody").textContent = analysis.confidence >= 0.70
-      ? `${Math.round(analysis.confidence * 100)}% model confidence. Forecast is being tracked and scored.`
-      : "Not enough agreement yet. Watching instead of forcing a trade.";
+  $("beginnerExplanation").textContent=beginnerExplanation(a);
+  $("chartCalloutTitle").textContent=copy.title;
+  $("chartCalloutBody").textContent=a
+    ? `${sourceName()} data · model v${status?.model?.version||"—"} · prediction stored before result.`
+    : (!status?.configured?"No real provider is connected. No forecast is being generated.":"Collecting enough real bars to begin.");
+
+  const reasons=$("reasonList");
+  reasons.innerHTML="";
+  if (!a) {
+    reasons.innerHTML=`<div class="reason-item"><span class="reason-dot mixed"></span><div class="reason-copy"><strong>No synthetic fallback</strong><span>${status?.configured?"Waiting for sufficient real market history.":"Add real provider credentials to begin ingestion."}</span></div><span class="reason-value">—</span></div>`;
+    return;
   }
-
-  const reasons = $("reasonList");
-  reasons.innerHTML = "";
-  if (!analysis || !features) return;
-
-  for (const c of analysis.contributions.slice(0, 5)) {
-    const label = FEATURE_LABELS[c.key];
-    if (!label) continue;
-    const positiveForPrice = c.contribution > 0;
-    const featurePositive = c.value >= 0;
-    const item = document.createElement("div");
-    item.className = "reason-item";
-
-    const status = Math.abs(c.contribution) < 0.08 ? "mixed" : positiveForPrice ? "good" : "bad";
-    const explain = simpleReasons
-      ? (featurePositive ? label.simplePositive : label.simpleNegative)
-      : `Current reading ${c.value >= 0 ? "+" : ""}${c.value.toFixed(2)} × learned weight ${c.weight.toFixed(2)}.`;
-
-    item.innerHTML = `
-      <span class="reason-dot ${status}"></span>
-      <div class="reason-copy"><strong>${label.title}</strong><span>${explain}</span></div>
-      <span class="reason-value">${c.contribution >= 0 ? "+" : ""}${c.contribution.toFixed(2)}</span>
-    `;
+  for (const c of a.contributions.slice(0,5)) {
+    const label=FEATURE_LABELS[c.key] || {title:c.key,positive:"Positive contribution.",negative:"Negative contribution."};
+    const statusClass=Math.abs(c.contribution)<.08?"mixed":c.contribution>0?"good":"bad";
+    const explanation=simpleReasons
+      ? (c.value>=0?label.positive:label.negative)
+      : `Real feature ${c.value>=0?"+":""}${Number(c.value).toFixed(2)} × learned weight ${Number(c.weight).toFixed(2)}.`;
+    const item=document.createElement("div");
+    item.className="reason-item";
+    item.innerHTML=`<span class="reason-dot ${statusClass}"></span><div class="reason-copy"><strong>${label.title}</strong><span>${explanation}</span></div><span class="reason-value">${c.contribution>=0?"+":""}${Number(c.contribution).toFixed(2)}</span>`;
     reasons.appendChild(item);
   }
 }
 
-function renderChart(analysis) {
-  const candles = sim.getCandles(activeSymbol, timeframe, 150);
-  const recent = learner.recentPredictions(80).filter(x => x.symbol === activeSymbol);
-  chart.showForecast = forecastOn;
-  chart.showBeginner = beginnerOn;
-  chart.setData({ candles, analysis, predictions: recent, timeframe });
+function renderChart() {
+  const rows=aggregateBars(snapshot.bars||[],timeframe);
+  const a=normalizeAnalysis(snapshot.analysis);
+  chart.showForecast=forecastOn && Boolean(a);
+  chart.showBeginner=beginnerOn;
+  chart.setData({candles:rows,analysis:a,predictions:chartPredictions(snapshot.predictions),timeframe});
 
-  const quote = sim.getQuote(activeSymbol);
-  const meta = sim.getMeta(activeSymbol);
-  const raw = sim.getCandles(activeSymbol, "1m", 30);
-  const vwapRows = raw.slice(-20);
-  const vwap = vwapRows.reduce((a, x) => a + ((x.high + x.low + x.close) / 3) * x.volume, 0) /
-    Math.max(1, vwapRows.reduce((a, x) => a + x.volume, 0));
+  const trade=snapshot.trades?.[0]||null;
+  const bar=snapshot.bars?.at(-1)||null;
+  const price=trade?Number(trade.price):(bar?Number(bar.close):null);
+  $("symbolName").textContent=activeSymbol;
+  $("symbolDescription").textContent=`${NAMES[activeSymbol]||activeSymbol} · ${sourceName()} · REAL`;
+  $("lastPrice").textContent=price==null?"—":price.toFixed(2);
+  $("priceChange").textContent=trade?`last trade · ${safeTime(trade.ts)}`:(bar?`1m close · ${safeTime(bar.ts)}`:"no real price");
+  $("priceChange").className="price-change neutral";
 
-  $("symbolName").textContent = activeSymbol;
-  $("symbolDescription").textContent = meta.name + " · demo";
-  $("lastPrice").textContent = quote.price.toFixed(2);
-  $("priceChange").textContent = (quote.change >= 0 ? "+" : "") + quote.change.toFixed(2) + " (" + pct(quote.changePct) + ")";
-  $("priceChange").className = "price-change " + valueClass(quote.change);
-  $("vwapValue").textContent = vwap.toFixed(2);
-  $("volumeValue").textContent = num(quote.volume);
-  $("spreadValue").textContent = "$" + quote.spread.toFixed(3);
+  $("vwapValue").textContent=bar?.vwap==null?"—":Number(bar.vwap).toFixed(2);
+  $("volumeValue").textContent=bar?num(bar.volume):"—";
+  const q=snapshot.quote;
+  const spread=q && Number.isFinite(Number(q.askPrice)) && Number.isFinite(Number(q.bidPrice))
+    ? Number(q.askPrice)-Number(q.bidPrice):null;
+  $("spreadValue").textContent=spread==null?"—":"$"+spread.toFixed(3);
 }
 
 function renderTapeAndBook() {
-  const tape = sim.getTape(activeSymbol, 28);
-  $("tapeBody").innerHTML = tape.map(t => `
+  const trades=snapshot.trades||[];
+  $("tapeBody").innerHTML=trades.length?trades.slice(0,40).map(t=>`
     <tr>
-      <td>${t.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</td>
-      <td class="${t.side === "BUY" ? "positive" : "negative"}">${t.price.toFixed(2)}</td>
+      <td>${safeTime(t.ts)}</td>
+      <td>${Number(t.price).toFixed(2)}</td>
       <td>${num(t.size)}</td>
-      <td class="${t.side === "BUY" ? "positive" : "negative"}">${t.side}</td>
-    </tr>`).join("");
+      <td>${t.exchange||"—"}</td>
+    </tr>`).join(""):`<tr><td colspan="4">No real trades received for this symbol yet.</td></tr>`;
 
-  const book = sim.getBook(activeSymbol, 10);
-  $("bidBook").innerHTML = book.bids.map(x => `
-    <div class="book-row"><span class="positive">${x.price.toFixed(2)}</span><span>${num(x.size)}</span><span>${x.orders} orders</span></div>`).join("");
-  $("askBook").innerHTML = book.asks.map(x => `
-    <div class="book-row"><span class="negative">${x.price.toFixed(2)}</span><span>${num(x.size)}</span><span>${x.orders} orders</span></div>`).join("");
+  const q=snapshot.quote;
+  if (!q) {
+    $("bidBook").innerHTML='<div class="book-row"><span>—</span><span>—</span><span>No real quote</span></div>';
+    $("askBook").innerHTML='<div class="book-row"><span>—</span><span>—</span><span>No real quote</span></div>';
+  } else {
+    $("bidBook").innerHTML=`<div class="book-row"><span class="positive">${Number(q.bidPrice).toFixed(2)}</span><span>${num(q.bidSize)}</span><span>${q.bidExchange||"—"}</span></div>`;
+    $("askBook").innerHTML=`<div class="book-row"><span class="negative">${Number(q.askPrice).toFixed(2)}</span><span>${num(q.askSize)}</span><span>${q.askExchange||"—"}</span></div>`;
+  }
 }
 
 function renderPaper() {
-  const p = paper.snapshot();
-  $("paperEquity").textContent = money(p.equity);
-  $("paperCash").textContent = money(p.cash);
-  $("openPnl").textContent = money(p.openPnl);
-  $("realizedPnl").textContent = money(p.realizedPnl);
-  $("paperTrades").textContent = num(p.tradeCount);
-  $("openPnl").className = valueClass(p.openPnl);
-  $("realizedPnl").className = valueClass(p.realizedPnl);
-
-  if (!p.positions.length) {
-    $("positionsTable").innerHTML = "No open paper positions. Use Paper buy / Paper sell, or enable AI autopilot.";
-  } else {
-    $("positionsTable").innerHTML = p.positions.map(pos => `
-      <div class="position-row">
-        <strong>${pos.symbol}</strong>
-        <span>${pos.qty > 0 ? "LONG" : "SHORT"}</span>
-        <span>${Math.abs(pos.qty)} shares</span>
-        <span>Avg ${pos.avgPrice.toFixed(2)}</span>
-        <span>Mark ${pos.mark.toFixed(2)}</span>
-        <strong class="${valueClass(pos.pnl)}">${money(pos.pnl)}</strong>
-      </div>`).join("");
-  }
+  const realPrice=currentRealPrice();
+  if (realPrice!=null) paper.mark(activeSymbol,realPrice);
+  const p=paper.snapshot();
+  $("paperEquity").textContent=money(p.equity);
+  $("paperCash").textContent=money(p.cash);
+  $("openPnl").textContent=money(p.openPnl);
+  $("realizedPnl").textContent=money(p.realizedPnl);
+  $("paperTrades").textContent=num(p.tradeCount);
+  $("openPnl").className=p.openPnl>0?"positive":p.openPnl<0?"negative":"neutral";
+  $("realizedPnl").className=p.realizedPnl>0?"positive":p.realizedPnl<0?"negative":"neutral";
+  $("positionsTable").innerHTML=p.positions.length?p.positions.map(pos=>`
+    <div class="position-row">
+      <strong>${pos.symbol}</strong><span>${pos.qty>0?"LONG":"SHORT"}</span>
+      <span>${Math.abs(pos.qty)} shares</span><span>Avg ${pos.avgPrice.toFixed(2)}</span>
+      <span>Mark ${pos.mark.toFixed(2)}</span>
+      <strong class="${pos.pnl>0?"positive":pos.pnl<0?"negative":"neutral"}">${money(pos.pnl)}</strong>
+    </div>`).join(""):"No open paper positions. Paper fills are simulated; market prices are real provider data.";
 }
 
 function renderLearning() {
-  const s = learner.statsSnapshot();
-  $("accuracyValue").textContent = s.accuracy == null ? "Collecting…" : pct(s.accuracy);
-  $("predictionCount").textContent = num(s.predictions);
-  $("scoredCount").textContent = num(s.scored);
-  $("highConfidenceAccuracy").textContent = s.highConfidenceAccuracy == null ? "Not enough yet" : pct(s.highConfidenceAccuracy);
-  $("learningUpdates").textContent = num(s.learningUpdates);
+  const s=predictionData.stats;
+  const scored=Number(s?.scored||0), correct=Number(s?.correct||0);
+  const hiScored=Number(s?.high_conf_scored||0), hiCorrect=Number(s?.high_conf_correct||0);
+  $("accuracyValue").textContent=scored?pct(correct/scored):"Collecting…";
+  $("predictionCount").textContent=num(s?.predictions||0);
+  $("scoredCount").textContent=num(scored);
+  $("highConfidenceAccuracy").textContent=hiScored?pct(hiCorrect/hiScored):"Not enough yet";
+  $("learningUpdates").textContent=num(predictionData.model?.stats?.learningUpdates||0);
 
-  const rows = learner.recentPredictions(80);
-  $("predictionBody").innerHTML = rows.map(p => `
+  const rows=predictionData.rows||[];
+  $("predictionBody").innerHTML=rows.length?rows.map(p=>`
     <tr>
-      <td>${new Date(p.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</td>
+      <td>${safeTime(p.created_at)}</td>
       <td><strong>${p.symbol}</strong></td>
-      <td class="${p.direction === "UP" ? "positive" : "negative"}">${p.direction}</td>
-      <td>${Math.round(p.confidence * 100)}%</td>
-      <td class="${p.actual == null ? "neutral" : p.correct ? "positive" : "negative"}">${p.actual == null ? "PENDING" : p.correct ? "✓ " + p.actual : "✕ " + p.actual}</td>
-    </tr>`).join("");
+      <td class="${p.direction==="UP"?"positive":p.direction==="DOWN"?"negative":"neutral"}">${p.direction}</td>
+      <td>${Math.round(Number(p.confidence)*100)}%</td>
+      <td class="${p.status==="PENDING"?"neutral":p.correct?"positive":"negative"}">${p.status==="PENDING"?"PENDING":p.correct?"✓ "+p.actual_direction:"✕ "+p.actual_direction}</td>
+    </tr>`).join(""):`<tr><td colspan="5">No real-data predictions have been recorded yet.</td></tr>`;
 }
 
-function maybeAutopilot(analysis, quote) {
-  if (!autopilot || !analysis || !quote) return;
-  const now = Date.now();
-  if (now - lastAutoTradeAt < 6500) return;
-
-  const pos = paper.positions[activeSymbol];
-  const strong = analysis.confidence >= 0.80;
-  if (!pos && strong) {
-    const qty = paper.suggestedQty(quote.price, 0.009);
-    const side = analysis.direction === "UP" ? "BUY" : "SELL";
-    const trade = paper.trade(activeSymbol, side, qty, quote.price, "AI PAPER");
-    if (trade) {
-      lastAutoTradeAt = now;
-      toast(`AI paper trade: ${side} ${qty} ${activeSymbol} @ ${trade.fill.toFixed(2)}`);
-    }
-    return;
-  }
-
-  if (pos) {
-    const mark = quote.price;
-    const pnlPct = pos.qty > 0 ? (mark - pos.avgPrice) / pos.avgPrice : (pos.avgPrice - mark) / pos.avgPrice;
-    const opposite = (pos.qty > 0 && analysis.direction === "DOWN") || (pos.qty < 0 && analysis.direction === "UP");
-    if ((opposite && analysis.confidence >= 0.71) || pnlPct >= 0.006 || pnlPct <= -0.0045) {
-      const trade = paper.flatten(activeSymbol, quote.price, "AI PAPER");
-      if (trade) {
-        lastAutoTradeAt = now;
-        toast(`AI flattened paper ${activeSymbol} @ ${trade.fill.toFixed(2)}`);
-      }
-    }
-  }
-}
-
-function trainAndAnalyze(snapshot) {
-  let active = null;
-
-  for (const symbol of Object.keys(SYMBOLS)) {
-    const q = snapshot.quotes[symbol];
-    const features = sim.getFeatures(symbol);
-    paper.mark(symbol, q.price);
-    if (!features) continue;
-
-    const result = learner.observe({
-      symbol,
-      features,
-      price: q.price,
-      time: snapshot.at
-    });
-
-    if (symbol === activeSymbol) active = { ...result, features };
-  }
-
-  if (!active) {
-    const features = sim.getFeatures(activeSymbol);
-    active = { analysis: learner.analyze(features), features, locked: null, scored: [] };
-  }
-  return active;
-}
-
-function renderAll(snapshot, train = false) {
-  renderWatchlist(snapshot);
-  renderPulse(snapshot.pulse);
-
-  const features = sim.getFeatures(activeSymbol);
-  const analysis = train ? trainAndAnalyze(snapshot).analysis : learner.analyze(features);
-  const activeFeatures = sim.getFeatures(activeSymbol);
-
-  renderAI(analysis, activeFeatures);
-  renderChart(analysis);
+function renderAll() {
+  renderStatus();
+  renderWatchlist();
+  renderAI();
+  renderChart();
   renderTapeAndBook();
   renderPaper();
   renderLearning();
+}
 
-  if (train) maybeAutopilot(analysis, snapshot.quotes[activeSymbol]);
+async function refreshAll({quiet=false}={}) {
+  try {
+    const [st,wl,snap,preds]=await Promise.all([
+      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions()
+    ]);
+    status=st; watchlist=wl; snapshot=snap; predictionData=preds;
+    monitoredSymbols=st.symbols||monitoredSymbols;
+    renderAll();
+    if (!quiet) toast(st.configured?`Connected: ${sourceName()}`:"Backend online; real market provider still needs credentials.");
+  } catch (err) {
+    if (!quiet) toast("Real-data backend error: "+String(err.message||err));
+    $("feedStatus").textContent="BACKEND UNAVAILABLE";
+  }
+}
+
+async function selectSymbol(symbol) {
+  if (!monitoredSymbols.includes(symbol)) return;
+  activeSymbol=symbol;
+  $("symbolInput").value=symbol;
+  try {
+    snapshot=await client.snapshot(symbol);
+    renderAll();
+  } catch (err) { toast(String(err.message||err)); }
 }
 
 function loadSymbol() {
-  const requested = $("symbolInput").value.trim().toUpperCase();
-  if (!SYMBOLS[requested]) {
-    toast("This demo build currently includes SPY, QQQ, NVDA, AAPL, AMD and TSLA.");
-    $("symbolInput").value = activeSymbol;
+  const symbol=$("symbolInput").value.trim().toUpperCase();
+  if (!monitoredSymbols.includes(symbol)) {
+    toast("This backend is currently monitoring: "+monitoredSymbols.join(", "));
+    $("symbolInput").value=activeSymbol;
     return;
   }
-  activeSymbol = requested;
-  renderAll(sim.snapshot());
+  selectSymbol(symbol);
 }
 
-$("loadSymbolBtn").addEventListener("click", loadSymbol);
-$("symbolInput").addEventListener("keydown", e => { if (e.key === "Enter") loadSymbol(); });
-
-$("timeframes").addEventListener("click", e => {
-  const btn = e.target.closest("button[data-tf]");
-  if (!btn) return;
-  timeframe = btn.dataset.tf;
-  document.querySelectorAll("#timeframes button").forEach(x => x.classList.toggle("active", x === btn));
-  renderAll(sim.snapshot());
-});
-
-$("pauseBtn").addEventListener("click", () => {
-  const running = sim.toggle();
-  $("pauseBtn").textContent = running ? "Ⅱ" : "▶";
-  $("feedStatus").textContent = running ? "Demo feed running" : "Demo feed paused";
-  toast(running ? "Demo market resumed." : "Demo market paused.");
-});
-
-$("predictionToggle").addEventListener("click", e => {
-  forecastOn = !forecastOn;
-  e.currentTarget.classList.toggle("active", forecastOn);
-  e.currentTarget.innerHTML = `<span class="toolbar-dot ai"></span>${forecastOn ? "AI forecast on" : "AI forecast off"}`;
-  renderAll(sim.snapshot());
-});
-
-$("beginnerToggle").addEventListener("click", e => {
-  beginnerOn = !beginnerOn;
-  e.currentTarget.classList.toggle("active", beginnerOn);
-  e.currentTarget.innerHTML = `<span class="toolbar-dot beginner"></span>${beginnerOn ? "Beginner labels on" : "Beginner labels off"}`;
-  $("aiChartCallout").style.display = beginnerOn ? "" : "none";
-});
-
-$("simplifyBtn").addEventListener("click", () => {
-  simpleReasons = !simpleReasons;
-  $("simplifyBtn").textContent = simpleReasons ? "Show model math" : "Explain simply";
-  renderAI(latestAnalysis, sim.getFeatures(activeSymbol));
-});
-
-$("autopilotToggle").addEventListener("change", e => {
-  autopilot = e.target.checked;
-  toast(autopilot ? "AI autopilot enabled for PAPER MONEY only." : "AI paper autopilot disabled.");
-});
-
-$("paperBuyBtn").addEventListener("click", () => {
-  const q = sim.getQuote(activeSymbol);
-  const qty = paper.suggestedQty(q.price, 0.008);
-  const trade = paper.trade(activeSymbol, "BUY", qty, q.price, "MANUAL PAPER");
-  if (trade) toast(`Paper bought ${qty} ${activeSymbol} @ ${trade.fill.toFixed(2)}`);
-  renderPaper();
-});
-
-$("paperSellBtn").addEventListener("click", () => {
-  const q = sim.getQuote(activeSymbol);
-  const qty = paper.suggestedQty(q.price, 0.008);
-  const trade = paper.trade(activeSymbol, "SELL", qty, q.price, "MANUAL PAPER");
-  if (trade) toast(`Paper sold ${qty} ${activeSymbol} @ ${trade.fill.toFixed(2)}`);
-  renderPaper();
-});
-
-$("flattenBtn").addEventListener("click", () => {
-  const q = sim.getQuote(activeSymbol);
-  const trade = paper.flatten(activeSymbol, q.price, "MANUAL PAPER");
-  toast(trade ? `Paper position flattened @ ${trade.fill.toFixed(2)}` : "No open paper position in " + activeSymbol + ".");
-  renderPaper();
-});
-
-$("lowerTabs").addEventListener("click", e => {
-  const btn = e.target.closest("button[data-tab]");
-  if (!btn) return;
-  document.querySelectorAll("#lowerTabs button").forEach(x => x.classList.toggle("active", x === btn));
-  document.querySelectorAll(".tab-pane").forEach(x => x.classList.remove("active"));
-  $("tab-" + btn.dataset.tab).classList.add("active");
-});
-
-
-function setTour(open, markSeen = false) {
-  const panel = $("tourPanel");
-  if (!panel) return;
-  panel.classList.toggle("hidden", !open);
-  document.body.style.overflow = open ? "hidden" : "";
-  if (markSeen) {
-    try { localStorage.setItem("trading-eye-tour-seen", "1"); } catch (_) {}
+function maybeAutopilot() {
+  if (!autopilot) return;
+  const a=normalizeAnalysis(snapshot.analysis);
+  const price=currentRealPrice();
+  if (!a || price==null || !providerConnected()) return;
+  if (Date.now()-lastAutoTradeAt<60000) return;
+  const pos=paper.positions[activeSymbol];
+  if (!pos && a.confidence>=.60 && ["UP","DOWN"].includes(a.direction)) {
+    const qty=paper.suggestedQty(price,.009);
+    paper.trade(activeSymbol,a.direction==="UP"?"BUY":"SELL",qty,price,"AI PAPER · REAL DATA");
+    lastAutoTradeAt=Date.now();
+    toast(`AI paper trade using real ${sourceName()} market price.`);
   }
 }
 
-$("helpBtn").addEventListener("click", () => setTour(true));
-$("tourCloseBtn").addEventListener("click", () => setTour(false, true));
-$("tourDoneBtn").addEventListener("click", () => setTour(false, true));
-document.querySelectorAll("[data-tour-close]").forEach(el => el.addEventListener("click", () => setTour(false, true)));
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape" && !$("tourPanel").classList.contains("hidden")) setTour(false, true);
+function applyRealtime(event) {
+  if (event.type==="status") {
+    status={...(status||{}),...event.data};
+    renderStatus(); renderAI();
+    return;
+  }
+  const d=event.data;
+  if (!d || d.symbol!==activeSymbol) {
+    if (event.type==="bar") client.watchlist().then(w=>{watchlist=w;renderWatchlist();}).catch(()=>{});
+    return;
+  }
+  if (event.type==="quote") snapshot.quote=d;
+  if (event.type==="trade") {
+    snapshot.trades=[d,...(snapshot.trades||[]).filter(x=>x.id!==d.id)].slice(0,150);
+  }
+  if (event.type==="bar") {
+    const rows=(snapshot.bars||[]).filter(x=>+new Date(x.ts)!==+new Date(d.ts));
+    rows.push(d); rows.sort((a,b)=>+new Date(a.ts)-+new Date(b.ts));
+    snapshot.bars=rows.slice(-1200);
+    client.snapshot(activeSymbol).then(s=>{snapshot=s;renderAll();maybeAutopilot();}).catch(()=>{});
+  }
+  if (event.type==="prediction" || event.type==="prediction_scored") {
+    client.predictions().then(p=>{predictionData=p;renderLearning();}).catch(()=>{});
+    client.snapshot(activeSymbol).then(s=>{snapshot=s;renderAI();renderChart();}).catch(()=>{});
+  }
+  renderChart(); renderTapeAndBook(); renderPaper();
+}
+
+function setTour(open,markSeen=false) {
+  const panel=$("tourPanel");
+  if (!panel) return;
+  panel.classList.toggle("hidden",!open);
+  document.body.style.overflow=open?"hidden":"";
+  if (markSeen) try { localStorage.setItem("trading-eye-tour-seen-real","1"); } catch {}
+}
+
+$("loadSymbolBtn").addEventListener("click",loadSymbol);
+$("symbolInput").addEventListener("keydown",e=>{if(e.key==="Enter")loadSymbol();});
+$("timeframes").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-tf]");
+  if (!btn) return;
+  timeframe=btn.dataset.tf;
+  document.querySelectorAll("#timeframes button").forEach(x=>x.classList.toggle("active",x===btn));
+  renderChart();
 });
+$("pauseBtn").addEventListener("click",()=>refreshAll());
+$("predictionToggle").addEventListener("click",e=>{
+  forecastOn=!forecastOn;
+  e.currentTarget.classList.toggle("active",forecastOn);
+  e.currentTarget.innerHTML=`<span class="toolbar-dot ai"></span>${forecastOn?"AI forecast on":"AI forecast off"}`;
+  renderChart();
+});
+$("beginnerToggle").addEventListener("click",e=>{
+  beginnerOn=!beginnerOn;
+  e.currentTarget.classList.toggle("active",beginnerOn);
+  e.currentTarget.innerHTML=`<span class="toolbar-dot beginner"></span>${beginnerOn?"Beginner labels on":"Beginner labels off"}`;
+  $("aiChartCallout").style.display=beginnerOn?"":"none";
+});
+$("simplifyBtn").addEventListener("click",()=>{
+  simpleReasons=!simpleReasons;
+  $("simplifyBtn").textContent=simpleReasons?"Show model math":"Explain simply";
+  renderAI();
+});
+$("autopilotToggle").addEventListener("change",e=>{
+  autopilot=e.target.checked;
+  toast(autopilot?"AI autopilot enabled for PAPER MONEY using real market data only.":"AI paper autopilot disabled.");
+});
+$("paperBuyBtn").addEventListener("click",()=>{
+  const price=currentRealPrice();
+  if (price==null) return toast("No real market price is available.");
+  const qty=paper.suggestedQty(price,.008);
+  const t=paper.trade(activeSymbol,"BUY",qty,price,"MANUAL PAPER · REAL DATA");
+  if (t) toast(`Paper buy ${qty} ${activeSymbol}. Fill is simulated; reference market price is real.`);
+  renderPaper();
+});
+$("paperSellBtn").addEventListener("click",()=>{
+  const price=currentRealPrice();
+  if (price==null) return toast("No real market price is available.");
+  const qty=paper.suggestedQty(price,.008);
+  const t=paper.trade(activeSymbol,"SELL",qty,price,"MANUAL PAPER · REAL DATA");
+  if (t) toast(`Paper sell ${qty} ${activeSymbol}. Fill is simulated; reference market price is real.`);
+  renderPaper();
+});
+$("flattenBtn").addEventListener("click",()=>{
+  const price=currentRealPrice();
+  if (price==null) return toast("No real market price is available.");
+  const t=paper.flatten(activeSymbol,price,"MANUAL PAPER · REAL DATA");
+  toast(t?"Paper position flattened. Fill is simulated.":"No open paper position in "+activeSymbol+".");
+  renderPaper();
+});
+$("lowerTabs").addEventListener("click",e=>{
+  const btn=e.target.closest("button[data-tab]");
+  if (!btn) return;
+  document.querySelectorAll("#lowerTabs button").forEach(x=>x.classList.toggle("active",x===btn));
+  document.querySelectorAll(".tab-pane").forEach(x=>x.classList.remove("active"));
+  $("tab-"+btn.dataset.tab).classList.add("active");
+});
+$("helpBtn").addEventListener("click",()=>setTour(true));
+$("tourCloseBtn").addEventListener("click",()=>setTour(false,true));
+$("tourDoneBtn").addEventListener("click",()=>setTour(false,true));
+document.querySelectorAll("[data-tour-close]").forEach(el=>el.addEventListener("click",()=>setTour(false,true)));
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("tourPanel").classList.contains("hidden"))setTour(false,true);});
+
+client.on(applyRealtime);
+client.connect();
+await refreshAll({quiet:true});
+clearInterval(refreshTimer);
+refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
 
 try {
-  if (!localStorage.getItem("trading-eye-tour-seen")) {
-    setTimeout(() => setTour(true), 650);
-  }
-} catch (_) {}
+  if (!localStorage.getItem("trading-eye-tour-seen-real")) setTimeout(()=>setTour(true),700);
+} catch {}
 
-sim.subscribe(snapshot => renderAll(snapshot, true));
-renderAll(sim.snapshot(), false);
-sim.start();
-
-window.TradingEye = Object.freeze({
-  mode: "DEMO_PAPER",
-  getLearningStats: () => learner.statsSnapshot(),
-  getPaperAccount: () => paper.snapshot(),
-  getActiveSymbol: () => activeSymbol
+window.TradingEye=Object.freeze({
+  mode:"REAL_DATA_ONLY",
+  status:()=>status,
+  activeSymbol:()=>activeSymbol,
+  paperAccount:()=>paper.snapshot()
 });
