@@ -98,6 +98,18 @@ export class Database {
       CREATE INDEX IF NOT EXISTS universe_scan_results_rank
         ON universe_scan_results(scan_date,interesting_score DESC);
 
+      CREATE TABLE IF NOT EXISTS market_regime_daily (
+        scan_date DATE PRIMARY KEY,
+        regime TEXT NOT NULL,
+        confidence DOUBLE PRECISION NOT NULL,
+        metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS market_regime_daily_latest
+        ON market_regime_daily(scan_date DESC);
+
       CREATE TABLE IF NOT EXISTS universe_intraday_profiles (
         scan_date DATE NOT NULL,
         symbol TEXT NOT NULL,
@@ -535,6 +547,69 @@ export class Database {
     );
   }
 
+  async computeUniverseRegimeMetrics(scanDate) {
+    if (!this.ready) return null;
+    const q=await this.pool.query(`
+      SELECT
+        COUNT(*)::int AS assets,
+        AVG(r.return_1d) AS avg_return_1d,
+        PERCENTILE_CONT(.5) WITHIN GROUP (ORDER BY r.return_1d) AS median_return_1d,
+        STDDEV_SAMP(r.return_1d) AS dispersion_1d,
+        AVG(ABS(r.return_1d)) AS avg_abs_return_1d,
+        AVG(CASE WHEN r.return_1d > 0 THEN 1.0 ELSE 0.0 END) AS breadth_up,
+        AVG(CASE WHEN r.return_1d >= .02 THEN 1.0 ELSE 0.0 END) AS strong_up,
+        AVG(CASE WHEN r.return_1d <= -.02 THEN 1.0 ELSE 0.0 END) AS strong_down,
+        AVG(CASE WHEN r.return_20d > 0 THEN 1.0 ELSE 0.0 END) AS trend_breadth_up,
+        PERCENTILE_CONT(.5) WITHIN GROUP (ORDER BY r.relative_volume) AS median_relative_volume,
+        PERCENTILE_CONT(.5) WITHIN GROUP (ORDER BY r.realized_vol_20) AS median_realized_vol_20
+      FROM universe_scan_results r
+      JOIN asset_universe a ON a.symbol=r.symbol
+      WHERE r.scan_date=$1
+        AND a.status='active'
+        AND a.scanner_eligible=true
+        AND a.data_supported=true
+        AND r.return_1d IS NOT NULL
+    `,[scanDate]);
+    const r=q.rows[0];
+    if (!r || !Number(r.assets)) return null;
+    return {
+      assets:Number(r.assets)||0,
+      avgReturn1d:Number(r.avg_return_1d)||0,
+      medianReturn1d:Number(r.median_return_1d)||0,
+      dispersion1d:Number(r.dispersion_1d)||0,
+      avgAbsReturn1d:Number(r.avg_abs_return_1d)||0,
+      breadthUp:Number(r.breadth_up)||0,
+      strongUp:Number(r.strong_up)||0,
+      strongDown:Number(r.strong_down)||0,
+      trendBreadthUp:Number(r.trend_breadth_up)||0,
+      medianRelativeVolume:Number(r.median_relative_volume)||0,
+      medianRealizedVol20:Number(r.median_realized_vol_20)||0
+    };
+  }
+
+  async saveMarketRegime(scanDate,{regime,confidence,metrics,reasons}) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO market_regime_daily(scan_date,regime,confidence,metrics,reasons,created_at,updated_at)
+      VALUES($1,$2,$3,$4::jsonb,$5::jsonb,NOW(),NOW())
+      ON CONFLICT(scan_date) DO UPDATE SET
+        regime=EXCLUDED.regime,confidence=EXCLUDED.confidence,
+        metrics=EXCLUDED.metrics,reasons=EXCLUDED.reasons,updated_at=NOW()
+    `,[scanDate,regime,confidence,JSON.stringify(metrics||{}),JSON.stringify(reasons||[])]);
+  }
+
+  async latestMarketRegime() {
+    if (!this.ready) return null;
+    const q=await this.pool.query(`
+      SELECT TO_CHAR(scan_date,'YYYY-MM-DD') AS scan_date,
+             regime,confidence,metrics,reasons,created_at,updated_at
+      FROM market_regime_daily
+      ORDER BY scan_date DESC
+      LIMIT 1
+    `);
+    return q.rows[0]||null;
+  }
+
   async topUniverseCandidates(scanDate,{limit=30}={}) {
     if (!this.ready) return [];
     const n=Math.max(1,Math.min(200,Number(limit)||30));
@@ -544,6 +619,9 @@ export class Database {
              r.interesting_score,
              COALESCE(i.deep_score,r.deep_score) AS deep_score,
              COALESCE(i.profile,r.intraday_profile) AS intraday_profile,
+             i.open30_return,i.midday_return,i.power_hour_return,i.first_hour_range,
+             i.realized_vol_5d,i.open_volume_share,i.close_volume_share,
+             i.trend_follow_rate,i.reversal_rate,
              a.name,a.exchange
       FROM universe_scan_results r
       LEFT JOIN asset_universe a ON a.symbol=r.symbol
