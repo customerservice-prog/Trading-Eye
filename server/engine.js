@@ -14,6 +14,7 @@ export class RealMarketEngine extends EventEmitter {
     this.backfillDays=backfillDays;
     this.predictEvery=predictEvery;
     this.horizonMinutes=horizonMinutes;
+    this.historyRetention=Math.min(100000,Math.max(5000,this.backfillDays*600));
     this.model=new OnlineModel(db);
     this.histories=new Map(symbols.map(s=>[s,[]]));
     this.latestQuotes=new Map();
@@ -105,7 +106,7 @@ export class RealMarketEngine extends EventEmitter {
           const existing=history.findIndex(x=>+new Date(x.ts)===+new Date(bar.ts));
           if (existing>=0) history[existing]=bar; else history.push(bar);
           history.sort((a,b)=>+new Date(a.ts)-+new Date(b.ts));
-          if (history.length>1800) history.splice(0,history.length-1800);
+          if (history.length>this.historyRetention) history.splice(0,history.length-this.historyRetention);
           this.histories.set(bar.symbol,history);
         }
         this.backfill.rows+=batch.length;
@@ -194,7 +195,7 @@ export class RealMarketEngine extends EventEmitter {
       const existing=history.findIndex(x=>+new Date(x.ts)===+bar.ts);
       if (existing>=0) history[existing]=bar; else history.push(bar);
       history.sort((a,b)=>+new Date(a.ts)-+new Date(b.ts));
-      if (history.length>1800) history.splice(0,history.length-1800);
+      if (history.length>this.historyRetention) history.splice(0,history.length-this.historyRetention);
       this.histories.set(bar.symbol,history);
       await this.#scoreDue(bar);
       await this.#maybePredict(bar);
