@@ -11,6 +11,27 @@ export class Database {
   async init() {
     if (!this.pool) return false;
     await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS asset_universe (
+        symbol TEXT PRIMARY KEY,
+        name TEXT,
+        exchange TEXT,
+        asset_class TEXT NOT NULL DEFAULT 'us_equity',
+        status TEXT NOT NULL,
+        tradable BOOLEAN NOT NULL DEFAULT false,
+        fractionable BOOLEAN NOT NULL DEFAULT false,
+        shortable BOOLEAN NOT NULL DEFAULT false,
+        easy_to_borrow BOOLEAN NOT NULL DEFAULT false,
+        marginable BOOLEAN NOT NULL DEFAULT false,
+        data_supported BOOLEAN NOT NULL DEFAULT true,
+        attributes JSONB NOT NULL DEFAULT '[]'::jsonb,
+        provider TEXT NOT NULL DEFAULT 'alpaca',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS asset_universe_status_exchange
+        ON asset_universe(status,exchange,symbol);
+      CREATE INDEX IF NOT EXISTS asset_universe_name_search
+        ON asset_universe(LOWER(name));
+
       CREATE TABLE IF NOT EXISTS raw_market_events (
         id BIGSERIAL PRIMARY KEY,
         provider TEXT NOT NULL,
@@ -128,6 +149,88 @@ export class Database {
     `);
     this.ready = true;
     return true;
+  }
+
+  async upsertAssets(assets) {
+    if (!this.ready || !assets.length) return;
+    for (let i=0;i<assets.length;i+=500) {
+      const chunk=assets.slice(i,i+500);
+      const values=[];
+      const rows=[];
+      chunk.forEach((a,j)=>{
+        const n=j*13;
+        rows.push("(" + Array.from({length:13},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        values.push(
+          a.symbol,a.name||null,a.exchange||null,a.assetClass||"us_equity",a.status||"active",
+          Boolean(a.tradable),Boolean(a.fractionable),Boolean(a.shortable),Boolean(a.easyToBorrow),
+          Boolean(a.marginable),Boolean(a.dataSupported),JSON.stringify(a.attributes||[]),"alpaca"
+        );
+      });
+      await this.pool.query(`
+        INSERT INTO asset_universe(
+          symbol,name,exchange,asset_class,status,tradable,fractionable,shortable,easy_to_borrow,
+          marginable,data_supported,attributes,provider
+        ) VALUES ${rows.join(",")}
+        ON CONFLICT(symbol) DO UPDATE SET
+          name=EXCLUDED.name,exchange=EXCLUDED.exchange,asset_class=EXCLUDED.asset_class,
+          status=EXCLUDED.status,tradable=EXCLUDED.tradable,fractionable=EXCLUDED.fractionable,
+          shortable=EXCLUDED.shortable,easy_to_borrow=EXCLUDED.easy_to_borrow,
+          marginable=EXCLUDED.marginable,data_supported=EXCLUDED.data_supported,
+          attributes=EXCLUDED.attributes,provider=EXCLUDED.provider,updated_at=NOW()
+      `,values);
+    }
+  }
+
+  async assetStats() {
+    if (!this.ready) return {active:0,dataSupported:0};
+    const q=await this.pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status='active')::int AS active,
+        COUNT(*) FILTER (WHERE status='active' AND data_supported=true)::int AS data_supported
+      FROM asset_universe
+    `);
+    const r=q.rows[0]||{};
+    return {active:Number(r.active)||0,dataSupported:Number(r.data_supported)||0};
+  }
+
+  async findAsset(symbol) {
+    if (!this.ready) return null;
+    const q=await this.pool.query(`
+      SELECT symbol,name,exchange,status,tradable,fractionable,shortable,easy_to_borrow,
+             marginable,data_supported,attributes
+      FROM asset_universe WHERE symbol=$1 LIMIT 1
+    `,[String(symbol).toUpperCase()]);
+    return q.rows[0]||null;
+  }
+
+  async searchAssets(query,{limit=25}={}) {
+    if (!this.ready) return [];
+    const q=String(query||"").trim();
+    if (!q) return [];
+    const n=Math.max(1,Math.min(100,Number(limit)||25));
+    const r=await this.pool.query(`
+      SELECT symbol,name,exchange,status,tradable,fractionable,shortable,data_supported,attributes
+      FROM asset_universe
+      WHERE status='active'
+        AND (symbol ILIKE $1 OR name ILIKE $2)
+      ORDER BY
+        CASE WHEN symbol=UPPER($3) THEN 0 WHEN symbol ILIKE $4 THEN 1 ELSE 2 END,
+        symbol
+      LIMIT ${n}
+    `,[q+"%", "%"+q+"%", q, q+"%"]);
+    return r.rows;
+  }
+
+  async listActiveAssets({limit=10000,dataSupportedOnly=true}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(20000,Number(limit)||10000));
+    const where=dataSupportedOnly?"WHERE status='active' AND data_supported=true":"WHERE status='active'";
+    const q=await this.pool.query(`
+      SELECT symbol,name,exchange,status,tradable,fractionable,shortable,data_supported,attributes
+      FROM asset_universe ${where}
+      ORDER BY symbol LIMIT ${n}
+    `);
+    return q.rows;
   }
 
   async ping() {
