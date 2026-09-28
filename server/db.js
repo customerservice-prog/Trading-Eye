@@ -1417,14 +1417,14 @@ export class Database {
     return q.rows;
   }
 
-  async demoteLegacyResearchFindings() {
+  async demoteLegacyResearchFindings(currentVersion="v3_baseline_excess") {
     if (!this.ready) return 0;
     const q=await this.pool.query(`
       UPDATE research_pattern_findings
       SET status='LEGACY_UNVALIDATED',last_seen=NOW()
-      WHERE status='PROMOTED'
-        AND COALESCE(validation_version,'legacy')='legacy'
-    `);
+      WHERE status IN ('PROMOTED','VALIDATED')
+        AND COALESCE(validation_version,'legacy') <> $1
+    `,[currentVersion]);
     return q.rowCount||0;
   }
 
