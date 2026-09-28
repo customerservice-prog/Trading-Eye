@@ -379,8 +379,19 @@ function renderPaper() {
   $("openPnl").textContent=money(p.openPnl);
   $("realizedPnl").textContent=money(p.realizedPnl);
   $("paperTrades").textContent=num(p.fillCount||0);
+  $("paperClosedOutcomes").textContent=num(p.closedOutcomes||0);
+  $("paperWinRate").textContent=p.winRate==null?"—":pct(Number(p.winRate));
+  $("paperProfitFactor").textContent=p.profitFactor==null?"—":(Number.isFinite(Number(p.profitFactor))?Number(p.profitFactor).toFixed(2):"∞");
+  $("paperMaxDrawdown").textContent=p.maxDrawdown==null?"—":pct(Number(p.maxDrawdown));
+  const avgWinner=p.avgWinner==null?null:Number(p.avgWinner);
+  const avgLoser=p.avgLoser==null?null:Number(p.avgLoser);
+  $("paperAvgWinLoss").textContent=avgWinner==null&&avgLoser==null
+    ?"—"
+    :`${avgWinner==null?"—":money(avgWinner)} / ${avgLoser==null?"—":money(avgLoser)}`;
   $("openPnl").className=Number(p.openPnl)>0?"positive":Number(p.openPnl)<0?"negative":"neutral";
   $("realizedPnl").className=Number(p.realizedPnl)>0?"positive":Number(p.realizedPnl)<0?"negative":"neutral";
+  $("paperWinRate").className=Number(p.winRate)>=.5?"positive":"neutral";
+  $("paperMaxDrawdown").className=Number(p.maxDrawdown)<-.05?"negative":"neutral";
   if ($("autopilotToggle")) $("autopilotToggle").checked=Boolean(p.autopilotEnabled);
   $("positionsTable").innerHTML=(p.positions||[]).length?p.positions.map(pos=>`
     <div class="position-row">
