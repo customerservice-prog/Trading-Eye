@@ -525,6 +525,12 @@ export class Database {
         message TEXT NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE readiness_gates ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'UNKNOWN';
+      ALTER TABLE readiness_gates ADD COLUMN IF NOT EXISTS passed BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE readiness_gates ADD COLUMN IF NOT EXISTS current_value JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE readiness_gates ADD COLUMN IF NOT EXISTS requirement JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE readiness_gates ADD COLUMN IF NOT EXISTS message TEXT NOT NULL DEFAULT '';
+      ALTER TABLE readiness_gates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
       CREATE TABLE IF NOT EXISTS readiness_snapshots (
         id BIGSERIAL PRIMARY KEY,
@@ -535,6 +541,12 @@ export class Database {
         gates JSONB NOT NULL DEFAULT '[]'::jsonb,
         notes JSONB NOT NULL DEFAULT '[]'::jsonb
       );
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'LOCKED';
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS eligible BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS score DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS gates JSONB NOT NULL DEFAULT '[]'::jsonb;
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS notes JSONB NOT NULL DEFAULT '[]'::jsonb;
       CREATE INDEX IF NOT EXISTS readiness_snapshots_recent
         ON readiness_snapshots(evaluated_at DESC);
 
@@ -552,6 +564,17 @@ export class Database {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         resolved_at TIMESTAMPTZ
       );
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS model_id TEXT;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'UNKNOWN';
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS metric TEXT NOT NULL DEFAULT 'UNKNOWN';
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS baseline DOUBLE PRECISION;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS recent DOUBLE PRECISION;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS ratio DOUBLE PRECISION;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS sample_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE drift_alerts ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
       CREATE INDEX IF NOT EXISTS drift_alerts_active
         ON drift_alerts(active,status,created_at DESC);
 
@@ -565,6 +588,13 @@ export class Database {
         details JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS stage_order INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '';
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'PROVING';
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS progress DOUBLE PRECISION NOT NULL DEFAULT 0;
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE proof_scoreboard ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
       CREATE TABLE IF NOT EXISTS service_heartbeats (
         service_key TEXT PRIMARY KEY,
