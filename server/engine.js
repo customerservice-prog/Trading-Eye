@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { OnlineModel } from "./model.js";
+import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } from "./patterns.js";
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const pct=(a,b)=>b?(a-b)/b:0;
@@ -20,6 +21,7 @@ export class RealMarketEngine extends EventEmitter {
     this.latestQuotes=new Map();
     this.latestTrades=new Map();
     this.barCounters=new Map(symbols.map(s=>[s,0]));
+    this.latestPatternInsight=new Map();
     this.rawQueue=[];
     this.providerStatus={state:"STARTING",provider:"alpaca",feed:provider.feed};
     this.lastEventAt=null;
@@ -311,15 +313,33 @@ export class RealMarketEngine extends EventEmitter {
     if (count%this.predictEvery!==0) return;
     const features=this.#features(bar.symbol);
     if (!features) return;
-    const a=this.model.analyze(features);
+
+    const base=this.model.analyze(features);
+    const fingerprint=fingerprintFromFeatures(features,bar.ts);
+    const memoryRow=await this.db.getPattern(bar.symbol,fingerprint,this.horizonMinutes);
+    const memory=patternProbabilities(memoryRow);
+    const blended=blendProbabilities(base,memory);
+
+    const patternInsight=memory?{
+      fingerprint,
+      sampleCount:memory.sampleCount,
+      upRate:memory.up,
+      flatRate:memory.flat,
+      downRate:memory.down,
+      avgReturn:memory.avgReturn,
+      patternWeight:blended.patternWeight
+    }:{fingerprint,sampleCount:0,patternWeight:0};
+    this.latestPatternInsight.set(bar.symbol,patternInsight);
+
     const createdAt=new Date(bar.ts);
     const targetAt=new Date(createdAt.getTime()+this.horizonMinutes*60*1000);
-    const id=`${bar.symbol}-${createdAt.toISOString()}-v${a.modelVersion}`;
+    const id=`${bar.symbol}-${createdAt.toISOString()}-v${base.modelVersion}`;
     const p={
       id,symbol:bar.symbol,provider:"alpaca",feed:this.provider.feed,
       createdAt,targetAt,horizonMinutes:this.horizonMinutes,referencePrice:bar.close,
-      direction:a.direction,confidence:a.confidence,pUp:a.pUp,pFlat:a.pFlat,pDown:a.pDown,
-      features,modelVersion:a.modelVersion
+      direction:blended.direction,confidence:blended.confidence,
+      pUp:blended.pUp,pFlat:blended.pFlat,pDown:blended.pDown,
+      features:{...features,pattern:patternInsight},modelVersion:base.modelVersion
     };
     await this.db.savePrediction(p);
     this.emit("market",{type:"prediction",data:p});
@@ -380,6 +400,7 @@ export class RealMarketEngine extends EventEmitter {
     const trades=(this.latestTrades.get(symbol)||[]).slice(0,100);
     const features=this.#features(symbol);
     const analysis=features?this.model.analyze(features):null;
-    return {symbol,bars:history,quote,trades,features,analysis,status:this.status()};
+    const patternInsight=this.latestPatternInsight.get(symbol)||null;
+    return {symbol,bars:history,quote,trades,features,analysis,patternInsight,status:this.status()};
   }
 }
