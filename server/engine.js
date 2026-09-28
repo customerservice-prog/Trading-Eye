@@ -487,7 +487,7 @@ export class RealMarketEngine extends EventEmitter {
     const keys=["trend","momentum","volume","volatility","orderFlow","vwap"];
     const candidates=[];
 
-    for (let i=30;i<rows.length-61;i+=2) {
+    for (let i=30;i<rows.length-61;i+=5) {
       const f=this.#historicalFeatures(rows,i);
       if (!f) continue;
 
