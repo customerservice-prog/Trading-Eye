@@ -278,7 +278,7 @@ function renderChart() {
 
   const trade=snapshot.trades?.[0]||null;
   const bar=snapshot.bars?.at(-1)||null;
-  const price=trade?Number(trade.price):(bar?Number(bar.close):null);
+  const price=currentRealPrice();
   $("symbolName").textContent=activeSymbol;
   const feed=activeFeed();
   const overnightNote=feed==="overnight"?" · indicative quotes / delayed trades":"";
