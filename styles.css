@@ -516,7 +516,7 @@ tbody tr:hover { background:#0a121c; }
 .metric span { color:var(--muted); font-size:7px; }
 .metric strong { margin-top:4px; color:var(--text-2); font-size:13px; font-variant-numeric:tabular-nums; letter-spacing:-.015em; }
 .metric.highlight strong { color:var(--cyan); }
-.metric-grid.compact { grid-template-columns:repeat(4,1fr); border:1px solid var(--line); }
+.metric-grid.compact { grid-template-columns:repeat(5,1fr); border:1px solid var(--line); }
 .metric-grid.compact .metric { min-height:64px; }
 .positions-area { padding:8px 11px; color:var(--muted); font-size:8px; }
 .position-row {
