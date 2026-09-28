@@ -54,9 +54,12 @@ function ageText(value) {
   return Math.floor(ms/3600000)+"h ago";
 }
 
+function activeFeed() {
+  return String(status?.provider?.feed || watchlist.feed || "unknown").toLowerCase();
+}
+
 function sourceName() {
-  const feed=(status?.provider?.feed || watchlist.feed || "unknown").toUpperCase();
-  return "Alpaca "+feed;
+  return "Alpaca "+activeFeed().toUpperCase();
 }
 
 function providerConnected() {
@@ -64,11 +67,17 @@ function providerConnected() {
 }
 
 function currentRealPrice() {
-  const trades=snapshot.trades||[];
-  if (trades.length && Number.isFinite(Number(trades[0].price))) return Number(trades[0].price);
+  const feed=activeFeed();
+  const q=snapshot.quote;
+  const bid=Number(q?.bidPrice), ask=Number(q?.askPrice);
+  const midpoint=Number.isFinite(bid)&&Number.isFinite(ask)&&bid>0&&ask>0?(bid+ask)/2:null;
   const b=snapshot.bars?.at(-1);
-  if (b && Number.isFinite(Number(b.close))) return Number(b.close);
-  return null;
+  const barPrice=b&&Number.isFinite(Number(b.close))?Number(b.close):null;
+  const trades=snapshot.trades||[];
+  const tradePrice=trades.length&&Number.isFinite(Number(trades[0].price))?Number(trades[0].price):null;
+
+  if (feed==="overnight") return midpoint ?? barPrice ?? tradePrice;
+  return tradePrice ?? midpoint ?? barPrice;
 }
 
 function normalizeAnalysis(a) {
@@ -172,7 +181,11 @@ function renderStatus() {
 
   $("techPulse").textContent=configured?"Alpaca":"Not connected";
   $("techPulse").className=configured?"positive":"negative";
-  $("breadthPulse").textContent=feed==="SIP"?"Consolidated U.S.":"IEX only";
+  $("breadthPulse").textContent=feed==="SIP"
+    ?"Consolidated U.S."
+    :feed==="OVERNIGHT"
+      ?"Overnight · free"
+      :"IEX only";
   $("breadthPulse").className=feed==="SIP"?"positive":"neutral";
   $("volPulse").textContent=ageText(status?.lastBarAt);
   $("volPulse").className="neutral";
@@ -266,9 +279,16 @@ function renderChart() {
   const bar=snapshot.bars?.at(-1)||null;
   const price=trade?Number(trade.price):(bar?Number(bar.close):null);
   $("symbolName").textContent=activeSymbol;
-  $("symbolDescription").textContent=`${NAMES[activeSymbol]||activeSymbol} · ${sourceName()} · REAL`;
+  const feed=activeFeed();
+  const overnightNote=feed==="overnight"?" · indicative quotes / delayed trades":"";
+  $("symbolDescription").textContent=`${NAMES[activeSymbol]||activeSymbol} · ${sourceName()} · REAL${overnightNote}`;
   $("lastPrice").textContent=price==null?"—":price.toFixed(2);
-  $("priceChange").textContent=trade?`last trade · ${safeTime(trade.ts)}`:(bar?`1m close · ${safeTime(bar.ts)}`:"no real price");
+  const q=snapshot.quote;
+  if (feed==="overnight" && q && Number.isFinite(Number(q.bidPrice)) && Number.isFinite(Number(q.askPrice))) {
+    $("priceChange").textContent=`indicative quote midpoint · ${safeTime(q.ts)}`;
+  } else {
+    $("priceChange").textContent=trade?`last trade · ${safeTime(trade.ts)}`:(bar?`1m close · ${safeTime(bar.ts)}`:"no real price");
+  }
   $("priceChange").className="price-change neutral";
 
   $("vwapValue").textContent=bar?.vwap==null?"—":Number(bar.vwap).toFixed(2);
@@ -286,7 +306,7 @@ function renderTapeAndBook() {
       <td>${safeTime(t.ts)}</td>
       <td>${Number(t.price).toFixed(2)}</td>
       <td>${num(t.size)}</td>
-      <td>${t.exchange||"—"}</td>
+      <td>${activeFeed()==="overnight"?(t.exchange||"—")+" · 15m delay":(t.exchange||"—")}</td>
     </tr>`).join(""):`<tr><td colspan="4">No real trades received for this symbol yet.</td></tr>`;
 
   const q=snapshot.quote;
