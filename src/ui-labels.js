@@ -34,4 +34,10 @@ export const FEATURE_LABELS = {
   closeLocation:{title:"Location in recent range",positive:"Price is near the upper part of its recent range.",negative:"Price is near the lower part of its recent range."},
   timeSin:{title:"Time-of-day pattern",positive:"The model sees a time-of-day condition associated with this class.",negative:"The time-of-day condition weighs against this class."},
   timeCos:{title:"Time-of-day cycle",positive:"The session timing supports this model output.",negative:"The session timing weighs against this model output."}
+,
+  spyRet5:{title:"SPY 5-minute context",positive:"The broad S&P 500 market is strengthening over five minutes.",negative:"The broad S&P 500 market is weakening over five minutes."},
+  qqqRet5:{title:"QQQ 5-minute context",positive:"Nasdaq/technology context is strengthening.",negative:"Nasdaq/technology context is weakening."},
+  breadth5:{title:"Live breadth context",positive:"More monitored U.S. names are rising than falling.",negative:"More monitored U.S. names are falling than rising."},
+  relativeSpy5:{title:"Strength vs. SPY",positive:"This stock is outperforming SPY over the same five-minute window.",negative:"This stock is underperforming SPY over the same five-minute window."},
+  relativeQqq5:{title:"Strength vs. QQQ",positive:"This stock is outperforming QQQ over the same five-minute window.",negative:"This stock is underperforming QQQ over the same five-minute window."}
 };
