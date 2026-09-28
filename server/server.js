@@ -34,6 +34,7 @@ const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
 const LONG_HISTORY_URL=String(process.env.LONG_HISTORY_URL || "https://static.stooq.com/db/h/d_us_txt.zip");
 const LONG_HISTORY_API_KEY=String(process.env.LONG_HISTORY_API_KEY || "");
 const RESEARCH_BRAIN_ROLE=String(process.env.RESEARCH_BRAIN_ROLE || "all");
+const HISTORICAL_INTEGRITY_VERIFIED=String(process.env.HISTORICAL_INTEGRITY_VERIFIED ?? "false").toLowerCase()==="true";
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
@@ -86,6 +87,7 @@ const researchBrain=new ResearchBrain({
   longHistoryStart:LONG_HISTORY_START,
   longHistoryUrl:LONG_HISTORY_URL,
   longHistoryApiKey:LONG_HISTORY_API_KEY,
+  historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED,
   role:RESEARCH_BRAIN_ROLE
 });
 await researchBrain.init();
@@ -117,7 +119,8 @@ app.get("/health",async(req,res)=>{
       longHistoryProvider:LONG_HISTORY_PROVIDER,
       longHistoryStart:LONG_HISTORY_START,
       longHistoryKeyConfigured:Boolean(LONG_HISTORY_API_KEY),
-      role:RESEARCH_BRAIN_ROLE
+      role:RESEARCH_BRAIN_ROLE,
+      historicalIntegrityVerified:HISTORICAL_INTEGRITY_VERIFIED
     },
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
