@@ -845,6 +845,23 @@ export class Database {
     return new Date(new Date(row.oldest_latest).getTime()-10*60*1000);
   }
 
+  async listSymbolsWithMinuteHistory({minBars=1500,limit=40}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(200,Number(limit)||40));
+    const min=Math.max(100,Number(minBars)||1500);
+    const q=await this.pool.query(`
+      SELECT symbol,COUNT(*)::int AS bars,MIN(ts) AS first_ts,MAX(ts) AS last_ts
+      FROM market_bars_1m
+      GROUP BY symbol
+      HAVING COUNT(*) >= $1
+      ORDER BY COUNT(*) DESC, symbol
+      LIMIT ${n}
+    `,[min]);
+    return q.rows.map(r=>({
+      symbol:r.symbol,bars:Number(r.bars)||0,firstTs:r.first_ts,lastTs:r.last_ts
+    }));
+  }
+
   async getBars(symbol,{limit=500,start=null,end=null}={}) {
     if (!this.ready) return [];
     const params=[symbol];
