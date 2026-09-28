@@ -205,20 +205,29 @@ export class AlpacaProvider {
         feed:this.historicalFeed
       });
       if (token) params.set("page_token",token);
-      const res=await fetch("https://data.alpaca.markets/v2/stocks/bars?"+params,{
-        headers:{
-          "APCA-API-KEY-ID":this.key,
-          "APCA-API-SECRET-KEY":this.secret,
-          "accept":"application/json"
+      let res=null;
+      for (let attempt=0;attempt<8;attempt++) {
+        res=await fetch("https://data.alpaca.markets/v2/stocks/bars?"+params,{
+          headers:{
+            "APCA-API-KEY-ID":this.key,
+            "APCA-API-SECRET-KEY":this.secret,
+            "accept":"application/json"
+          }
+        });
+        if (res.ok) break;
+        if (res.status===429 || res.status>=500) {
+          const retryHeader=Number(res.headers.get("retry-after"));
+          await sleep(Number.isFinite(retryHeader)&&retryHeader>0?retryHeader*1000:Math.min(10000,800*(attempt+1)));
+          continue;
         }
-      });
-      if (!res.ok) {
         const body=await res.text();
         throw new Error(`Alpaca historical HTTP ${res.status}: ${body.slice(0,300)}`);
       }
+      if (!res?.ok) throw new Error("Alpaca historical request exhausted retries");
       const data=await res.json();
       await onPage(data.bars || {});
       token=data.next_page_token || null;
+      if (token) await sleep(325);
     } while(token && !this.stopped);
   }
 
