@@ -272,6 +272,7 @@
           <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
           <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
+          <button data-tab="patterns" type="button"><span class="tab-icon">⌘</span><span>Pattern Lab</span></button>
           <button data-tab="scanner" type="button"><span class="tab-icon">⌁</span><span>Market Scanner</span></button>
           <button data-tab="study" type="button"><span class="tab-icon">◈</span><span>Deep Study</span></button>
           <button data-tab="predictions" type="button"><span class="tab-icon">✦</span><span>Predictions</span></button>
@@ -329,6 +330,52 @@
               <div class="learning-explainer">
                 <span class="learning-icon">◎</span>
                 <div><strong>No hindsight allowed.</strong><br>Historical training uses an older time-ordered segment and a separate holdout segment. Live forecasts are then stored before the outcome exists, scored later, and tracked separately.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-patterns">
+            <div class="pattern-lab-layout">
+              <div class="pattern-lab-summary">
+                <div class="pattern-lab-title">
+                  <span class="eyebrow">Historical analog search</span>
+                  <strong id="patternLabSymbol">—</strong>
+                  <span id="patternLabStatus">Waiting for symbol history</span>
+                </div>
+                <div class="pattern-horizon-grid">
+                  <div class="pattern-horizon-card">
+                    <span>15 minutes later</span>
+                    <strong id="pattern15Lead">—</strong>
+                    <small id="pattern15Stats">No analogs yet</small>
+                  </div>
+                  <div class="pattern-horizon-card">
+                    <span>30 minutes later</span>
+                    <strong id="pattern30Lead">—</strong>
+                    <small id="pattern30Stats">No analogs yet</small>
+                  </div>
+                  <div class="pattern-horizon-card">
+                    <span>60 minutes later</span>
+                    <strong id="pattern60Lead">—</strong>
+                    <small id="pattern60Stats">No analogs yet</small>
+                  </div>
+                </div>
+              </div>
+              <div class="pattern-table-wrap">
+                <div class="pattern-table-head">
+                  <div>
+                    <span class="eyebrow">Real historical examples</span>
+                    <strong id="patternMatchSummary">—</strong>
+                  </div>
+                  <span id="patternFingerprint" class="pattern-fingerprint">—</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Date / time</th><th>Similarity</th><th>Entry</th><th>+15m</th><th>+30m</th><th>+60m</th><th>15m MFE</th><th>15m MAE</th></tr>
+                    </thead>
+                    <tbody id="patternAnalogBody"></tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
