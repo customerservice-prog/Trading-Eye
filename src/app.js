@@ -88,6 +88,9 @@ function normalizeAnalysis(a) {
   return {
     direction:a.direction,
     confidence:Number(a.confidence),
+    edge:Number(a.edge)||0,
+    noTrade:Boolean(a.noTrade),
+    family:a.family||null,
     probabilities:{up:Number(a.pUp),flat:Number(a.pFlat),down:Number(a.pDown)},
     contributions:Array.isArray(a.contributions)?a.contributions:[]
   };
@@ -141,6 +144,10 @@ function chartPredictions(rows) {
 
 function directionCopy(a) {
   if (!a) return {title:"Waiting for real data",summary:"No prediction is shown until enough real market bars have been received."};
+  if (a.noTrade) return {
+    title:"NO TRADE — edge too weak",
+    summary:"The production model does not have enough separation between outcomes to justify a paper entry. Trading Eye will keep watching instead of forcing a trade."
+  };
   const gap=Math.abs(a.probabilities.up-a.probabilities.down);
   if (a.confidence<.46 || gap<.10) return {
     title:"Wait — unclear",
@@ -404,24 +411,25 @@ function renderPaper() {
 
 function renderLearning() {
   const s=predictionData.stats;
-  const scored=Number(s?.scored||0), correct=Number(s?.correct||0);
-  const hiScored=Number(s?.high_conf_scored||0), hiCorrect=Number(s?.high_conf_correct||0);
-  $("accuracyValue").textContent=scored?pct(correct/scored):"Collecting…";
-  $("predictionCount").textContent=num(s?.predictions||0);
-  $("scoredCount").textContent=num(scored);
-  $("highConfidenceAccuracy").textContent=hiScored?pct(hiCorrect/hiScored):"Not enough yet";
-
   const production=modelLabData?.production||predictionData.modelLab?.production||null;
+  const live=production?.liveMetrics||{};
+  $("accuracyValue").textContent=Number(live.samples)>0?pct(Number(live.accuracy)):"Waiting live proof";
+  $("predictionCount").textContent=num(s?.predictions||0);
+  $("scoredCount").textContent=num(live.samples||0);
+  $("highConfidenceAccuracy").textContent=Number(live.samples)>0?Number(live.ece||0).toFixed(4):"—";
+
   const testAcc=production?.testMetrics?.accuracy;
-  const shadowBrier=production?.liveMetrics?.samples?production.liveMetrics.brier:null;
+  const liveBrier=Number(live.samples)>0?live.brier:null;
   $("historicalHoldoutAccuracy").textContent=testAcc==null?"No production model":pct(testAcc);
-  $("learningUpdates").textContent=shadowBrier==null?"—":Number(shadowBrier).toFixed(4);
+  $("learningUpdates").textContent=liveBrier==null?"—":Number(liveBrier).toFixed(4);
 
   if ($("modelLabSummary")) {
     const run=modelLabData?.latestRun||predictionData.modelLab?.latestRun||null;
+    const wf=production?.walkForwardMetrics||{};
+    const challengers=modelLabData?.shadowModels||[];
     $("modelLabSummary").innerHTML=production
-      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · live Brier ${production.liveMetrics?.samples?Number(production.liveMetrics.brier).toFixed(4):"collecting"} · ${run?.promotionReason||"production locked until a challenger proves better"}`
-      : `<strong>Model Lab is building the first production model.</strong><br>Predictions stay on the legacy fallback until a challenger passes calibration, unseen-test and shadow guards.`;
+      ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · walk-forward ${wf.accuracy==null?"—":pct(Number(wf.accuracy))} · ${num(wf.folds?.length||0)} folds · live shadow challengers ${challengers.length}.<br>${run?.promotionReason||"Production remains locked until a challenger proves better on future paired outcomes."}`
+      : `<strong>Model Lab is building the first production model.</strong><br>Predictions stay on the legacy fallback until a challenger passes calibration, unseen-test, walk-forward and final-holdout guards.`;
   }
 
   const rows=predictionData.rows||[];
