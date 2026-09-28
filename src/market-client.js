@@ -56,6 +56,15 @@ export class MarketClient {
     return r.json();
   }
 
+  async patternLab(symbol,limit=40) {
+    const r=await fetch(
+      "/api/pattern-lab/"+encodeURIComponent(symbol)+"?limit="+encodeURIComponent(limit),
+      {cache:"no-store"}
+    );
+    if (!r.ok) throw new Error("Pattern Lab request failed: "+r.status);
+    return r.json();
+  }
+
   async scanner(limit=50) {
     const r=await fetch("/api/scanner/latest?limit="+encodeURIComponent(limit),{cache:"no-store"});
     if (!r.ok) throw new Error("Scanner request failed: "+r.status);
