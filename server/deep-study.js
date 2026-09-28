@@ -428,6 +428,15 @@ export class DeepStudyEngine extends EventEmitter {
       await this.runUniverseScan(scanDate);
     } else if (await this.db.universeScanComplete(scanDate,this.scanVersion)) {
       const latestScan=await this.db.latestUniverseScan();
+      let regimeRow=await this.db.latestMarketRegime();
+      if (!regimeRow || dbDateKey(regimeRow.scan_date)!==scanDate) {
+        const metrics=await this.db.computeUniverseRegimeMetrics(scanDate);
+        if (metrics) {
+          const classified=classifyMarketRegime(metrics);
+          await this.db.saveMarketRegime(scanDate,classified);
+          regimeRow={scan_date:scanDate,...classified};
+        }
+      }
       if (latestScan) {
         this.universeState={
           state:latestScan.status,
@@ -436,6 +445,10 @@ export class DeepStudyEngine extends EventEmitter {
           assetsScanned:Number(latestScan.assets_scanned)||0,
           dailyBars:Number(latestScan.daily_bars)||0,
           candidates:Number(latestScan.candidates)||0,
+          deepAssets:Number(latestScan.deep_assets)||0,
+          deepBars:Number(latestScan.deep_bars)||0,
+          regime:regimeRow?.regime||null,
+          regimeConfidence:Number(regimeRow?.confidence)||0,
           error:latestScan.error||null
         };
       }
