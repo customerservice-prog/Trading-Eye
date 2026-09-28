@@ -765,6 +765,8 @@ function renderResearchBrain() {
   const jobs=Array.isArray(r.jobs)?r.jobs:[];
   const events=Array.isArray(r.events)?r.events:[];
   const patternFindings=Array.isArray(r.findings)?r.findings:[];
+  const longIntegrity=r.sources?.longHistory?.integrity||{};
+  const integrityStatus=String(longIntegrity.status||"UNVERIFIED").toUpperCase();
 
   const runningJobs=jobs.filter(j=>j.status==="RUNNING");
   const errorJobs=jobs.filter(j=>j.status==="ERROR");
@@ -805,11 +807,11 @@ function renderResearchBrain() {
     ? `${num(longHistory.bars)} bars`
     : "1999+ waiting";
   $("researchLongMeta").textContent=Number(longHistory.bars)
-    ? `${num(longHistory.symbols||0)} symbols · ${longFirst} → ${longLast} · ${r.sources?.longHistory?.provider||"long-history source"}`
-    : `${r.sources?.longHistory?.provider||"long-history source"} · target ${r.sources?.longHistory?.targetStart||"1999-01-01"}`;
+    ? `${num(longHistory.symbols||0)} symbols · ${longFirst} → ${longLast} · ${r.sources?.longHistory?.provider||"long-history source"} · integrity ${integrityStatus}`
+    : `${r.sources?.longHistory?.provider||"long-history source"} · target ${r.sources?.longHistory?.targetStart||"1999-01-01"} · integrity ${integrityStatus}`;
 
   $("researchFindingCount").textContent=num(findings.findings||0);
-  $("researchFindingMeta").textContent=`${num(findings.promoted||0)} promoted research findings · ${num((coverage.predictions||{}).scored||0)} predictions scored`;
+  $("researchFindingMeta").textContent=`${num(findings.promoted||0)} passed holdout · ${num((coverage.predictions||{}).scored||0)} future predictions scored · research-only`;
 
   $("researchModelCount").textContent=num(models.models||0);
   $("researchModelMeta").textContent=`${num(models.production||0)} production · ${num(models.shadow||0)} live shadow · ${num(models.rejected||0)} rejected`;
@@ -854,8 +856,17 @@ function renderResearchBrain() {
 
   $("researchFindingBody").innerHTML=patternFindings.length?patternFindings.map(f=>{
     const evidence=f.evidence||{};
+    const rawStatus=String(f.status||"CANDIDATE").toUpperCase();
+    const statusLabel={
+      PROMOTED:"PASSED HOLDOUT",
+      VALIDATED:"PASSED VALIDATION",
+      REJECTED_HOLDOUT:"FAILED HOLDOUT",
+      REJECTED_VALIDATION:"FAILED VALIDATION",
+      LEGACY_UNVALIDATED:"NEEDS RECHECK",
+      CANDIDATE:"STILL PROVING"
+    }[rawStatus]||rawStatus.replaceAll("_"," ");
     return `<tr class="${String(f.status||"candidate").toLowerCase()}">
-      <td>${f.status||"CANDIDATE"}</td>
+      <td>${statusLabel}</td>
       <td><strong>${f.symbol||"MARKET"}</strong></td>
       <td>${f.description||f.pattern_key||"—"}</td>
       <td>${num(f.horizon_days)}d</td>
