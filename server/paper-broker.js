@@ -323,7 +323,13 @@ export class PaperBroker {
           INSERT INTO paper_positions(account_id,symbol,qty,avg_price,opened_at,updated_at)
           VALUES($1,$2,$3,$4,NOW(),NOW())
           ON CONFLICT(account_id,symbol) DO UPDATE SET
-            qty=EXCLUDED.qty,avg_price=EXCLUDED.avg_price,updated_at=NOW()
+            qty=EXCLUDED.qty,
+            avg_price=EXCLUDED.avg_price,
+            opened_at=CASE
+              WHEN paper_positions.qty*EXCLUDED.qty < 0 THEN NOW()
+              ELSE paper_positions.opened_at
+            END,
+            updated_at=NOW()
         `,[this.accountId,symbol,newQty,newAvg]);
       }
       await client.query("COMMIT");
