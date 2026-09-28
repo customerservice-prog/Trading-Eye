@@ -25,6 +25,7 @@ function modelFromRegistryArtifact(a){
   if(a.kind==="softmax") return SoftmaxModel.fromArtifact(a);
   if(a.kind==="gaussian_nb") return GaussianNBModel.fromArtifact(a);
   if(a.kind==="boosted_stumps") return BoostedStumpModel.fromArtifact(a);
+  if(a.kind==="bagged_boosted_stumps") return BaggedStumpEnsemble.fromArtifact(a);
   return null;
 }
 function directionFromProbs(p){
