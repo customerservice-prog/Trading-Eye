@@ -36,7 +36,6 @@ export function fingerprintFromFeatures(features,ts) {
     "x"+bin(Number(features.volatility)||0,{strong:.45,weak:.10}),
     "o"+bin(Number(features.orderFlow)||0,{strong:.5,weak:.15}),
     "w"+bin(Number(features.vwap)||0,{strong:.35,weak:.08}),
-    "b"+bin(Number(features.breadth)||0,{strong:.45,weak:.10}),
     "s"+timeBucketET(ts)
   ].join("|");
 }
