@@ -671,3 +671,96 @@ body[data-data-state="missing"] .chart-stage::before {
   box-shadow:0 18px 50px rgba(0,0,0,.34); pointer-events:none;
 }
 body[data-data-state="missing"] #marketChart { opacity:.28; }
+
+.study-layout {
+  height:100%;
+  display:grid;
+  grid-template-columns:190px 300px 1fr;
+  min-width:0;
+}
+.study-status-card {
+  padding:16px;
+  border-right:1px solid var(--line);
+  background:linear-gradient(145deg,rgba(156,140,255,.055),rgba(88,216,255,.025));
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.study-status-card strong {
+  margin-top:5px;
+  font-size:20px;
+  letter-spacing:-.03em;
+  color:var(--text);
+}
+.study-status-card > span:last-child {
+  margin-top:4px;
+  color:var(--muted);
+  font-size:7px;
+  line-height:1.4;
+}
+.study-metrics {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1px;
+  background:var(--line);
+  border-right:1px solid var(--line);
+}
+.study-metric {
+  background:#080e16;
+  padding:11px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.study-metric span {
+  color:var(--muted);
+  font-size:7px;
+}
+.study-metric strong {
+  margin-top:4px;
+  color:var(--cyan);
+  font-size:15px;
+  font-variant-numeric:tabular-nums;
+}
+.study-details {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  min-width:0;
+}
+.study-details > div {
+  min-width:0;
+  padding:11px 13px;
+  overflow:auto;
+}
+.study-details > div:first-child {
+  border-right:1px solid var(--line);
+}
+.study-heading {
+  color:var(--text-2);
+  font-size:8px;
+  font-weight:900;
+  letter-spacing:.05em;
+  text-transform:uppercase;
+  margin-bottom:6px;
+}
+.study-list {
+  display:grid;
+  gap:5px;
+  color:var(--muted-2);
+  font-size:7px;
+  line-height:1.45;
+}
+.study-item {
+  padding:5px 0;
+  border-bottom:1px solid rgba(25,37,54,.55);
+}
+.study-item strong {
+  color:var(--text-2);
+}
+@media (max-width:900px) {
+  .study-layout { grid-template-columns:1fr; height:auto; }
+  .study-status-card { border-right:0; border-bottom:1px solid var(--line); }
+  .study-metrics { border-right:0; border-bottom:1px solid var(--line); }
+  .study-details { grid-template-columns:1fr; }
+  .study-details > div:first-child { border-right:0; border-bottom:1px solid var(--line); }
+}
