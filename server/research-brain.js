@@ -911,60 +911,43 @@ export class ResearchBrain extends EventEmitter {
     }
   }
 
+  #researchSliceMetrics(samples,directionSign){
+    const returns=samples.map(x=>Number(x.return)).filter(Number.isFinite);
+    if(!returns.length) return {
+      samples:0,hitRate:null,avgReturn:null,medianReturn:null,
+      avgFavorable:null,avgAdverse:null,effect:null,passes:false
+    };
+    const wins=returns.filter(r=>directionSign>=0?r>0:r<0).length;
+    const avgReturn=mean(returns);
+    const medianReturn=median(returns);
+    const avgFavorable=mean(samples.map(x=>Number(x.favorable)||0));
+    const avgAdverse=mean(samples.map(x=>Number(x.adverse)||0));
+    const directionalAvg=avgReturn*directionSign;
+    const directionalMedian=medianReturn*directionSign;
+    const hitRate=wins/returns.length;
+    const effect=Math.max(0,directionalAvg)*Math.sqrt(returns.length);
+    const passes=
+      returns.length>=15 &&
+      hitRate>=.53 &&
+      directionalAvg>0 &&
+      directionalMedian>=-.0025;
+    return {
+      samples:returns.length,hitRate,avgReturn,medianReturn,
+      avgFavorable,avgAdverse,effect,passes,
+      start:samples[0]?.day||null,
+      end:samples.at(-1)?.day||null
+    };
+  }
+
   #mineSymbol(symbol,rawRows){
     const rows=(rawRows||[]).map(r=>({
       day:String(r.day).slice(0,10),
       open:Number(r.open),high:Number(r.high),low:Number(r.low),
       close:Number(r.close),volume:Number(r.volume)||0
     })).filter(r=>r.close>0);
-    if(rows.length<420) return [];
-
-    const validationVersion="v3_baseline_excess";
-    const summarize=(samples,baseline=null,directionSign=null)=>{
-      const valid=(samples||[]).filter(x=>x?.return!=null);
-      const returns=valid.map(x=>Number(x.return));
-      if(!returns.length){
-        return {
-          samples:0,hitRate:null,directionalHitRate:null,avgReturn:null,
-          medianReturn:null,stdevReturn:null,avgFavorable:null,avgAdverse:null,
-          baselineAvgReturn:null,baselineHitRate:null,excessAvgReturn:null,
-          hitRateUplift:null,zVsBaseline:null,start:null,end:null
-        };
-      }
-      const hitRate=returns.filter(x=>x>0).length/returns.length;
-      const avgReturn=mean(returns);
-      const sd=Math.max(1e-9,stdev(returns));
-      const baselineAvg=Number(baseline?.avgReturn)||0;
-      const baselineHit=baseline?.hitRate==null?.5:Number(baseline.hitRate);
-      const sign=directionSign==null?(avgReturn-baselineAvg>=0?1:-1):directionSign;
-      const directionalHitRate=sign>0?hitRate:1-hitRate;
-      const baselineDirectionalHit=sign>0?baselineHit:1-baselineHit;
-      const excessAvgReturn=avgReturn-baselineAvg;
-      const signedExcess=sign*excessAvgReturn;
-      const hitRateUplift=directionalHitRate-baselineDirectionalHit;
-      const zVsBaseline=signedExcess/(sd/Math.sqrt(returns.length));
-      return {
-        samples:returns.length,
-        hitRate,
-        directionalHitRate,
-        avgReturn,
-        medianReturn:median(returns),
-        stdevReturn:sd,
-        avgFavorable:mean(valid.map(x=>Number(x.favorable)||0)),
-        avgAdverse:mean(valid.map(x=>Number(x.adverse)||0)),
-        baselineAvgReturn:baselineAvg,
-        baselineHitRate:baselineHit,
-        excessAvgReturn,
-        hitRateUplift,
-        zVsBaseline,
-        start:valid[0]?.day||null,
-        end:valid.at(-1)?.day||null
-      };
-    };
+    if(rows.length<320) return [];
 
     const groups=new Map();
-    const allByHorizon={5:[],20:[],60:[]};
-
     for(let i=80;i<rows.length-65;i++){
       const close=rows[i].close;
       const r20=pct(close,rows[i-20].close);
@@ -993,116 +976,67 @@ export class ResearchBrain extends EventEmitter {
         const ret=pct(future.close,close);
         const favorable=Math.max(...path.map(x=>pct(x.high,close)));
         const adverse=Math.min(...path.map(x=>pct(x.low,close)));
-        const sample={day:rows[i].day,return:ret,favorable,adverse};
-        horizons[h]=sample;
-        allByHorizon[h].push(sample);
+        horizons[h]={return:ret,favorable,adverse};
       }
       g.samples.push({day:rows[i].day,horizons});
     }
 
-    const eligibleDays=allByHorizon[5].map(x=>x.day).sort();
-    if(eligibleDays.length<250) return [];
-    const discoveryCut=eligibleDays[Math.floor(eligibleDays.length*.60)];
-    const validationCut=eligibleDays[Math.floor(eligibleDays.length*.80)];
-
-    const split=(samples)=>{
-      const sorted=[...(samples||[])].sort((a,b)=>String(a.day).localeCompare(String(b.day)));
-      return {
-        discovery:sorted.filter(x=>x.day<=discoveryCut),
-        validation:sorted.filter(x=>x.day>discoveryCut&&x.day<=validationCut),
-        holdout:sorted.filter(x=>x.day>validationCut)
-      };
-    };
-
-    const baselineByHorizon={};
-    for(const h of [5,20,60]){
-      const s=split(allByHorizon[h]);
-      baselineByHorizon[h]={
-        discovery:summarize(s.discovery),
-        validation:summarize(s.validation),
-        holdout:summarize(s.holdout)
-      };
-    }
-
     const findings=[];
-    const minExcess={5:.003,20:.006,60:.010};
-
     for(const g of groups.values()){
       for(const h of [5,20,60]){
-        const samples=g.samples
-          .map(x=>x.horizons[h])
-          .filter(Boolean);
-        if(samples.length<75) continue;
+        const all=g.samples
+          .map(x=>({day:x.day,...x.horizons[h]}))
+          .filter(x=>x.return!=null)
+          .sort((a,b)=>a.day.localeCompare(b.day));
+        if(all.length<60) continue;
 
-        const s=split(samples);
-        const discoveryBase=baselineByHorizon[h].discovery;
-        const discoveryRaw=summarize(s.discovery,discoveryBase);
-        const discoveryExcess=Number(discoveryRaw.excessAvgReturn)||0;
-        const directionSign=discoveryExcess>=0?1:-1;
+        const discoveryEnd=Math.floor(all.length*.60);
+        const validationEnd=Math.floor(all.length*.80);
+        const discovery=all.slice(0,discoveryEnd);
+        const validation=all.slice(discoveryEnd,validationEnd);
+        const holdout=all.slice(validationEnd);
+        if(discovery.length<30||validation.length<15||holdout.length<15) continue;
 
-        const discovery=summarize(s.discovery,discoveryBase,directionSign);
-        const validation=summarize(s.validation,baselineByHorizon[h].validation,directionSign);
-        const holdout=summarize(s.holdout,baselineByHorizon[h].holdout,directionSign);
+        const discoveryAvg=mean(discovery.map(x=>x.return));
+        const directionSign=discoveryAvg>=0?1:-1;
+        const d=this.#researchSliceMetrics(discovery,directionSign);
+        const v=this.#researchSliceMetrics(validation,directionSign);
+        const o=this.#researchSliceMetrics(holdout,directionSign);
 
-        const effect=minExcess[h];
-        const signedDiscovery=directionSign*Number(discovery.excessAvgReturn||0);
-        const signedValidation=directionSign*Number(validation.excessAvgReturn||0);
-        const signedHoldout=directionSign*Number(holdout.excessAvgReturn||0);
+        const discoveryEdge=Math.abs((d.hitRate??.5)-.5);
+        const discoveryStrong=
+          d.samples>=30 &&
+          discoveryEdge>=.075 &&
+          Math.abs(d.avgReturn||0)>=.006;
 
-        const discoveryPass=
-          discovery.samples>=35 &&
-          signedDiscovery>=effect*.80 &&
-          Number(discovery.hitRateUplift)>=.04 &&
-          Number(discovery.zVsBaseline)>=2.0;
-
-        if(!discoveryPass) continue;
-
-        const enoughValidation=validation.samples>=18;
-        const enoughHoldout=holdout.samples>=18;
-
-        const validationPass=
-          enoughValidation &&
-          signedValidation>=effect*.55 &&
-          Number(validation.hitRateUplift)>=.025 &&
-          Number(validation.zVsBaseline)>=1.65;
-
-        const holdoutPass=
-          enoughHoldout &&
-          signedHoldout>=effect*.40 &&
-          Number(holdout.hitRateUplift)>=.02 &&
-          Number(holdout.zVsBaseline)>=1.64;
+        if(!discoveryStrong) continue;
 
         let status="CANDIDATE";
-        if(enoughValidation&&!validationPass) status="REJECTED_VALIDATION";
-        else if(validationPass&&enoughHoldout&&!holdoutPass) status="REJECTED_HOLDOUT";
-        else if(validationPass&&holdoutPass) status="PROMOTED";
-        else if(validationPass) status="VALIDATED";
+        if(!v.passes || !o.passes) status="REJECTED";
+        else if(
+          o.samples>=20 &&
+          Math.abs((o.hitRate??.5)-.5)>=.055 &&
+          Math.abs(o.avgReturn||0)>=.004
+        ) status="PROMOTED";
 
-        const valZ=Math.max(-4,Math.min(6,Number(validation.zVsBaseline)||0));
-        const holdZ=Math.max(-4,Math.min(6,Number(holdout.zVsBaseline)||0));
+        const avgReturn=mean(all.map(x=>x.return));
+        const medReturn=median(all.map(x=>x.return));
+        const hitRate=all.filter(x=>directionSign>=0?x.return>0:x.return<0).length/all.length;
+        const avgFav=mean(all.map(x=>x.favorable));
+        const avgAdv=mean(all.map(x=>x.adverse));
+
+        // Later unseen periods matter much more than discovery.
         const score=
-          valZ*.35 +
-          holdZ*.55 +
-          Math.max(-.10,Math.min(.20,Number(validation.hitRateUplift)||0))*6 +
-          Math.max(-.10,Math.min(.20,Number(holdout.hitRateUplift)||0))*8;
+          Math.max(0,d.effect||0)*.20 +
+          Math.max(0,v.effect||0)*.30 +
+          Math.max(0,o.effect||0)*.50;
 
-        const direction=directionSign>0?"positive":"negative";
         const findingId=crypto
           .createHash("sha1")
-          .update([this.longHistoryProvider,symbol,g.patternKey,h].join("|"))
+          .update([this.longHistoryProvider,symbol,g.patternKey,h,"chronological-v2"].join("|"))
           .digest("hex");
 
-        const headline=holdout.samples?holdout:validation.samples?validation:discovery;
-        const laterEvidence=status==="PROMOTED"
-          ? `It beat the symbol's normal ${h}-day baseline in both validation and the recent holdout.`
-          : status==="REJECTED_VALIDATION"
-            ? `It looked good in discovery but failed to beat the symbol's normal baseline in later validation.`
-            : status==="REJECTED_HOLDOUT"
-              ? `It beat baseline in validation but failed the most recent holdout.`
-              : status==="VALIDATED"
-                ? `It beat baseline in validation but still needs enough recent holdout samples.`
-                : `It is still collecting later unseen evidence.`;
-
+        const direction=directionSign>=0?"positive":"negative";
         findings.push({
           findingId,
           provider:this.longHistoryProvider,
@@ -1110,43 +1044,35 @@ export class ResearchBrain extends EventEmitter {
           symbol,
           patternKey:g.patternKey,
           horizonDays:h,
-          sampleCount:samples.length,
-          hitRate:headline.directionalHitRate,
-          avgForwardReturn:headline.excessAvgReturn,
-          medianForwardReturn:headline.medianReturn,
-          avgAdverseReturn:headline.avgAdverse,
-          avgFavorableReturn:headline.avgFavorable,
+          sampleCount:all.length,
+          hitRate,
+          avgForwardReturn:avgReturn,
+          medianForwardReturn:medReturn,
+          avgAdverseReturn:avgAdv,
+          avgFavorableReturn:avgFav,
           score,
           status,
-          validationVersion,
-          discoveryMetrics:discovery,
-          validationMetrics:validation,
-          holdoutMetrics:holdout,
-          description:`${symbol}: ${g.patternKey.replaceAll("|"," + ")} showed a ${direction} ${h}-day excess pattern versus its normal baseline. ${laterEvidence}`,
+          validationVersion:"chronological-v2",
+          discoveryMetrics:d,
+          validationMetrics:v,
+          holdoutMetrics:o,
+          description:`${symbol}: ${g.patternKey.replaceAll("|"," + ")} showed a ${direction} ${h}-day tendency in discovery data and was then checked on later validation and holdout periods.`,
           evidence:{
-            validationVersion,
-            intendedDirection:directionSign>0?"UP":"DOWN",
-            totalSamples:samples.length,
-            discoveryCut,
-            validationCut,
-            discoveryWindow:{start:discovery.start,end:discovery.end,samples:discovery.samples},
-            validationWindow:{start:validation.start,end:validation.end,samples:validation.samples},
-            holdoutWindow:{start:holdout.start,end:holdout.end,samples:holdout.samples},
-            baseline:{
-              discovery:baselineByHorizon[h].discovery,
-              validation:baselineByHorizon[h].validation,
-              holdout:baselineByHorizon[h].holdout
-            },
-            recentHoldoutExamples:s.holdout.slice(-8)
+            start:all[0]?.day,
+            end:all.at(-1)?.day,
+            direction:directionSign>=0?"UP":"DOWN",
+            discoveryWindow:[d.start,d.end],
+            validationWindow:[v.start,v.end],
+            holdoutWindow:[o.start,o.end],
+            examples:holdout.slice(-8)
           }
         });
       }
     }
-
-    const rankStatus=s=>s==="PROMOTED"?0:s==="VALIDATED"?1:s==="CANDIDATE"?2:3;
-    return findings
-      .sort((a,b)=>rankStatus(a.status)-rankStatus(b.status)||b.score-a.score)
-      .slice(0,18);
+    return findings.sort((a,b)=>{
+      const rank={PROMOTED:2,CANDIDATE:1,REJECTED:0};
+      return (rank[b.status]-rank[a.status]) || (b.score-a.score);
+    }).slice(0,18);
   }
 
   async #event(event){
