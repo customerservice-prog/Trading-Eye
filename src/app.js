@@ -288,8 +288,9 @@ function renderAI() {
 
   $("beginnerExplanation").textContent=beginnerExplanation(a);
   $("chartCalloutTitle").textContent=copy.title;
+  const productionId=modelLabData?.production?.modelId||status?.modelLab?.production?.modelId||null;
   $("chartCalloutBody").textContent=a
-    ? `${sourceName()} data · model v${status?.model?.version||"—"} · prediction stored before result.`
+    ? `${sourceName()} data · ${productionId?("production "+productionId):("legacy fallback v"+(status?.model?.version||"—"))} · prediction stored before result.`
     : (!status?.configured?"No real provider is connected. No forecast is being generated.":"Collecting enough real bars to begin.");
 
   const reasons=$("reasonList");
@@ -311,7 +312,9 @@ function renderAI() {
     const statusClass=Math.abs(c.contribution)<.08?"mixed":c.contribution>0?"good":"bad";
     const explanation=simpleReasons
       ? (c.value>=0?label.positive:label.negative)
-      : `Real feature ${c.value>=0?"+":""}${Number(c.value).toFixed(2)} × learned weight ${Number(c.weight).toFixed(2)}.`;
+      : c.source==="ml"
+        ? `Real feature ${c.value>=0?"+":""}${Number(c.value).toFixed(2)} · local model influence ${c.contribution>=0?"+":""}${Number(c.contribution).toFixed(3)}.`
+        : `Real feature ${c.value>=0?"+":""}${Number(c.value).toFixed(2)} × learned weight ${Number(c.weight).toFixed(2)}.`;
     const item=document.createElement("div");
     item.className="reason-item";
     item.innerHTML=`<span class="reason-dot ${statusClass}"></span><div class="reason-copy"><strong>${label.title}</strong><span>${explanation}</span></div><span class="reason-value">${c.contribution>=0?"+":""}${Number(c.contribution).toFixed(2)}</span>`;
