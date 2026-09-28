@@ -7,7 +7,8 @@ export class PaperBroker {
     db,marketEngine,accountId="TE_PAPER_MAIN",startingCash=100000,
     fillBufferBps=1.5,maxPositionPct=.10,maxGrossPct=.50,maxPositions=6,
     dailyLossPct=.03,autopilotMinConfidence=.50,autopilotMinEdge=.07,
-    autopilotEnabled=true
+    autopilotEnabled=true,maxQuoteAgeMs=15000,maxSpreadBps=80,
+    maxParticipationPct=.02,maxImpactBps=20
   }){
     this.db=db;
     this.marketEngine=marketEngine;
@@ -21,6 +22,10 @@ export class PaperBroker {
     this.autopilotMinConfidence=autopilotMinConfidence;
     this.autopilotMinEdge=autopilotMinEdge;
     this.autopilotEnabled=Boolean(autopilotEnabled);
+    this.maxQuoteAgeMs=Math.max(1000,Number(maxQuoteAgeMs)||15000);
+    this.maxSpreadBps=Math.max(5,Number(maxSpreadBps)||80);
+    this.maxParticipationPct=Math.max(.001,Math.min(.10,Number(maxParticipationPct)||.02));
+    this.maxImpactBps=Math.max(0,Math.min(100,Number(maxImpactBps)||20));
     this.snapshotTimer=null;
     this.processing=new Set();
   }
@@ -50,6 +55,9 @@ export class PaperBroker {
       quote:q,
       bid:Number.isFinite(bid)&&bid>0?bid:null,
       ask:Number.isFinite(ask)&&ask>0?ask:null,
+      bidSize:Number(q?.bidSize)||0,
+      askSize:Number(q?.askSize)||0,
+      minuteVolume:Number(bar?.volume)||0,
       midpoint,
       lastTrade:Number.isFinite(lastTrade)&&lastTrade>0?lastTrade:null,
       barClose:Number.isFinite(barClose)&&barClose>0?barClose:null,
@@ -57,12 +65,15 @@ export class PaperBroker {
     };
   }
 
-  #freshQuote(symbol,maxAgeMs=120000){
+  #freshQuote(symbol,maxAgeMs=this.maxQuoteAgeMs){
     const s=this.#marketState(symbol);
-    if(!s.quote||!s.bid||!s.ask) return null;
+    if(!s.quote||!s.bid||!s.ask||s.ask<=s.bid) return null;
     const ts=+new Date(s.quote.ts);
     if(!Number.isFinite(ts)||Date.now()-ts>maxAgeMs) return null;
-    return s;
+    const mid=(s.ask+s.bid)/2;
+    const spreadBps=mid>0?((s.ask-s.bid)/mid)*10000:Infinity;
+    if(!Number.isFinite(spreadBps)||spreadBps>this.maxSpreadBps) return null;
+    return {...s,spreadBps,quoteAgeMs:Date.now()-ts};
   }
 
   async #account(){
@@ -149,7 +160,7 @@ export class PaperBroker {
       grossExposure:gross,
       grossExposurePct:equity?gross/equity:0,
       autopilotEnabled:Boolean(account?.autopilot_enabled),
-      fillModel:`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`,
+      fillModel:"TOP_OF_BOOK + spread/participation impact",
       fillCount:Number(fillCount.rows[0]?.n)||0,
       closedOutcomes:outcomes.length,
       winRate:outcomes.length?winners.length/outcomes.length:null,
@@ -197,13 +208,27 @@ export class PaperBroker {
       const market=this.#freshQuote(symbol);
       if(!market) return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"NO_FRESH_TOP_OF_BOOK"});
 
-      const buffer=this.fillBufferBps/10000;
-      const fillPrice=side==="BUY"?market.ask*(1+buffer):market.bid*(1-buffer);
       const quoteTs=new Date(market.quote.ts);
+      const displayed=side==="BUY"?Number(market.askSize)||0:Number(market.bidSize)||0;
+      const volumeCapacity=Math.max(1,Math.floor((Number(market.minuteVolume)||0)*this.maxParticipationPct));
+      const displayedCapacity=displayed>0?Math.max(1,Math.floor(displayed)):volumeCapacity;
+      const capacity=Math.max(1,Math.min(volumeCapacity,displayedCapacity*4));
+      const fillQty=Math.min(qty,capacity);
+      const participation=(Number(market.minuteVolume)||0)>0
+        ?fillQty/Number(market.minuteVolume)
+        :this.maxParticipationPct;
+      const impactBps=Math.min(
+        this.maxImpactBps,
+        this.fillBufferBps +
+        Number(market.spreadBps||0)*.10 +
+        (participation/this.maxParticipationPct)*3
+      );
+      const impact=impactBps/10000;
+      const fillPrice=side==="BUY"?market.ask*(1+impact):market.bid*(1-impact);
       const snapshot=await this.snapshot();
       const old=snapshot.positions.find(p=>p.symbol===symbol)||null;
       const oldQty=Number(old?.qty)||0;
-      const signed=side==="BUY"?qty:-qty;
+      const signed=side==="BUY"?fillQty:-fillQty;
       const newQty=oldQty+signed;
       const isOpening=!oldQty&&newQty;
       const isIncreasing=!oldQty||Math.sign(oldQty)===Math.sign(signed);
@@ -225,7 +250,7 @@ export class PaperBroker {
       if(isIncreasing && grossAfter>snapshot.equity*this.maxGrossPct){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"MAX_GROSS_EXPOSURE"});
       }
-      if(side==="BUY" && signed>0 && oldQty>=0 && fillPrice*qty>snapshot.cash){
+      if(side==="BUY" && signed>0 && oldQty>=0 && fillPrice*fillQty>snapshot.cash){
         return this.#rejectOrder({symbol,side,qty,source,modelId,reason:"INSUFFICIENT_CASH"});
       }
       const dayBase=await this.#dailyEquityBaseline();
@@ -235,8 +260,8 @@ export class PaperBroker {
       }
 
       return await this.#fillOrder({
-        symbol,side,qty,fillPrice,market,quoteTs,source,modelId,oldQty,
-        oldAvg:Number(old?.avgPrice)||0
+        symbol,side,qty:fillQty,requestedQty:qty,fillPrice,market,quoteTs,source,modelId,oldQty,
+        oldAvg:Number(old?.avgPrice)||0,impactBps,partial:fillQty<qty
       });
     }finally{
       this.processing.delete(lockKey);
@@ -266,7 +291,7 @@ export class PaperBroker {
     return {ok:false,orderId,status:"REJECTED",reason};
   }
 
-  async #fillOrder({symbol,side,qty,fillPrice,market,quoteTs,source,modelId,oldQty,oldAvg}){
+  async #fillOrder({symbol,side,qty,requestedQty=qty,fillPrice,market,quoteTs,source,modelId,oldQty,oldAvg,impactBps=0,partial=false}){
     const orderId="PO-"+crypto.randomUUID();
     const fillId="PF-"+crypto.randomUUID();
     const signed=side==="BUY"?qty:-qty;
@@ -292,10 +317,16 @@ export class PaperBroker {
       await client.query(`
         INSERT INTO paper_orders(
           order_id,account_id,symbol,side,qty,status,source,model_id,requested_at,filled_at,reference_quote
-        ) VALUES($1,$2,$3,$4,$5,'FILLED',$6,$7,NOW(),NOW(),$8::jsonb)
+        ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW(),$9::jsonb)
       `,[
-        orderId,this.accountId,symbol,side,qty,source,modelId,
-        JSON.stringify({bid:market.bid,ask:market.ask,ts:market.quote.ts,bufferBps:this.fillBufferBps})
+        orderId,this.accountId,symbol,side,requestedQty,partial?"PARTIAL":"FILLED",source,modelId,
+        JSON.stringify({
+          bid:market.bid,ask:market.ask,ts:market.quote.ts,
+          spreadBps:market.spreadBps,quoteAgeMs:market.quoteAgeMs,
+          requestedQty,filledQty:qty,impactBps,
+          minuteVolume:market.minuteVolume,
+          bidSize:market.bidSize,askSize:market.askSize
+        })
       ]);
 
       await client.query(`
@@ -304,7 +335,7 @@ export class PaperBroker {
         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       `,[
         fillId,orderId,this.accountId,symbol,side,qty,fillPrice,
-        market.bid,market.ask,quoteTs,`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`,realized
+        market.bid,market.ask,quoteTs,`TOP_OF_BOOK+IMPACT_${impactBps.toFixed(1)}bps`,realized
       ]);
 
       await client.query(`
@@ -341,9 +372,10 @@ export class PaperBroker {
     }
 
     return {
-      ok:true,orderId,fillId,status:"FILLED",symbol,side,qty,
-      fillPrice,marketBid:market.bid,marketAsk:market.ask,quoteTs,
-      realized,fillModel:`TOP_OF_BOOK+${this.fillBufferBps.toFixed(1)}bps`
+      ok:true,orderId,fillId,status:partial?"PARTIAL":"FILLED",symbol,side,qty,
+      requestedQty,partial,fillPrice,marketBid:market.bid,marketAsk:market.ask,quoteTs,
+      realized,impactBps,spreadBps:market.spreadBps,
+      fillModel:`TOP_OF_BOOK+IMPACT_${impactBps.toFixed(1)}bps`
     };
   }
 
