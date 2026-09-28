@@ -317,8 +317,10 @@ export class Database {
         market_ask DOUBLE PRECISION,
         quote_ts TIMESTAMPTZ,
         fill_model TEXT NOT NULL,
+        realized_pnl DOUBLE PRECISION NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE paper_fills ADD COLUMN IF NOT EXISTS realized_pnl DOUBLE PRECISION NOT NULL DEFAULT 0;
       CREATE INDEX IF NOT EXISTS paper_fills_recent
         ON paper_fills(account_id,created_at DESC);
 
