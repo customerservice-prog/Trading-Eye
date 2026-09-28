@@ -533,47 +533,69 @@ export class ModelLab {
       })[0];
 
       let promote=false;
+      let enterShadow=false;
       let promotionReason="";
+
       if(!this.productionRecord){
         promote=winner.shadow.samples>=500;
         promotionReason=promote
-          ?"First production model: selected from unseen test + live-shadow holdout metrics."
-          :"Not enough shadow samples for first production promotion.";
+          ?"Bootstrap production selected from chronological train/validation/test/final-holdout data. Future replacements require live shadow proof."
+          :"Not enough chronological holdout samples for first production model.";
       }else{
         const incumbent=modelFromRegistryArtifact(this.productionRecord.artifact);
         const incTest=incumbent?metricsFor(incumbent,splits.test):null;
-        const incShadow=incumbent?metricsFor(incumbent,splits.shadow):null;
-        if(incTest&&incShadow){
-          const brierBetter=winner.shadow.brier<=incShadow.brier*.985;
+        const incHoldout=incumbent?metricsFor(incumbent,splits.shadow):null;
+        if(incTest&&incHoldout){
+          const holdoutBrierBetter=winner.shadow.brier<=incHoldout.brier*.995;
           const testSafe=winner.test.brier<=incTest.brier*1.005;
-          const accuracySafe=winner.shadow.accuracy>=incShadow.accuracy-.01;
-          const calibrated=winner.shadow.ece<=incShadow.ece+.02;
-          promote=winner.shadow.samples>=500&&brierBetter&&testSafe&&accuracySafe&&calibrated;
-          promotionReason=promote
-            ?`Promoted: shadow Brier ${winner.shadow.brier.toFixed(4)} vs incumbent ${incShadow.brier.toFixed(4)}, with test/accuracy/calibration guards passed.`
-            :`Rejected promotion: challenger did not beat incumbent under Brier/test/accuracy/calibration guards.`;
+          const accuracySafe=winner.shadow.accuracy>=incHoldout.accuracy-.01;
+          const calibrated=winner.shadow.ece<=incHoldout.ece+.02;
+          enterShadow=winner.shadow.samples>=500&&holdoutBrierBetter&&testSafe&&accuracySafe&&calibrated;
+          promotionReason=enterShadow
+            ?`Historical gates passed. ${winner.modelId} entered LIVE SHADOW; it cannot replace production until enough future real-time outcomes beat production on paired Brier/calibration/accuracy.`
+            :`Rejected before live shadow: challenger did not beat incumbent under chronological Brier/test/accuracy/calibration guards.`;
         }else{
-          promotionReason="Incumbent artifact could not be evaluated safely; production unchanged.";
+          promotionReason="Incumbent artifact could not be evaluated safely; challenger rejected and production unchanged.";
         }
       }
 
+      const candidateIds=candidates.map(x=>x.modelId);
       if(promote){
-        await this.db.pool.query("BEGIN");
+        const client=await this.db.pool.connect();
         try{
-          await this.db.pool.query(`
+          await client.query("BEGIN");
+          await client.query(`
             UPDATE model_registry SET status='RETIRED'
             WHERE horizon_minutes=$1 AND status='PRODUCTION'
           `,[this.horizonMinutes]);
-          await this.db.pool.query(`
+          await client.query(`
             UPDATE model_registry
             SET status='PRODUCTION',promoted_at=NOW()
             WHERE model_id=$1
           `,[winner.modelId]);
-          await this.db.pool.query("COMMIT");
+          await client.query(`
+            UPDATE model_registry SET status='REJECTED'
+            WHERE model_id=ANY($1::text[]) AND model_id<>$2
+          `,[candidateIds,winner.modelId]);
+          await client.query("COMMIT");
         }catch(err){
-          await this.db.pool.query("ROLLBACK");
+          await client.query("ROLLBACK");
           throw err;
+        }finally{
+          client.release();
         }
+      }else if(enterShadow){
+        await this.db.pool.query(`
+          UPDATE model_registry
+          SET status=CASE WHEN model_id=$2 THEN 'SHADOW' ELSE 'REJECTED' END,
+              shadow_started_at=CASE WHEN model_id=$2 THEN NOW() ELSE shadow_started_at END
+          WHERE model_id=ANY($1::text[])
+        `,[candidateIds,winner.modelId]);
+      }else{
+        await this.db.pool.query(`
+          UPDATE model_registry SET status='REJECTED'
+          WHERE model_id=ANY($1::text[])
+        `,[candidateIds]);
       }
 
       await this.db.pool.query(`
@@ -588,6 +610,8 @@ export class ModelLab {
 
       this.latestRun=await this.#loadLatestRun();
       if(promote) await this.loadProduction();
+      await this.loadShadowModels();
+      await this.refreshLiveShadowMetrics();
       console.log(JSON.stringify({
         event:"model_lab_complete",
         runId,
@@ -595,6 +619,7 @@ export class ModelLab {
         symbols:usableSymbols.length,
         winner:winner.modelId,
         promoted:promote,
+        enteredLiveShadow:enterShadow,
         shadowBrier:winner.shadow.brier,
         shadowAccuracy:winner.shadow.accuracy,
         shadowEce:winner.shadow.ece
