@@ -1,5 +1,4 @@
 import { MarketClient } from "./market-client.js?v=20260928-0304";
-import { PaperEngine } from "./paper-engine.js?v=20260928-0304";
 import { MarketChart } from "./chart.js?v=20260928-0304";
 import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-0304";
 
@@ -14,7 +13,6 @@ const NAMES={
 };
 
 const client=new MarketClient();
-const paper=new PaperEngine(100_000);
 const chart=new MarketChart($("marketChart"),$("chartTooltip"));
 
 let activeSymbol="QQQ";
@@ -22,16 +20,16 @@ let timeframe="5m";
 let forecastOn=true;
 let beginnerOn=true;
 let simpleReasons=true;
-let autopilot=false;
 let monitoredSymbols=["SPY","QQQ","NVDA","AAPL","AMD","TSLA"];
 let status=null;
 let snapshot={bars:[],quote:null,trades:[],analysis:null,features:null,predictions:[]};
 let watchlist={rows:[],provider:"alpaca",feed:"iex"};
-let predictionData={rows:[],stats:null,model:null};
+let predictionData={rows:[],stats:null,legacyModel:null,modelLab:null};
+let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:false,positions:[],fills:[]};
+let modelLabData={enabled:true,training:false,production:null,latestRun:null};
 let studyData={status:null,rows:[]};
 let scannerData={universe:null,scan:null,candidates:[],hotSymbols:[],pinnedSymbols:[]};
 let patternLabData={symbol:null,status:"WAITING",statsByHorizon:{},analogs:[]};
-let lastAutoTradeAt=0;
 let refreshTimer=null;
 let symbolSearchTimer=null;
 let lastSymbolResults=[];
@@ -372,23 +370,22 @@ function renderTapeAndBook() {
 }
 
 function renderPaper() {
-  const realPrice=currentRealPrice();
-  if (realPrice!=null) paper.mark(activeSymbol,realPrice);
-  const p=paper.snapshot();
+  const p=paperData||{};
   $("paperEquity").textContent=money(p.equity);
   $("paperCash").textContent=money(p.cash);
   $("openPnl").textContent=money(p.openPnl);
   $("realizedPnl").textContent=money(p.realizedPnl);
-  $("paperTrades").textContent=num(p.tradeCount);
-  $("openPnl").className=p.openPnl>0?"positive":p.openPnl<0?"negative":"neutral";
-  $("realizedPnl").className=p.realizedPnl>0?"positive":p.realizedPnl<0?"negative":"neutral";
-  $("positionsTable").innerHTML=p.positions.length?p.positions.map(pos=>`
+  $("paperTrades").textContent=num(p.fillCount||0);
+  $("openPnl").className=Number(p.openPnl)>0?"positive":Number(p.openPnl)<0?"negative":"neutral";
+  $("realizedPnl").className=Number(p.realizedPnl)>0?"positive":Number(p.realizedPnl)<0?"negative":"neutral";
+  if ($("autopilotToggle")) $("autopilotToggle").checked=Boolean(p.autopilotEnabled);
+  $("positionsTable").innerHTML=(p.positions||[]).length?p.positions.map(pos=>`
     <div class="position-row">
       <strong>${pos.symbol}</strong><span>${pos.qty>0?"LONG":"SHORT"}</span>
-      <span>${Math.abs(pos.qty)} shares</span><span>Avg ${pos.avgPrice.toFixed(2)}</span>
-      <span>Mark ${pos.mark.toFixed(2)}</span>
-      <strong class="${pos.pnl>0?"positive":pos.pnl<0?"negative":"neutral"}">${money(pos.pnl)}</strong>
-    </div>`).join(""):"No open paper positions. Paper fills are simulated; market prices are real provider data.";
+      <span>${Math.abs(pos.qty)} shares</span><span>Avg ${Number(pos.avgPrice).toFixed(2)}</span>
+      <span>Mark ${Number(pos.mark).toFixed(2)}</span>
+      <strong class="${Number(pos.pnl)>0?"positive":Number(pos.pnl)<0?"negative":"neutral"}">${money(pos.pnl)}</strong>
+    </div>`).join(""):`No open server-side paper positions. Fill model: ${p.fillModel||"waiting for broker"}.`;
 }
 
 function renderLearning() {
