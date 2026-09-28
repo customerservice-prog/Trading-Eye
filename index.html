@@ -249,6 +249,7 @@
           <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
           <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
+          <button data-tab="study" type="button"><span class="tab-icon">◈</span><span>Deep Study</span></button>
           <button data-tab="predictions" type="button"><span class="tab-icon">✦</span><span>Predictions</span></button>
         </div>
 
@@ -304,6 +305,32 @@
               <div class="learning-explainer">
                 <span class="learning-icon">◎</span>
                 <div><strong>No hindsight allowed.</strong><br>Historical training uses an older time-ordered segment and a separate holdout segment. Live forecasts are then stored before the outcome exists, scored later, and tracked separately.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-study">
+            <div class="study-layout">
+              <div class="study-status-card">
+                <span class="eyebrow">After-hours research</span>
+                <strong id="deepStudyState">Waiting</strong>
+                <span id="deepStudyDate">No completed study yet</span>
+              </div>
+              <div class="study-metrics">
+                <div class="study-metric"><span>Pattern memory</span><strong id="patternMemoryCount">0</strong></div>
+                <div class="study-metric"><span>Session bars studied</span><strong id="deepStudyBars">0</strong></div>
+                <div class="study-metric"><span>Predictions reviewed</span><strong id="deepStudyPredictions">0</strong></div>
+                <div class="study-metric"><span>Similar prior days</span><strong id="deepStudyAnalogs">0</strong></div>
+              </div>
+              <div class="study-details">
+                <div>
+                  <div class="study-heading">What it learned</div>
+                  <div id="deepStudyLessons" class="study-list">The nightly researcher will summarize the completed session here.</div>
+                </div>
+                <div>
+                  <div class="study-heading">Strong recurring setups</div>
+                  <div id="deepStudyPatterns" class="study-list">Pattern memory is still being built.</div>
+                </div>
               </div>
             </div>
           </div>
