@@ -1691,3 +1691,169 @@ body.research-focus .research-brain-layout {
   .readiness-gate{grid-template-columns:1fr}
   .readiness-gate-values{text-align:left;flex-direction:row;flex-wrap:wrap;gap:10px}
 }
+
+
+/* beginner paper-money command center */
+.paper-command-center{
+  display:grid;
+  grid-template-columns:minmax(280px,1.45fr) repeat(4,minmax(175px,1fr));
+  grid-template-rows:auto auto;
+  align-items:stretch;
+  gap:1px;
+  background:var(--line);
+  border-bottom:1px solid var(--line);
+}
+.paper-money-main,
+.paper-simple-card{
+  min-width:0;
+  background:#08101a;
+  padding:14px 15px;
+}
+.paper-money-main{
+  background:
+    radial-gradient(circle at 0 0,rgba(73,226,154,.12),transparent 45%),
+    linear-gradient(145deg,#0b1720,#07101a);
+  border-right:1px solid rgba(73,226,154,.12);
+}
+.paper-money-heading{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.paper-live-pill{
+  color:var(--green);
+  border:1px solid rgba(73,226,154,.24);
+  background:rgba(73,226,154,.07);
+  border-radius:999px;
+  padding:4px 7px;
+  font-size:7px;
+  font-weight:900;
+  letter-spacing:.08em;
+}
+.paper-money-balance{
+  display:block;
+  margin-top:6px;
+  color:var(--text);
+  font-size:31px;
+  line-height:1;
+  letter-spacing:-.045em;
+  font-variant-numeric:tabular-nums;
+}
+.paper-money-pnl{
+  display:block;
+  margin-top:7px;
+  font-size:12px;
+  font-weight:900;
+  font-variant-numeric:tabular-nums;
+}
+.paper-money-main small{
+  display:block;
+  max-width:420px;
+  margin-top:6px;
+  color:var(--muted-2);
+  font-size:8px;
+  line-height:1.45;
+}
+.paper-simple-card{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+}
+.paper-simple-card>span{
+  color:var(--muted);
+  font-size:7px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.paper-simple-card>strong{
+  margin-top:5px;
+  color:var(--text-2);
+  font-size:16px;
+  line-height:1.15;
+  letter-spacing:-.025em;
+}
+.paper-simple-card>small{
+  margin-top:6px;
+  color:var(--muted-2);
+  font-size:8px;
+  line-height:1.4;
+}
+.paper-simple-card.action>strong{color:var(--amber)}
+.paper-simple-card.action.positive>strong{color:var(--green)}
+.paper-simple-card.action.negative>strong{color:var(--red)}
+.paper-simple-card.position>strong{color:var(--cyan)}
+.paper-simple-card.last-move>strong{font-size:14px}
+.paper-simple-card.autopilot>strong{font-size:18px}
+.paper-details-btn{
+  margin-top:8px;
+  min-height:31px;
+  width:100%;
+  border:1px solid rgba(88,216,255,.24);
+  border-radius:7px;
+  background:rgba(88,216,255,.06);
+  color:var(--cyan);
+  font-size:8px;
+  font-weight:900;
+  cursor:pointer;
+}
+.paper-details-btn:hover{background:rgba(88,216,255,.11)}
+.paper-status-strip{
+  grid-column:1/-1;
+  display:flex;
+  align-items:center;
+  gap:18px;
+  min-height:35px;
+  padding:7px 14px;
+  background:#060c13;
+  border-top:1px solid var(--line);
+  overflow:auto;
+}
+.paper-status-strip>span{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  color:var(--muted);
+  font-size:7px;
+}
+.paper-status-strip b{
+  color:#60758c;
+  font-weight:800;
+}
+.paper-status-strip strong{
+  color:var(--text-2);
+  font-size:8px;
+  font-weight:900;
+}
+.paper-research-link{
+  margin-left:auto;
+  border:0;
+  background:transparent;
+  color:var(--green);
+  font-size:8px;
+  font-weight:900;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.paper-research-link:hover{text-decoration:underline}
+
+@media(max-width:1250px){
+  .paper-command-center{
+    grid-template-columns:minmax(260px,1.35fr) repeat(2,minmax(180px,1fr));
+  }
+  .paper-simple-card.autopilot{grid-column:auto}
+}
+@media(max-width:850px){
+  .paper-command-center{grid-template-columns:1fr 1fr}
+  .paper-money-main{grid-column:1/-1}
+  .paper-status-strip{grid-column:1/-1}
+}
+@media(max-width:560px){
+  .paper-command-center{grid-template-columns:1fr}
+  .paper-money-main,.paper-status-strip{grid-column:auto}
+  .paper-money-balance{font-size:28px}
+  .paper-status-strip{align-items:flex-start;flex-direction:column;gap:6px}
+  .paper-research-link{margin-left:0}
+}
