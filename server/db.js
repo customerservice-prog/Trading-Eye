@@ -211,11 +211,15 @@ export class Database {
         validation_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         test_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        live_shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        shadow_started_at TIMESTAMPTZ,
         dataset JSONB NOT NULL DEFAULT '{}'::jsonb,
         promoted_at TIMESTAMPTZ,
         parent_model_id TEXT,
         notes TEXT
       );
+      ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS live_shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
+      ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS shadow_started_at TIMESTAMPTZ;
       CREATE INDEX IF NOT EXISTS model_registry_horizon_status
         ON model_registry(horizon_minutes,status,trained_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS model_registry_one_production_per_horizon
