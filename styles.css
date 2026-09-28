@@ -1668,3 +1668,26 @@ body.research-focus .research-brain-layout {
 .research-findings-panel tr.rejected_validation td:first-child,
 .research-findings-panel tr.rejected_holdout td:first-child { color:var(--red); }
 .research-findings-panel tr.legacy_unvalidated td:first-child { color:var(--muted); }
+
+
+/* server proof wall */
+.readiness-proof-block{margin-top:16px}
+.readiness-gate-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px}
+.readiness-gate{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025)}
+.readiness-gate.pass{border-color:rgba(80,220,150,.28);background:rgba(80,220,150,.045)}
+.readiness-gate.blocked{border-color:rgba(255,185,80,.24);background:rgba(255,185,80,.035)}
+.readiness-gate-status{font-size:11px;font-weight:800;letter-spacing:.08em;white-space:nowrap}
+.readiness-gate.pass .readiness-gate-status{color:#78e6b0}
+.readiness-gate.blocked .readiness-gate-status{color:#ffc66d}
+.readiness-gate-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.readiness-gate-copy strong{font-size:13px}
+.readiness-gate-copy span{font-size:11px;line-height:1.45;color:rgba(230,238,255,.64)}
+.readiness-gate-values{display:flex;flex-direction:column;gap:4px;text-align:right;font-size:10px;color:rgba(230,238,255,.52)}
+.readiness-gate-values b{display:inline-block;margin-left:4px;color:rgba(244,248,255,.9);font-size:11px}
+@media(max-width:1000px){
+  .readiness-gate-list{grid-template-columns:1fr}
+}
+@media(max-width:650px){
+  .readiness-gate{grid-template-columns:1fr}
+  .readiness-gate-values{text-align:left;flex-direction:row;flex-wrap:wrap;gap:10px}
+}
