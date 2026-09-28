@@ -125,6 +125,9 @@ function renderAI(analysis, features) {
   $("probUp").textContent = analysis ? Math.round(analysis.probabilities.up * 100) + "%" : "—";
   $("probFlat").textContent = analysis ? Math.round(analysis.probabilities.flat * 100) + "%" : "—";
   $("probDown").textContent = analysis ? Math.round(analysis.probabilities.down * 100) + "%" : "—";
+  $("probUpBar").style.width = analysis ? Math.round(analysis.probabilities.up * 100) + "%" : "0%";
+  $("probFlatBar").style.width = analysis ? Math.round(analysis.probabilities.flat * 100) + "%" : "0%";
+  $("probDownBar").style.width = analysis ? Math.round(analysis.probabilities.down * 100) + "%" : "0%";
   $("beginnerExplanation").textContent = beginnerExplanation(analysis);
 
   if (analysis) {
@@ -171,8 +174,8 @@ function renderChart(analysis) {
   const meta = sim.getMeta(activeSymbol);
   const raw = sim.getCandles(activeSymbol, "1m", 30);
   const vwapRows = raw.slice(-20);
-  const vwap = recent.reduce((a, x) => a + ((x.high + x.low + x.close) / 3) * x.volume, 0) /
-    Math.max(1, recent.reduce((a, x) => a + x.volume, 0));
+  const vwap = vwapRows.reduce((a, x) => a + ((x.high + x.low + x.close) / 3) * x.volume, 0) /
+    Math.max(1, vwapRows.reduce((a, x) => a + x.volume, 0));
 
   $("symbolName").textContent = activeSymbol;
   $("symbolDescription").textContent = meta.name + " · demo";
@@ -252,8 +255,6 @@ function maybeAutopilot(analysis, quote) {
 
   const pos = paper.positions[activeSymbol];
   const strong = analysis.confidence >= 0.80;
-  const directionQty = pos?.qty || 0;
-
   if (!pos && strong) {
     const qty = paper.suggestedQty(quote.price, 0.009);
     const side = analysis.direction === "UP" ? "BUY" : "SELL";
@@ -354,20 +355,20 @@ $("pauseBtn").addEventListener("click", () => {
 $("predictionToggle").addEventListener("click", e => {
   forecastOn = !forecastOn;
   e.currentTarget.classList.toggle("active", forecastOn);
-  e.currentTarget.textContent = forecastOn ? "AI forecast on" : "AI forecast off";
+  e.currentTarget.innerHTML = `<span class="toolbar-dot ai"></span>${forecastOn ? "AI forecast on" : "AI forecast off"}`;
   renderAll(sim.snapshot());
 });
 
 $("beginnerToggle").addEventListener("click", e => {
   beginnerOn = !beginnerOn;
   e.currentTarget.classList.toggle("active", beginnerOn);
-  e.currentTarget.textContent = beginnerOn ? "Beginner labels on" : "Beginner labels off";
+  e.currentTarget.innerHTML = `<span class="toolbar-dot beginner"></span>${beginnerOn ? "Beginner labels on" : "Beginner labels off"}`;
   $("aiChartCallout").style.display = beginnerOn ? "" : "none";
 });
 
 $("simplifyBtn").addEventListener("click", () => {
   simpleReasons = !simpleReasons;
-  $("simplifyBtn").textContent = simpleReasons ? "Show model math" : "Simplify";
+  $("simplifyBtn").textContent = simpleReasons ? "Show model math" : "Explain simply";
   renderAI(latestAnalysis, sim.getFeatures(activeSymbol));
 });
 
@@ -406,6 +407,31 @@ $("lowerTabs").addEventListener("click", e => {
   document.querySelectorAll(".tab-pane").forEach(x => x.classList.remove("active"));
   $("tab-" + btn.dataset.tab).classList.add("active");
 });
+
+
+function setTour(open, markSeen = false) {
+  const panel = $("tourPanel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", !open);
+  document.body.style.overflow = open ? "hidden" : "";
+  if (markSeen) {
+    try { localStorage.setItem("trading-eye-tour-seen", "1"); } catch (_) {}
+  }
+}
+
+$("helpBtn").addEventListener("click", () => setTour(true));
+$("tourCloseBtn").addEventListener("click", () => setTour(false, true));
+$("tourDoneBtn").addEventListener("click", () => setTour(false, true));
+document.querySelectorAll("[data-tour-close]").forEach(el => el.addEventListener("click", () => setTour(false, true)));
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("tourPanel").classList.contains("hidden")) setTour(false, true);
+});
+
+try {
+  if (!localStorage.getItem("trading-eye-tour-seen")) {
+    setTimeout(() => setTour(true), 650);
+  }
+} catch (_) {}
 
 sim.subscribe(snapshot => renderAll(snapshot, true));
 renderAll(sim.snapshot(), false);
