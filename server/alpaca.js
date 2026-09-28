@@ -16,7 +16,10 @@ export class AlpacaProvider {
     this.overnightMaxSymbols=Math.max(5,Math.min(this.maxSymbols,Number(overnightMaxSymbols)||14));
     this.requestedSymbols=[...new Set(symbols.map(s=>String(s).toUpperCase()))].slice(0,this.maxSymbols);
     this.symbols=this.requestedSymbols.slice(0,this.#effectiveLimit());
-    this.subscribedSymbols=new Set();
+    this.focusSymbols=new Set(this.symbols.slice(0,1));
+    this.subscribedQuotes=new Set();
+    this.subscribedBars=new Set();
+    this.subscribedTrades=new Set();
     this.onEvent=onEvent;
     this.onStatus=onStatus;
     this.ws=null;
@@ -134,16 +137,20 @@ export class AlpacaProvider {
             clearTimeout(authTimer);
             this.authenticated=true;
             this.reconnects=0;
+            const trades=[...this.focusSymbols].filter(s=>this.symbols.includes(s));
             ws.send(JSON.stringify({
               action:"subscribe",
-              trades:this.symbols,
+              trades,
               quotes:this.symbols,
               bars:this.symbols
             }));
-            this.subscribedSymbols=new Set(this.symbols);
+            this.subscribedQuotes=new Set(this.symbols);
+            this.subscribedBars=new Set(this.symbols);
+            this.subscribedTrades=new Set(trades);
             this.onStatus({
               state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols,
-              symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols
+              symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols,
+              tradeFocus:trades
             });
             continue;
           }
@@ -161,7 +168,7 @@ export class AlpacaProvider {
                 state:"LIMIT_ADJUSTED",provider:"alpaca",feed:this.feed,code,
                 maxSymbols:this.maxSymbols,overnightMaxSymbols:this.overnightMaxSymbols,
                 symbolLimit:this.#effectiveLimit(),symbols:this.symbols,
-                requestedSymbols:this.requestedSymbols
+                requestedSymbols:this.requestedSymbols,tradeFocus:[...this.focusSymbols]
               });
               try { ws.close(1000,"symbol limit retry"); } catch {}
             } else if ([402,404,406,409].includes(code)) {
@@ -201,21 +208,70 @@ export class AlpacaProvider {
     const add=next.filter(s=>!current.has(s));
     const remove=this.symbols.filter(s=>!next.includes(s));
     this.symbols=next;
+
+    for (const focus of [...this.focusSymbols]) {
+      if (!this.symbols.includes(focus)) this.focusSymbols.delete(focus);
+    }
+    if (!this.focusSymbols.size && this.symbols.length) this.focusSymbols.add(this.symbols[0]);
+
     if (this.ws && this.authenticated && this.ws.readyState===1) {
-      if (remove.length) {
-        this.ws.send(JSON.stringify({action:"unsubscribe",trades:remove,quotes:remove,bars:remove}));
-        remove.forEach(s=>this.subscribedSymbols.delete(s));
+      const removeTrades=remove.filter(s=>this.subscribedTrades.has(s));
+      if (remove.length || removeTrades.length) {
+        this.ws.send(JSON.stringify({
+          action:"unsubscribe",
+          trades:removeTrades,
+          quotes:remove,
+          bars:remove
+        }));
+        remove.forEach(s=>{
+          this.subscribedQuotes.delete(s);
+          this.subscribedBars.delete(s);
+        });
+        removeTrades.forEach(s=>this.subscribedTrades.delete(s));
       }
       if (add.length) {
-        this.ws.send(JSON.stringify({action:"subscribe",trades:add,quotes:add,bars:add}));
-        add.forEach(s=>this.subscribedSymbols.add(s));
+        this.ws.send(JSON.stringify({action:"subscribe",trades:[],quotes:add,bars:add}));
+        add.forEach(s=>{
+          this.subscribedQuotes.add(s);
+          this.subscribedBars.add(s);
+        });
       }
+      this.#syncTradeFocus();
       this.onStatus({
         state:"LIVE",provider:"alpaca",feed:this.feed,symbols:this.symbols,
-        symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols
+        symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols,
+        tradeFocus:[...this.focusSymbols]
       });
     }
     return this.symbols;
+  }
+
+  #syncTradeFocus() {
+    if (!this.ws || !this.authenticated || this.ws.readyState!==1) return;
+    const desired=new Set([...this.focusSymbols].filter(s=>this.symbols.includes(s)));
+    const remove=[...this.subscribedTrades].filter(s=>!desired.has(s));
+    const add=[...desired].filter(s=>!this.subscribedTrades.has(s));
+    if (remove.length) {
+      this.ws.send(JSON.stringify({action:"unsubscribe",trades:remove,quotes:[],bars:[]}));
+      remove.forEach(s=>this.subscribedTrades.delete(s));
+    }
+    if (add.length) {
+      this.ws.send(JSON.stringify({action:"subscribe",trades:add,quotes:[],bars:[]}));
+      add.forEach(s=>this.subscribedTrades.add(s));
+    }
+  }
+
+  setFocusSymbols(symbols) {
+    const desired=[...new Set((symbols||[]).map(s=>String(s).toUpperCase()).filter(s=>this.symbols.includes(s)))].slice(0,2);
+    this.focusSymbols=new Set(desired.length?desired:this.symbols.slice(0,1));
+    this.#syncTradeFocus();
+    this.onStatus({
+      state:this.authenticated?"LIVE":"FOCUS_UPDATED",
+      provider:"alpaca",feed:this.feed,symbols:this.symbols,
+      symbolLimit:this.#effectiveLimit(),requestedSymbols:this.requestedSymbols,
+      tradeFocus:[...this.focusSymbols]
+    });
+    return [...this.focusSymbols];
   }
 
   async historicalBarsForSymbols({symbols,start,end,timeframe="1Min",limit=10000,onPage=()=>{}}) {
