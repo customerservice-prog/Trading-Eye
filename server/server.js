@@ -65,6 +65,37 @@ const provider=new AlpacaProvider({
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
 await engine.init();
 
+let learningHotSetTimer=null;
+async function refreshLearningHotSet(){
+  try{
+    const latest=await db.latestUniverseScan();
+    const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
+    if(!scanDate) return;
+    const ranked=await db.topUniverseCandidates(scanDate,{limit:50});
+    const valid=[];
+    for(const row of ranked){
+      const symbol=String(row.symbol||"").toUpperCase();
+      if(!symbol||valid.includes(symbol)) continue;
+      const asset=await universe.get(symbol);
+      if(!asset||asset.status!=="active"||asset.asset_class!=="us_equity") continue;
+      if(!asset.tradable||!asset.data_supported||String(asset.exchange||"").toUpperCase()==="OTC") continue;
+      valid.push(symbol);
+      if(valid.length>=Math.max(8,LIVE_SYMBOL_LIMIT-SYMBOLS.length)) break;
+    }
+    if(valid.length){
+      const hot=await engine.setAutoCandidates(valid,{backfillDays:3});
+      console.log(JSON.stringify({
+        event:"learning_hot_set_refreshed",
+        scanDate,candidateCount:valid.length,hotCount:hot.length,symbols:hot
+      }));
+    }
+  }catch(err){
+    console.log(JSON.stringify({event:"learning_hot_set_error",message:String(err?.message||err)}));
+  }
+}
+setTimeout(()=>refreshLearningHotSet(),20000);
+learningHotSetTimer=setInterval(()=>refreshLearningHotSet(),15*60*1000);
+
 const modelLab=new ModelLab({
   db,marketEngine:engine,horizonMinutes:15,enabled:MODEL_LAB_ENABLED,
   forceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START
@@ -470,6 +501,7 @@ server.listen(PORT,"0.0.0.0",()=>{
 });
 
 const shutdown=async()=>{
+  clearInterval(learningHotSetTimer);
   provider.stop();
   universe.stop();
   deepStudy.stop();
