@@ -12,6 +12,7 @@ import { ModelLab } from "./model-lab.js";
 import { PaperBroker } from "./paper-broker.js";
 import { ResearchBrain } from "./research-brain.js";
 import { ReadinessEvaluator } from "./readiness.js";
+import { MistakeLab } from "./mistake-lab.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -29,6 +30,9 @@ const MODEL_LAB_FORCE_TRAIN_ON_START=String(process.env.MODEL_LAB_FORCE_TRAIN_ON
 const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
 const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1");
+const PAPER_EXPLORATION_ENABLED=String(process.env.PAPER_EXPLORATION_ENABLED ?? "true").toLowerCase()==="true";
+const PAPER_EXPLORATION_ACCOUNT_ID=String(process.env.PAPER_EXPLORATION_ACCOUNT_ID || "TE_PAPER_EXPLORATION_V1");
+const MISTAKE_LAB_ENABLED=String(process.env.MISTAKE_LAB_ENABLED ?? "true").toLowerCase()==="true";
 const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
 const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
 const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
@@ -72,10 +76,35 @@ const paperBroker=new PaperBroker({
   accountId:PAPER_ACCOUNT_ID,
   startingCash:100000,
   fillBufferBps:PAPER_FILL_BUFFER_BPS,
-  autopilotEnabled:PAPER_AUTOPILOT_ENABLED
+  autopilotEnabled:PAPER_AUTOPILOT_ENABLED,
+  respectNoTrade:true,
+  entryPositionPct:.05,
+  sourceTag:"AI_PAPER"
 });
 await paperBroker.init();
+
+const explorationBroker=PAPER_EXPLORATION_ENABLED
+  ? new PaperBroker({
+      db,marketEngine:engine,
+      accountId:PAPER_EXPLORATION_ACCOUNT_ID,
+      startingCash:100000,
+      fillBufferBps:Math.max(PAPER_FILL_BUFFER_BPS,2.0),
+      maxPositionPct:.03,
+      maxGrossPct:.15,
+      maxPositions:5,
+      dailyLossPct:.02,
+      autopilotMinConfidence:.40,
+      autopilotMinEdge:.025,
+      autopilotEnabled:true,
+      respectNoTrade:false,
+      entryPositionPct:.015,
+      sourceTag:"AI_EXPLORE"
+    })
+  : null;
+if(explorationBroker) await explorationBroker.init();
+
 const paperStartup=await paperBroker.snapshot();
+const explorationStartup=explorationBroker?await explorationBroker.snapshot():null;
 console.log(JSON.stringify({
   event:"paper_account_startup",
   accountId:paperStartup.accountId,
@@ -85,10 +114,27 @@ console.log(JSON.stringify({
   cash:paperStartup.cash,
   realizedPnl:paperStartup.realizedPnl,
   openPositions:(paperStartup.positions||[]).length,
-  fillCount:paperStartup.fillCount
+  fillCount:paperStartup.fillCount,
+  exploration:explorationStartup?{
+    accountId:explorationStartup.accountId,
+    autopilotEnabled:explorationStartup.autopilotEnabled,
+    equity:explorationStartup.equity,
+    openPositions:(explorationStartup.positions||[]).length,
+    fillCount:explorationStartup.fillCount
+  }:null
 }));
 
-engine.attachIntelligence({modelLab,paperBroker});
+const mistakeLab=new MistakeLab({
+  db,modelLab,enabled:MISTAKE_LAB_ENABLED
+});
+await mistakeLab.init();
+
+engine.attachIntelligence({
+  modelLab,
+  paperBroker,
+  paperBrokers:[paperBroker,explorationBroker].filter(Boolean),
+  mistakeLab
+});
 
 const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
 await deepStudy.init();
@@ -142,7 +188,9 @@ app.get("/health",async(req,res)=>{
     engineEnabled:s.engineEnabled,
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
+    mistakeLab:mistakeLab.status(),
     paperBroker:true,
+    paperExploration:Boolean(explorationBroker),
     researchBrain:{
       longHistoryEnabled:LONG_HISTORY_ENABLED,
       longHistoryProvider:LONG_HISTORY_PROVIDER,
@@ -190,6 +238,15 @@ app.get("/api/research/findings",async(req,res)=>{
 
 app.get("/api/paper",async(req,res)=>{
   res.json(await paperBroker.snapshot());
+});
+
+app.get("/api/paper/exploration",async(req,res)=>{
+  if(!explorationBroker) return res.status(404).json({enabled:false,error:"Exploration paper lane disabled"});
+  res.json({enabled:true,...await explorationBroker.snapshot()});
+});
+
+app.get("/api/mistakes",async(req,res)=>{
+  res.json(mistakeLab.status());
 });
 
 app.post("/api/paper/autopilot",async(req,res)=>{
@@ -384,6 +441,7 @@ deepStudy.on("status",status=>broadcast({type:"deep_study_status",data:status}))
 deepStudy.on("study",study=>broadcast({type:"deep_study_complete",data:study}));
 researchBrain.on("event",event=>broadcast({type:"research_event",data:event}));
 researchBrain.on("status",status=>broadcast({type:"research_status",data:status}));
+mistakeLab.on("analysis",analysis=>broadcast({type:"mistake_lab",data:analysis}));
 
 wss.on("connection",ws=>{
   ws.send(JSON.stringify({type:"status",data:engine.status()}));
@@ -398,7 +456,9 @@ server.listen(PORT,"0.0.0.0",()=>{
     symbols:SYMBOLS,providerConfigured:provider.configured(),engineEnabled:ENGINE_ENABLED,
     modelLabEnabled:MODEL_LAB_ENABLED,
     modelLabForceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START,
-    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED
+    paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED,
+    paperExplorationEnabled:PAPER_EXPLORATION_ENABLED,
+    mistakeLabEnabled:MISTAKE_LAB_ENABLED
   }));
 });
 
@@ -408,6 +468,8 @@ const shutdown=async()=>{
   deepStudy.stop();
   modelLab.stop();
   paperBroker.stop();
+  explorationBroker?.stop();
+  mistakeLab.stop();
   researchBrain.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
