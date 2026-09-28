@@ -115,6 +115,20 @@ app.get("/api/watchlist",async(req,res)=>{
   res.json({provider:"alpaca",feed:engine.status().provider.feed,feedMode:FEED,mode:"REAL_DATA_ONLY",rows,universe:universeStats});
 });
 
+app.get("/api/scanner/latest",async(req,res)=>{
+  const latest=await db.latestUniverseScan();
+  const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
+  const candidates=scanDate?await db.topUniverseCandidates(scanDate,{limit:Number(req.query.limit)||50}):[];
+  const universeStats=await universe.stats();
+  res.json({
+    universe:universeStats,
+    scan:latest,
+    candidates,
+    hotSymbols:engine.hotSymbols(),
+    pinnedSymbols:[...engine.pinnedSymbols]
+  });
+});
+
 app.get("/api/studies/status",async(req,res)=>{
   res.json(deepStudy.status());
 });
