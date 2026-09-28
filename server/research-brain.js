@@ -107,7 +107,8 @@ export class ResearchBrain extends EventEmitter {
   }
 
   async init(){
-    const demoted=await this.db.demoteLegacyResearchFindings();
+    const validationVersion="v3_baseline_excess";
+    const demoted=await this.db.demoteLegacyResearchFindings(validationVersion);
     const startEvent=await this.#event({
       category:"SYSTEM",
       title:"Research Brain online",
@@ -127,7 +128,7 @@ export class ResearchBrain extends EventEmitter {
         level:"IMPORTANT",
         title:"Legacy pattern promotions reset for stronger validation",
         message:`${demoted} older findings were relabeled LEGACY_UNVALIDATED until they pass the new discovery → validation → holdout pipeline.`,
-        details:{demoted,validationVersion:"v2_chrono_60_20_20"}
+        details:{demoted,validationVersion}
       });
     }
     this.sessionStartEventId=Number(startEvent?.id)||null;
@@ -1069,13 +1070,13 @@ export class ResearchBrain extends EventEmitter {
           avgFavorableReturn:headline.avgFavorable,
           score,
           status,
-          validationVersion:"v2_chrono_60_20_20",
+          validationVersion,
           discoveryMetrics:discovery,
           validationMetrics:validation,
           holdoutMetrics:holdout,
           description:`${symbol}: ${g.patternKey.replaceAll("|"," + ")} showed a ${direction} ${h}-day pattern in discovery. ${laterEvidence}`,
           evidence:{
-            validationVersion:"v2_chrono_60_20_20",
+            validationVersion,
             intendedDirection:directionSign>0?"UP":"DOWN",
             totalSamples:samples.length,
             discoveryWindow:{start:discovery.start,end:discovery.end,samples:discovery.samples},
