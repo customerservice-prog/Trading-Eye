@@ -252,6 +252,7 @@
           <button data-tab="level2" type="button"><span class="tab-icon">≡</span><span>Top of Book</span></button>
           <button data-tab="paper" type="button"><span class="tab-icon">$</span><span>Paper Account</span></button>
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
+          <button data-tab="scanner" type="button"><span class="tab-icon">⌁</span><span>Market Scanner</span></button>
           <button data-tab="study" type="button"><span class="tab-icon">◈</span><span>Deep Study</span></button>
           <button data-tab="predictions" type="button"><span class="tab-icon">✦</span><span>Predictions</span></button>
         </div>
@@ -308,6 +309,36 @@
               <div class="learning-explainer">
                 <span class="learning-icon">◎</span>
                 <div><strong>No hindsight allowed.</strong><br>Historical training uses an older time-ordered segment and a separate holdout segment. Live forecasts are then stored before the outcome exists, scored later, and tracked separately.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-scanner">
+            <div class="scanner-layout">
+              <div class="scanner-summary">
+                <div>
+                  <span class="eyebrow">Whole-market universe</span>
+                  <strong id="universeAssetCount">—</strong>
+                  <span>active U.S. equities indexed</span>
+                </div>
+                <div>
+                  <span class="eyebrow">Latest full scan</span>
+                  <strong id="scannerDate">—</strong>
+                  <span id="scannerStatus">Waiting for first scan</span>
+                </div>
+                <div>
+                  <span class="eyebrow">Live hot set</span>
+                  <strong id="hotSetCount">—</strong>
+                  <span>real-time stream slots in use</span>
+                </div>
+              </div>
+              <div class="scanner-table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Rank</th><th>Symbol</th><th>Company</th><th>1D</th><th>5D</th><th>20D</th><th>Rel Vol</th><th>Interest</th></tr>
+                  </thead>
+                  <tbody id="scannerBody"></tbody>
+                </table>
               </div>
             </div>
           </div>
