@@ -879,6 +879,7 @@ export class ResearchBrain extends EventEmitter {
     });
 
     let barsProcessed=0,findingsStored=0;
+    const statusCounts={PROMOTED:0,VALIDATED:0,CANDIDATE:0,REJECTED_VALIDATION:0,REJECTED_HOLDOUT:0};
     for(const meta of batch){
       const rows=await this.db.getLongHistoryBars(meta.symbol,{start:this.longHistoryStart,limit:10000});
       barsProcessed+=rows.length;
@@ -886,6 +887,7 @@ export class ResearchBrain extends EventEmitter {
       for(const finding of findings){
         await this.db.upsertResearchFinding(finding);
         findingsStored++;
+        statusCounts[finding.status]=(statusCounts[finding.status]||0)+1;
       }
     }
 
@@ -894,7 +896,7 @@ export class ResearchBrain extends EventEmitter {
       provider:this.longHistoryProvider,
       progress:symbols.length?this.miningCursor/symbols.length:0,
       itemsDone:this.miningCursor,itemsTotal:symbols.length,barsProcessed,
-      details:{lastSymbols:batch.map(x=>x.symbol),findingsStored}
+      details:{lastSymbols:batch.map(x=>x.symbol),findingsStored,statusCounts}
     });
 
     if(findingsStored){
@@ -902,8 +904,8 @@ export class ResearchBrain extends EventEmitter {
         category:"PATTERN",
         jobKey,
         title:"Historical patterns updated",
-        message:`Tested ${batch.length} symbols / ${barsProcessed.toLocaleString()} daily bars and updated ${findingsStored} statistically filtered findings.`,
-        details:{symbols:batch.map(x=>x.symbol),barsProcessed,findingsStored}
+        message:`Tested ${batch.length} symbols / ${barsProcessed.toLocaleString()} daily bars: ${statusCounts.PROMOTED||0} promoted, ${(statusCounts.REJECTED_VALIDATION||0)+(statusCounts.REJECTED_HOLDOUT||0)} rejected by unseen data, ${(statusCounts.VALIDATED||0)+(statusCounts.CANDIDATE||0)} still proving.`,
+        details:{symbols:batch.map(x=>x.symbol),barsProcessed,findingsStored,statusCounts}
       });
     }
   }
