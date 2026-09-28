@@ -74,7 +74,7 @@ export class ReplayArena {
     this.running=false;
     this.lastError=null;
     this.lastRun=null;
-    this.totals={runs:0,decisions:0,trades:0,wins:0,losses:0};
+    this.totals={attempts:0,runs:0,decisions:0,trades:0,wins:0,losses:0};
     this.startedAt=new Date();
   }
 
@@ -162,6 +162,7 @@ export class ReplayArena {
     const [runs,last]=await Promise.all([
       this.db.pool.query(`
         SELECT
+          COUNT(*)::int AS attempts,
           COUNT(*) FILTER (WHERE status='COMPLETE')::int AS runs,
           COALESCE(SUM((summary->>'decisions')::int) FILTER (WHERE status='COMPLETE'),0)::bigint AS decisions,
           COALESCE(SUM((summary->>'trades')::int) FILTER (WHERE status='COMPLETE'),0)::bigint AS trades,
@@ -177,6 +178,7 @@ export class ReplayArena {
     ]);
     const r=runs.rows[0]||{};
     this.totals={
+      attempts:Number(r.attempts)||0,
       runs:Number(r.runs)||0,
       decisions:Number(r.decisions)||0,
       trades:Number(r.trades)||0,
@@ -257,11 +259,12 @@ export class ReplayArena {
         "AMD","TSLA","AVGO","NFLX","PLTR","JPM","BAC","MU","UBER","XLF","XLK","SMH"
       ];
       const available=new Set(meta.map(x=>x.symbol));
+      const hotSymbols=(this.marketEngine?.hotSymbols?.()||[]).filter(s=>available.has(s));
       const cycleMaxSymbols=openNow?Math.min(8,this.maxSymbols):this.maxSymbols;
       const symbols=[
         ...liquidPriority.filter(s=>available.has(s)),
-        ...meta.map(x=>x.symbol).filter(s=>!liquidPriority.includes(s))
-      ].slice(0,cycleMaxSymbols);
+        ...hotSymbols.filter(s=>!liquidPriority.includes(s))
+      ].filter((s,i,a)=>a.indexOf(s)===i).slice(0,cycleMaxSymbols);
 
       if(symbols.length<5) throw new Error("Replay Arena needs at least 5 symbols with 3,000 stored minute bars.");
 
@@ -295,7 +298,7 @@ export class ReplayArena {
       const poolDays=days.slice(poolStart,poolEnd);
       if(!poolDays.length) throw new Error("Replay Arena training-only session pool is empty.");
 
-      const cursor=this.totals.runs%poolDays.length;
+      const cursor=this.totals.attempts%poolDays.length;
       const replayDay=poolDays[cursor];
       const sessionTimestamps=[];
       for(const rows of histories.values()){
@@ -570,6 +573,7 @@ export class ReplayArena {
         WHERE run_id=$1
       `,[runId,JSON.stringify(summary)]);
 
+      this.totals.attempts++;
       this.totals.runs++;
       this.totals.decisions+=decisions;
       this.totals.trades+=trades.length;
@@ -601,6 +605,7 @@ export class ReplayArena {
           ON CONFLICT(run_id) DO UPDATE SET status='ERROR',completed_at=NOW(),error=EXCLUDED.error
         `,[runId,startedAt,this.lastError]);
       }catch{}
+      this.totals.attempts++;
       console.log(JSON.stringify({event:"replay_arena_error",runId,message:this.lastError}));
       throw err;
     }finally{
