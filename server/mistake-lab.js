@@ -269,6 +269,19 @@ export class MistakeLab extends EventEmitter {
         });
       }
 
+      const focusSymbols=bySymbol
+        .filter(x=>x.samples>=8 && x.errorRate>=Math.max(.50,errorRate+.03))
+        .slice(0,5)
+        .map(x=>({symbol:x.key,samples:x.samples,errorRate:x.errorRate}));
+      const focusTimeBuckets=byTime
+        .filter(x=>x.samples>=15 && x.errorRate>=Math.max(.50,errorRate+.03))
+        .slice(0,3)
+        .map(x=>({bucket:x.key,samples:x.samples,errorRate:x.errorRate}));
+      const focusDirections=byCall
+        .filter(x=>x.samples>=12 && x.errorRate>=.52)
+        .slice(0,3)
+        .map(x=>({direction:x.key,samples:x.samples,errorRate:x.errorRate}));
+
       const guard={
         level,
         blockStrictEntries:level==="ALERT",
@@ -280,6 +293,10 @@ export class MistakeLab extends EventEmitter {
         highConfidenceSamples:highConf.length,
         highConfidenceErrorRate:highConfErrorRate,
         hardReversalRate:ratio(hardReversals.length,recent.length),
+        focusSymbols,
+        focusTimeBuckets,
+        focusDirections,
+        hardExampleReplayMultiplier:level==="ALERT"?4:level==="WARN"?3:2,
         reason:level==="ALERT"
           ?"Recent mistakes deteriorated materially. Strict paper entries are blocked while a challenger is retrained."
           :level==="WARN"
@@ -347,6 +364,8 @@ export class MistakeLab extends EventEmitter {
         missedMoves:missedMoves.length,
         explorationClosed:explorationClosed.length,
         explorationLosses:explorationLosses.length,
+        focusSymbols:focusSymbols.map(x=>x.symbol),
+        focusTimeBuckets:focusTimeBuckets.map(x=>x.bucket),
         level,
         blockStrictEntries:guard.blockStrictEntries
       }));
