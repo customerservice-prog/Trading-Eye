@@ -467,20 +467,20 @@ export class Database {
 
   async topPatterns({symbol=null,minSamples=12,limit=30}={}) {
     if (!this.ready) return [];
+    const safeLimit=Math.max(1,Math.min(200,Number(limit)||30));
     const params=[minSamples];
     let where="WHERE sample_count >= $1";
     if (symbol) {
       params.push(symbol);
       where+=" AND symbol=$2";
     }
-    params.push(Math.max(1,Math.min(200,limit)));
     const q=await this.pool.query(`
       SELECT symbol,fingerprint,horizon_minutes,sample_count,up_count,flat_count,down_count,
              avg_return,avg_abs_return,avg_mfe,avg_mae,last_seen,context
       FROM pattern_memory
       ${where}
       ORDER BY sample_count DESC, ABS(avg_return) DESC
-      LIMIT ${params.length}
+      LIMIT ${safeLimit}
     `,params);
     return q.rows;
   }
