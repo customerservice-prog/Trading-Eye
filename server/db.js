@@ -480,7 +480,9 @@ export class Database {
   async latestUniverseScan() {
     if (!this.ready) return null;
     const q=await this.pool.query(`
-      SELECT scan_date,scan_version,status,started_at,completed_at,assets_scanned,daily_bars,candidates,deep_assets,deep_bars,error
+      SELECT TO_CHAR(scan_date,'YYYY-MM-DD') AS scan_date,
+             scan_version,status,started_at,completed_at,assets_scanned,daily_bars,candidates,
+             deep_assets,deep_bars,error
       FROM universe_scan_runs ORDER BY scan_date DESC LIMIT 1
     `);
     return q.rows[0]||null;
