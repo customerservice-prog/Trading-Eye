@@ -210,6 +210,7 @@ export class Database {
         calibration JSONB NOT NULL DEFAULT '{}'::jsonb,
         validation_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         test_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+        walk_forward_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         live_shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
         shadow_started_at TIMESTAMPTZ,
@@ -218,6 +219,7 @@ export class Database {
         parent_model_id TEXT,
         notes TEXT
       );
+      ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS walk_forward_metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
       ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS live_shadow_metrics JSONB NOT NULL DEFAULT '{}'::jsonb;
       ALTER TABLE model_registry ADD COLUMN IF NOT EXISTS shadow_started_at TIMESTAMPTZ;
       CREATE INDEX IF NOT EXISTS model_registry_horizon_status
