@@ -360,13 +360,19 @@ export class DeepStudyEngine extends EventEmitter {
     this.emit("status",this.status());
     await this.db.beginUniverseScan(scanDate);
     try {
-      const assets=await this.db.listActiveAssets({limit:20000,dataSupportedOnly:true});
+      const assets=await this.db.listActiveAssets({
+        limit:20000,
+        dataSupportedOnly:true,
+        scannerEligibleOnly:true
+      });
+      const completedSymbols=new Set(await this.db.universeScannedSymbols(scanDate));
+      const pendingAssets=assets.filter(a=>!completedSymbols.has(a.symbol));
       const start=new Date(addDays(scanDate,-180)+"T00:00:00Z");
       const end=new Date(addDays(scanDate,1)+"T23:59:59Z");
-      let assetsScanned=0,dailyBars=0;
+      let assetsScanned=completedSymbols.size,dailyBars=0;
 
-      for (let offset=0;offset<assets.length;offset+=100) {
-        const chunk=assets.slice(offset,offset+100);
+      for (let offset=0;offset<pendingAssets.length;offset+=100) {
+        const chunk=pendingAssets.slice(offset,offset+100);
         const bySymbol=new Map(chunk.map(a=>[a.symbol,[]]));
         const persisted=[];
 
@@ -406,14 +412,15 @@ export class DeepStudyEngine extends EventEmitter {
         }
       }
 
-      const top=await this.db.topUniverseCandidates(scanDate,{limit:24});
+      const liveCapacity=Math.max(1,this.marketEngine.liveSymbolLimit-this.marketEngine.pinnedSymbols.size);
+      const top=await this.db.topUniverseCandidates(scanDate,{limit:liveCapacity});
       await this.marketEngine.setAutoCandidates(top.map(x=>x.symbol),{backfillDays:3});
       await this.db.completeUniverseScan(scanDate,{
-        assetsScanned,dailyBars,candidates:top.length
+        assetsScanned:assets.length,dailyBars,candidates:top.length
       });
-      this.universeState={state:"COMPLETE",scanDate,assetsScanned,dailyBars,candidates:top.length,error:null};
+      this.universeState={state:"COMPLETE",scanDate,assetsScanned:assets.length,dailyBars,candidates:top.length,error:null};
       console.log(JSON.stringify({
-        event:"universe_scan_complete",scanDate,assetsScanned,dailyBars,candidates:top.length
+        event:"universe_scan_complete",scanDate,assetsScanned:assets.length,dailyBars,candidates:top.length
       }));
     } catch(err) {
       this.universeState={...this.universeState,state:"ERROR",error:String(err?.message||err)};
