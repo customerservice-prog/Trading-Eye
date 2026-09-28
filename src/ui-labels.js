@@ -38,6 +38,10 @@ export const FEATURE_LABELS = {
   spyRet5:{title:"SPY 5-minute context",positive:"The broad S&P 500 market is strengthening over five minutes.",negative:"The broad S&P 500 market is weakening over five minutes."},
   qqqRet5:{title:"QQQ 5-minute context",positive:"Nasdaq/technology context is strengthening.",negative:"Nasdaq/technology context is weakening."},
   breadth5:{title:"Live breadth context",positive:"More monitored U.S. names are rising than falling.",negative:"More monitored U.S. names are falling than rising."},
+  dispersion5:{title:"Market dispersion",positive:"Stocks are separating more than usual, so stock-specific selection matters more.",negative:"Stocks are moving more tightly together."},
+  crossRank5:{title:"Cross-market rank",positive:"This stock ranks near the stronger end of the live U.S. group.",negative:"This stock ranks near the weaker end of the live U.S. group."},
   relativeSpy5:{title:"Strength vs. SPY",positive:"This stock is outperforming SPY over the same five-minute window.",negative:"This stock is underperforming SPY over the same five-minute window."},
-  relativeQqq5:{title:"Strength vs. QQQ",positive:"This stock is outperforming QQQ over the same five-minute window.",negative:"This stock is underperforming QQQ over the same five-minute window."}
+  relativeQqq5:{title:"Strength vs. QQQ",positive:"This stock is outperforming QQQ over the same five-minute window.",negative:"This stock is underperforming QQQ over the same five-minute window."},
+  sectorRet5:{title:"Sector proxy",positive:"The closest-matching U.S. sector ETF is strengthening.",negative:"The closest-matching U.S. sector ETF is weakening."},
+  relativeSector5:{title:"Strength vs. sector",positive:"This stock is outperforming its closest sector proxy.",negative:"This stock is underperforming its closest sector proxy."}
 };
