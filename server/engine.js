@@ -82,7 +82,8 @@ export class RealMarketEngine extends EventEmitter {
     }));
     this.emit("status",this.status());
     const end=new Date(Date.now()-20*60*1000);
-    const start=new Date(end.getTime()-this.backfillDays*24*60*60*1000);
+    const defaultStart=new Date(end.getTime()-this.backfillDays*24*60*60*1000);
+    const start=await this.db.getBackfillStart(this.symbols,defaultStart);
     await this.provider.historicalBars({
       start,end,
       onPage:async barsBySymbol=>{
@@ -98,6 +99,14 @@ export class RealMarketEngine extends EventEmitter {
         }
         for (let i=0;i<batch.length;i+=700) {
           await this.db.upsertBarsBatch(batch.slice(i,i+700));
+        }
+        for (const bar of batch) {
+          const history=this.histories.get(bar.symbol)||[];
+          const existing=history.findIndex(x=>+new Date(x.ts)===+new Date(bar.ts));
+          if (existing>=0) history[existing]=bar; else history.push(bar);
+          history.sort((a,b)=>+new Date(a.ts)-+new Date(b.ts));
+          if (history.length>1800) history.splice(0,history.length-1800);
+          this.histories.set(bar.symbol,history);
         }
         this.backfill.rows+=batch.length;
         console.log(JSON.stringify({
