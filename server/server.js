@@ -71,22 +71,42 @@ async function refreshLearningHotSet(){
     const latest=await db.latestUniverseScan();
     const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
     if(!scanDate) return;
-    const ranked=await db.topUniverseCandidates(scanDate,{limit:50});
+    const ranked=await db.topUniverseCandidates(scanDate,{limit:80});
+    const liquidSeeds=[
+      "MSFT","AMZN","META","GOOGL","AVGO","NFLX","PLTR","COIN",
+      "JPM","BAC","INTC","MU","UBER","HOOD","XLF","XLK","SMH","IWM"
+    ];
     const valid=[];
-    for(const row of ranked){
-      const symbol=String(row.symbol||"").toUpperCase();
-      if(!symbol||valid.includes(symbol)) continue;
+
+    const addIfSupported=async(symbol)=>{
+      symbol=String(symbol||"").toUpperCase();
+      if(!symbol||valid.includes(symbol)||SYMBOLS.includes(symbol)) return;
       const asset=await universe.get(symbol);
-      if(!asset||asset.status!=="active"||asset.asset_class!=="us_equity") continue;
-      if(!asset.tradable||!asset.data_supported||String(asset.exchange||"").toUpperCase()==="OTC") continue;
+      if(!asset||asset.status!=="active"||asset.asset_class!=="us_equity") return;
+      if(!asset.tradable||!asset.data_supported||String(asset.exchange||"").toUpperCase()==="OTC") return;
       valid.push(symbol);
+    };
+
+    for(const symbol of liquidSeeds){
       if(valid.length>=Math.max(8,LIVE_SYMBOL_LIMIT-SYMBOLS.length)) break;
+      await addIfSupported(symbol);
+    }
+
+    for(const row of ranked){
+      if(valid.length>=Math.max(8,LIVE_SYMBOL_LIMIT-SYMBOLS.length)) break;
+      const close=Number(row.close)||0;
+      const avgVolume=Number(row.avg_volume_20)||0;
+      const dollarVolume=close*avgVolume;
+      if(close<2 || avgVolume<250000 || dollarVolume<15000000) continue;
+      await addIfSupported(row.symbol);
     }
     if(valid.length){
       const hot=await engine.setAutoCandidates(valid,{backfillDays:3});
       console.log(JSON.stringify({
         event:"learning_hot_set_refreshed",
-        scanDate,candidateCount:valid.length,hotCount:hot.length,symbols:hot
+        scanDate,candidateCount:valid.length,hotCount:hot.length,
+        liquidityFloor:"$15M avg daily dollar volume / 250k shares / $2 price",
+        symbols:hot
       }));
     }
   }catch(err){
