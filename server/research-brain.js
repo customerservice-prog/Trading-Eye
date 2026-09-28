@@ -88,6 +88,7 @@ export class ResearchBrain extends EventEmitter {
     this.longHistoryUrl=longHistoryUrl;
     this.longHistoryApiKey=String(longHistoryApiKey||"");
     this.longHistoryRetryAfter=0;
+    this.longHistoryAuthNoticeSent=false;
     this.timer=null;
     this.heartbeatTimer=null;
     this.longHistoryRunning=false;
@@ -170,6 +171,17 @@ export class ResearchBrain extends EventEmitter {
     const coverage=await this.db.researchCoverage();
     if(this.longHistoryEnabled && !this.longHistoryRunning){
       if(!this.longHistoryApiKey){
+        if(!this.longHistoryAuthNoticeSent){
+          this.longHistoryAuthNoticeSent=true;
+          await this.#event({
+            category:"DATA",
+            level:"IMPORTANT",
+            jobKey:"long-history-1999-present",
+            title:"1999+ research lane is waiting for a free history key",
+            message:"Alpaca starts in 2016. The separate long-history lane is ready, but its bulk provider now requires a free Stooq download key before 1999+ ingestion can start.",
+            details:{keyUrl:"https://stooq.com/q/d/?s=spy.us&get_apikey"}
+          });
+        }
         await this.db.upsertResearchJob({
           jobKey:"long-history-1999-present",
           jobType:"LONG_HISTORY_INGEST",
