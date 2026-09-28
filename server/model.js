@@ -42,7 +42,7 @@ export class OnlineModel {
     return {direction,confidence,pUp,pFlat:flat,pDown,raw,contributions,modelVersion:this.version};
   }
 
-  async learn(features,actualDirection,predicted) {
+  async learn(features,actualDirection,predicted,{persist=true,historical=false}={}) {
     const target=actualDirection==="UP"?1:actualDirection==="DOWN"?0:.5;
     const predDirectional=predicted.p_up/Math.max(.000001,predicted.p_up+predicted.p_down);
     const error=target-predDirectional;
@@ -55,7 +55,19 @@ export class OnlineModel {
     this.weights.bias=clamp(this.weights.bias+this.learningRate*error*.22,-.75,.75);
     this.version+=1;
     this.stats.learningUpdates=(this.stats.learningUpdates||0)+1;
+    if (historical) this.stats.historicalUpdates=(this.stats.historicalUpdates||0)+1;
+    else this.stats.liveUpdates=(this.stats.liveUpdates||0)+1;
     this.stats.lastUpdatedAt=new Date().toISOString();
+    if (persist) await this.persist();
+  }
+
+  async setHistoricalValidation(validation) {
+    this.stats.historicalBootstrappedAt=new Date().toISOString();
+    this.stats.historicalTrainingSamples=validation.trainingSamples;
+    this.stats.historicalHoldoutSamples=validation.holdoutSamples;
+    this.stats.historicalHoldoutAccuracy=validation.holdoutAccuracy;
+    this.stats.historicalHighConfidenceSamples=validation.highConfidenceSamples;
+    this.stats.historicalHighConfidenceAccuracy=validation.highConfidenceAccuracy;
     await this.persist();
   }
 
