@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { FeatureFactory, MODEL_FEATURES } from "./feature-factory.js";
 import {
-  CLASS_NAMES,SoftmaxModel,GaussianNBModel,BoostedStumpModel,EnsembleModel,
+  CLASS_NAMES,SoftmaxModel,GaussianNBModel,BoostedStumpModel,BaggedStumpEnsemble,EnsembleModel,
   metricsFor,chooseTemperature,buildEnsembleWeight,splitChronologically,applyTemperature
 } from "./ml-models.js";
 
@@ -664,7 +664,8 @@ export class ModelLab {
       {name:"softmax_momentum",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:momentum,name:"softmax_momentum"})},
       {name:"softmax_reversion",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:reversion,name:"softmax_reversion"})},
       {name:"gaussian_full",build:()=>new GaussianNBModel({featureCount:MODEL_FEATURES.length,name:"gaussian_full"})},
-      {name:"boosted_stumps",build:()=>new BoostedStumpModel({featureCount:MODEL_FEATURES.length,name:"boosted_stumps"})}
+      {name:"boosted_stumps",build:()=>new BoostedStumpModel({featureCount:MODEL_FEATURES.length,name:"boosted_stumps"})},
+      {name:"bagged_boosted_stumps",build:()=>new BaggedStumpEnsemble({featureCount:MODEL_FEATURES.length,name:"bagged_boosted_stumps"})}
     ];
   }
 
