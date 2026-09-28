@@ -498,19 +498,19 @@ export class Database {
       const values=[];
       const placeholders=[];
       chunk.forEach((r,j)=>{
-        const n=j*15;
-        placeholders.push("(" + Array.from({length:15},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        const n=j*16;
+        placeholders.push("(" + Array.from({length:16},(_,k)=>"$"+(n+k+1)).join(",") + ")");
         values.push(
           scanDate,r.symbol,r.bars5m,r.sessions,r.lastDayReturn,r.open30Return,r.middayReturn,
           r.powerHourReturn,r.firstHourRange,r.realizedVol5d,r.openVolumeShare,r.closeVolumeShare,
-          r.trendFollowRate,r.reversalRate,r.deepScore
+          r.trendFollowRate,r.reversalRate,r.deepScore,JSON.stringify(r.profile||{})
         );
       });
       await this.pool.query(`
         INSERT INTO universe_intraday_profiles(
           scan_date,symbol,bars_5m,sessions,last_day_return,open30_return,midday_return,
           power_hour_return,first_hour_range,realized_vol_5d,open_volume_share,
-          close_volume_share,trend_follow_rate,reversal_rate,deep_score
+          close_volume_share,trend_follow_rate,reversal_rate,deep_score,profile
         ) VALUES ${placeholders.join(",")}
         ON CONFLICT(scan_date,symbol) DO UPDATE SET
           bars_5m=EXCLUDED.bars_5m,sessions=EXCLUDED.sessions,last_day_return=EXCLUDED.last_day_return,
@@ -518,25 +518,9 @@ export class Database {
           power_hour_return=EXCLUDED.power_hour_return,first_hour_range=EXCLUDED.first_hour_range,
           realized_vol_5d=EXCLUDED.realized_vol_5d,open_volume_share=EXCLUDED.open_volume_share,
           close_volume_share=EXCLUDED.close_volume_share,trend_follow_rate=EXCLUDED.trend_follow_rate,
-          reversal_rate=EXCLUDED.reversal_rate,deep_score=EXCLUDED.deep_score,updated_at=NOW()
+          reversal_rate=EXCLUDED.reversal_rate,deep_score=EXCLUDED.deep_score,
+          profile=EXCLUDED.profile,updated_at=NOW()
       `,values);
-      for (const r of chunk) {
-        await this.pool.query(`
-          UPDATE universe_scan_results
-          SET deep_score=$3,
-              intraday_profile=jsonb_build_object(
-                'bars5m',$4,'sessions',$5,'lastDayReturn',$6,'open30Return',$7,
-                'middayReturn',$8,'powerHourReturn',$9,'firstHourRange',$10,
-                'realizedVol5d',$11,'openVolumeShare',$12,'closeVolumeShare',$13,
-                'trendFollowRate',$14,'reversalRate',$15
-              )
-          WHERE scan_date=$1 AND symbol=$2
-        `,[
-          scanDate,r.symbol,r.deepScore,r.bars5m,r.sessions,r.lastDayReturn,r.open30Return,
-          r.middayReturn,r.powerHourReturn,r.firstHourRange,r.realizedVol5d,
-          r.openVolumeShare,r.closeVolumeShare,r.trendFollowRate,r.reversalRate
-        ]);
-      }
     }
   }
 
@@ -554,13 +538,18 @@ export class Database {
     const q=await this.pool.query(`
       SELECT r.scan_date,r.symbol,r.close,r.return_1d,r.return_5d,r.return_20d,
              r.avg_volume_20,r.relative_volume,r.realized_vol_20,r.avg_range_20,
-             r.interesting_score,r.deep_score,r.intraday_profile,a.name,a.exchange
+             r.interesting_score,
+             COALESCE(i.deep_score,r.deep_score) AS deep_score,
+             COALESCE(i.profile,r.intraday_profile) AS intraday_profile,
+             a.name,a.exchange
       FROM universe_scan_results r
       LEFT JOIN asset_universe a ON a.symbol=r.symbol
+      LEFT JOIN universe_intraday_profiles i
+        ON i.scan_date=r.scan_date AND i.symbol=r.symbol
       WHERE r.scan_date=$1
         AND COALESCE(a.scanner_eligible,true)=true
         AND COALESCE(a.data_supported,true)=true
-      ORDER BY (r.interesting_score + COALESCE(r.deep_score,0)) DESC
+      ORDER BY (r.interesting_score + COALESCE(i.deep_score,r.deep_score,0)) DESC
       LIMIT ${n}
     `,[scanDate]);
     return q.rows;
