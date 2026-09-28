@@ -393,7 +393,7 @@ export class MistakeLab extends EventEmitter {
 
     const cooldown=latestWasMistakeRun
       ? (isAlert?this.retrainCooldownMs:this.warnRetrainCooldownMs)
-      : (isAlert?10*60*1000:60*60*1000);
+      : (isAlert?0:30*60*1000);
     const lastRequest=Math.max(
       latestWasMistakeRun?(lastRunAt||0):0,
       this.lastRetrainRequestedAt||0
