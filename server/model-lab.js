@@ -205,6 +205,10 @@ export class ModelLab {
       level:"INSUFFICIENT",blockStrictEntries:false,recentSamples:0,
       reason:"Mistake Lab is waiting for scored future outcomes."
     };
+    this.replayFocus={
+      sourceRunId:null,replayDay:null,focusSymbols:[],focusTimeBuckets:[],
+      hardExampleReplayMultiplier:1,noFutureLeak:true
+    };
     this.shadowMinSamples=300;
     this.shadowScoreCounter=0;
     this.training=false;
@@ -260,10 +264,41 @@ export class ModelLab {
     return this.mistakeGuard;
   }
 
+  setReplayFocus(focus={}){
+    this.replayFocus={
+      sourceRunId:focus.sourceRunId||null,
+      replayDay:focus.replayDay||null,
+      focusSymbols:Array.isArray(focus.focusSymbols)?focus.focusSymbols:[],
+      focusTimeBuckets:Array.isArray(focus.focusTimeBuckets)?focus.focusTimeBuckets:[],
+      hardExampleReplayMultiplier:Math.max(1,Math.min(5,Number(focus.hardExampleReplayMultiplier)||1)),
+      noFutureLeak:focus.noFutureLeak!==false
+    };
+    console.log(JSON.stringify({
+      event:"model_lab_replay_focus_updated",
+      sourceRunId:this.replayFocus.sourceRunId,
+      replayDay:this.replayFocus.replayDay,
+      focusSymbols:this.replayFocus.focusSymbols.map(x=>x.symbol||x),
+      focusTimeBuckets:this.replayFocus.focusTimeBuckets.map(x=>x.bucket||x),
+      multiplier:this.replayFocus.hardExampleReplayMultiplier,
+      noFutureLeak:this.replayFocus.noFutureLeak
+    }));
+    return this.replayFocus;
+  }
+
   #hardExampleReplay(train){
-    const symbolSet=new Set((this.mistakeGuard?.focusSymbols||[]).map(x=>String(x.symbol||x).toUpperCase()));
-    const timeSet=new Set((this.mistakeGuard?.focusTimeBuckets||[]).map(x=>String(x.bucket||x).toUpperCase()));
-    const multiplier=Math.max(1,Math.min(5,Number(this.mistakeGuard?.hardExampleReplayMultiplier)||1));
+    const symbolSet=new Set([
+      ...(this.mistakeGuard?.focusSymbols||[]).map(x=>String(x.symbol||x).toUpperCase()),
+      ...(this.replayFocus?.focusSymbols||[]).map(x=>String(x.symbol||x).toUpperCase())
+    ]);
+    const timeSet=new Set([
+      ...(this.mistakeGuard?.focusTimeBuckets||[]).map(x=>String(x.bucket||x).toUpperCase()),
+      ...(this.replayFocus?.focusTimeBuckets||[]).map(x=>String(x.bucket||x).toUpperCase())
+    ]);
+    const multiplier=Math.max(
+      1,
+      Math.min(5,Number(this.mistakeGuard?.hardExampleReplayMultiplier)||1),
+      Math.min(5,Number(this.replayFocus?.hardExampleReplayMultiplier)||1)
+    );
 
     const hard=train.filter(e=>
       symbolSet.has(String(e.symbol||"").toUpperCase()) ||
@@ -276,7 +311,10 @@ export class ModelLab {
         summary:{
           enabled:false,baseSamples:train.length,hardCandidates:hard.length,
           replaySamples:0,totalTrainingSamples:train.length,
-          focusSymbols:[...symbolSet],focusTimeBuckets:[...timeSet],multiplier
+          focusSymbols:[...symbolSet],focusTimeBuckets:[...timeSet],multiplier,
+          mistakeSource:this.mistakeGuard?.level||"INSUFFICIENT",
+          replaySourceRunId:this.replayFocus?.sourceRunId||null,
+          replayDay:this.replayFocus?.replayDay||null
         }
       };
     }
@@ -317,7 +355,10 @@ export class ModelLab {
         totalTrainingSamples:rows.length,
         focusSymbols:[...symbolSet],
         focusTimeBuckets:[...timeSet],
-        multiplier
+        multiplier,
+        mistakeSource:this.mistakeGuard?.level||"INSUFFICIENT",
+        replaySourceRunId:this.replayFocus?.sourceRunId||null,
+        replayDay:this.replayFocus?.replayDay||null
       }
     };
   }
@@ -402,7 +443,8 @@ export class ModelLab {
         error:this.latestRun.error
       }:null,
       drift:this.drift,
-      mistakeGuard:this.mistakeGuard
+      mistakeGuard:this.mistakeGuard,
+      replayFocus:this.replayFocus
     };
   }
 
