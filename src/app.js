@@ -27,6 +27,9 @@ let watchlist={rows:[],provider:"alpaca",feed:"iex"};
 let predictionData={rows:[],stats:null,legacyModel:null,modelLab:null};
 let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:false,positions:[],fills:[]};
 let modelLabData={enabled:true,training:false,production:null,latestRun:null};
+let readinessData={status:"LOCKED",score:0,passed:0,total:0,blockers:[],gates:{},realMoneyEnabled:false};
+let driftData={status:"UNKNOWN",score:0,reasons:[]};
+let integrityData={openIncidents:[]};
 let studyData={status:null,rows:[]};
 let scannerData={universe:null,scan:null,candidates:[],hotSymbols:[],pinnedSymbols:[]};
 let patternLabData={symbol:null,status:"WAITING",statsByHorizon:{},analogs:[]};
@@ -101,32 +104,21 @@ function latestSelectedMarketTs() {
 }
 
 function readinessSummary() {
-  const production=modelLabData?.production||predictionData.modelLab?.production||null;
-  const live=production?.liveMetrics||{};
-  const liveSamples=Number(live.samples)||0;
-  const brier=live.brier==null?null:Number(live.brier);
-  const ece=live.ece==null?null:Number(live.ece);
-  const closed=Number(paperData?.closedOutcomes)||0;
-  const pf=paperData?.profitFactor==null?null:Number(paperData.profitFactor);
-  const dd=paperData?.maxDrawdown==null?null:Number(paperData.maxDrawdown);
-  const realized=Number(paperData?.realizedPnl)||0;
-
-  if (!production) {
-    return {label:"LOCKED",detail:"No production model has completed the proof pipeline yet.",review:false};
-  }
-  if (liveSamples<500) {
-    return {label:"PROVING",detail:`${num(liveSamples)} future live samples collected · target is much more evidence before review.`,review:false};
-  }
-  if (closed<100) {
-    return {label:"PROVING",detail:`${num(closed)} closed paper outcomes · paper execution still needs a larger sample.`,review:false};
-  }
-  if ((brier!=null&&brier>.22)||(ece!=null&&ece>.08)||realized<=0||(pf!=null&&pf<=1)||(dd!=null&&dd<-.10)) {
-    return {label:"NOT READY",detail:"The current live/paper evidence has not earned a real-money review.",review:false};
+  const r=readinessData||{};
+  const label=r.status||"LOCKED";
+  const blockers=Array.isArray(r.blockers)?r.blockers:[];
+  let detail="Backend readiness has not been measured yet.";
+  if(label==="REVIEW_ELIGIBLE"){
+    detail="All backend proof gates passed for manual review. Real money is still locked and cannot auto-enable.";
+  }else if(blockers.length){
+    detail=blockers[0];
+  }else if(label==="PROVING"){
+    detail=`${Math.round(Number(r.score||0)*100)}% of proof gates currently pass. Trading Eye is still proving itself.`;
   }
   return {
-    label:"REVIEW ELIGIBLE",
-    detail:"Evidence gates passed for manual review only. Real money remains locked until you deliberately approve a tiny live test.",
-    review:true
+    label,
+    detail,
+    review:label==="REVIEW_ELIGIBLE"
   };
 }
 
@@ -595,6 +587,46 @@ function renderPaper() {
   }
 }
 
+function renderReadinessProof() {
+  if(!$("readinessGateBody")) return;
+  const r=readinessData||{};
+  const gates=r.gates||{};
+  const drift=driftData||{};
+  const incidents=Array.isArray(integrityData?.openIncidents)?integrityData.openIncidents:[];
+  const severe=incidents.filter(x=>["HIGH","CRITICAL"].includes(String(x.severity||"").toUpperCase())).length;
+
+  $("readinessProofTitle").textContent=r.status||"LOCKED";
+  $("readinessProofMeta").textContent=r.realMoneyEnabled
+    ?"Real-money flag unexpectedly enabled — this should never happen automatically."
+    :"Real money is hard-locked. REVIEW ELIGIBLE only means the evidence can be manually reviewed.";
+  $("readinessScore").textContent=`${Math.round(Number(r.score||0)*100)}%`;
+  $("readinessPassed").textContent=`${num(r.passed||0)} / ${num(r.total||Object.keys(gates).length)}`;
+  $("readinessDrift").textContent=drift.status||"UNKNOWN";
+  $("readinessIncidents").textContent=num(severe);
+
+  const formatValue=(value)=>{
+    if(value==null) return "—";
+    if(typeof value==="string"||typeof value==="number"||typeof value==="boolean") return String(value);
+    return Object.entries(value).map(([k,v])=>{
+      if(typeof v==="number"){
+        if(/brier|ece|drawdown|accuracy|score|pnl|profit/i.test(k)) return `${k}: ${Number(v).toFixed(4)}`;
+        return `${k}: ${num(v)}`;
+      }
+      return `${k}: ${v??"—"}`;
+    }).join(" · ");
+  };
+
+  $("readinessGateBody").innerHTML=Object.entries(gates).length
+    ? Object.entries(gates).map(([name,g])=>`
+      <tr>
+        <td><strong>${name.replace(/([A-Z])/g," $1").replace(/^./,m=>m.toUpperCase())}</strong></td>
+        <td class="${g.pass?"positive":"negative"}">${g.pass?"PASS":"BLOCKED"}</td>
+        <td>${formatValue(g.value)}</td>
+        <td>${g.requirement||"—"}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="4">Backend readiness gates are still initializing.</td></tr>';
+}
+
 function renderLearning() {
   const s=predictionData.stats;
   const production=modelLabData?.production||predictionData.modelLab?.production||null;
@@ -906,6 +938,7 @@ function renderAll() {
   renderTapeAndBook();
   renderPaper();
   renderLearning();
+  renderReadinessProof();
   renderPatternLab();
   renderScanner();
   renderResearchBrain();
@@ -914,12 +947,14 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,lab,research]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,lab,research,readiness,drift,integrity]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research()
+      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research(),
+      client.readiness(),client.drift(),client.integrity()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
     paperData=paperState; modelLabData=lab; researchData=research;
+    readinessData=readiness; driftData=drift; integrityData=integrity;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -1022,6 +1057,7 @@ function applyRealtime(event) {
     researchData.lastResearchEventAt=ev?.event_ts||new Date().toISOString();
     renderResearchBrain();
     renderBeginnerCommandCenter();
+    renderReadinessProof();
     return;
   }
   if (event.type==="research_status") {
