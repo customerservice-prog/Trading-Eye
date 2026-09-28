@@ -1668,3 +1668,99 @@ body.research-focus .research-brain-layout {
 .research-findings-panel tr.rejected_validation td:first-child,
 .research-findings-panel tr.rejected_holdout td:first-child { color:var(--red); }
 .research-findings-panel tr.legacy_unvalidated td:first-child { color:var(--muted); }
+
+.proof-pipeline-panel {
+  border-bottom:1px solid var(--line);
+  background:#070d15;
+}
+.proof-pipeline-grid {
+  display:grid;
+  grid-template-columns:repeat(5,minmax(155px,1fr));
+  gap:1px;
+  background:var(--line);
+}
+.proof-stage {
+  min-width:0;
+  padding:10px 11px;
+  background:#07101a;
+}
+.proof-stage-top {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+}
+.proof-stage-index {
+  width:20px;
+  height:20px;
+  display:grid;
+  place-items:center;
+  flex:none;
+  border-radius:6px;
+  background:#101a26;
+  color:#73889d;
+  font-size:7px;
+  font-weight:900;
+}
+.proof-stage strong {
+  min-width:0;
+  flex:1;
+  color:var(--text-2);
+  font-size:8px;
+  line-height:1.25;
+}
+.proof-stage-status {
+  flex:none;
+  padding:3px 5px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  color:var(--muted);
+  font-size:6px;
+  font-weight:900;
+  letter-spacing:.05em;
+}
+.proof-stage.pass .proof-stage-status {
+  color:var(--green);
+  border-color:rgba(73,226,154,.24);
+  background:rgba(73,226,154,.055);
+}
+.proof-stage.proving .proof-stage-status {
+  color:var(--amber);
+  border-color:rgba(255,192,81,.24);
+  background:rgba(255,192,81,.055);
+}
+.proof-stage.locked .proof-stage-status {
+  color:var(--red);
+  border-color:rgba(255,101,118,.22);
+  background:rgba(255,101,118,.045);
+}
+.proof-stage-bar {
+  height:4px;
+  margin-top:8px;
+  overflow:hidden;
+  border-radius:999px;
+  background:#111b27;
+}
+.proof-stage-bar i {
+  display:block;
+  height:100%;
+  background:linear-gradient(90deg,var(--cyan),#8e7cff);
+}
+.proof-stage.pass .proof-stage-bar i {
+  background:var(--green);
+}
+.proof-stage.locked .proof-stage-bar i {
+  background:var(--red);
+}
+.proof-stage p {
+  margin:7px 0 0;
+  color:var(--muted);
+  font-size:6px;
+  line-height:1.45;
+}
+@media (max-width:1100px){
+  .proof-pipeline-grid { grid-template-columns:repeat(2,1fr); }
+}
+@media (max-width:620px){
+  .proof-pipeline-grid { grid-template-columns:1fr; }
+}
