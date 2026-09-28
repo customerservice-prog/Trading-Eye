@@ -179,8 +179,8 @@ export class GovernanceEngine {
         SELECT COUNT(DISTINCT regime)::int AS regimes,
                COUNT(DISTINCT time_bucket)::int AS time_buckets
         FROM model_shadow_predictions
-        WHERE status='SCORED'
-      `),
+        WHERE status='SCORED' AND ($1::text IS NULL OR model_id=$1)
+      `,[prod?.modelId||null]),
       this.db.pool.query("SELECT COUNT(*)::int AS n FROM market_events")
     ]);
 
