@@ -213,6 +213,21 @@ export class ModelLab {
   }
 
   async init(){
+    const stale=await this.db.pool.query(`
+      UPDATE model_lab_runs
+      SET status='ERROR',completed_at=NOW(),
+          error=COALESCE(error,'Service restarted before this training run completed.')
+      WHERE horizon_minutes=$1 AND status='RUNNING'
+      RETURNING run_id
+    `,[this.horizonMinutes]);
+    if(stale.rowCount){
+      console.log(JSON.stringify({
+        event:"model_lab_stale_runs_recovered",
+        count:stale.rowCount,
+        runIds:stale.rows.map(x=>x.run_id)
+      }));
+    }
+
     await this.loadProduction();
     await this.loadShadowModels();
     await this.refreshLiveShadowMetrics();
