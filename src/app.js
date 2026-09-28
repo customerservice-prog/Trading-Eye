@@ -30,6 +30,7 @@ let watchlist={rows:[],provider:"alpaca",feed:"iex"};
 let predictionData={rows:[],stats:null,model:null};
 let studyData={status:null,rows:[]};
 let scannerData={universe:null,scan:null,candidates:[],hotSymbols:[],pinnedSymbols:[]};
+let patternLabData={symbol:null,status:"WAITING",statsByHorizon:{},analogs:[]};
 let lastAutoTradeAt=0;
 let refreshTimer=null;
 let symbolSearchTimer=null;
@@ -413,6 +414,63 @@ function renderLearning() {
     </tr>`).join(""):`<tr><td colspan="5">No real-data predictions have been recorded yet.</td></tr>`;
 }
 
+function renderPatternLab() {
+  if (!$("patternLabSymbol")) return;
+  const p=patternLabData||{};
+  const ready=p.status==="READY";
+  $("patternLabSymbol").textContent=p.symbol||activeSymbol;
+  $("patternLabStatus").textContent=ready
+    ? `${num(p.exactMatches||0)} exact/coarse fingerprint matches · ${num(p.analyzedCount||0)} close analogs analyzed`
+    : "Building/loading 90-day real minute history and pattern memory…";
+  $("patternFingerprint").textContent=p.fingerprint||"—";
+  $("patternMatchSummary").textContent=p.analogs?.length
+    ? `Showing ${p.analogs.length} closest real historical analogs`
+    : "No historical analogs available yet";
+
+  const renderHorizon=(h)=>{
+    const s=p.statsByHorizon?.[h];
+    const leadEl=$("pattern"+h+"Lead");
+    const statEl=$("pattern"+h+"Stats");
+    if (!s?.samples) {
+      leadEl.textContent="—";
+      statEl.textContent="No usable historical analogs yet";
+      return;
+    }
+    const options=[
+      ["UP",Number(s.upRate||0)],
+      ["FLAT",Number(s.flatRate||0)],
+      ["DOWN",Number(s.downRate||0)]
+    ].sort((a,b)=>b[1]-a[1]);
+    leadEl.textContent=`${options[0][0]} ${Math.round(options[0][1]*100)}%`;
+    leadEl.className=options[0][0]==="UP"?"positive":options[0][0]==="DOWN"?"negative":"neutral";
+    const avg=Number(s.avgReturn||0);
+    statEl.textContent=`${num(s.samples)} analogs · avg ${avg>=0?"+":""}${pct(avg)} · MFE ${pct(Number(s.avgMfe||0))} · MAE ${pct(Number(s.avgMae||0))}`;
+  };
+  [15,30,60].forEach(renderHorizon);
+
+  const analogs=Array.isArray(p.analogs)?p.analogs:[];
+  $("patternAnalogBody").innerHTML=analogs.length
+    ? analogs.map(a=>{
+        const h15=a.horizons?.[15];
+        const h30=a.horizons?.[30];
+        const h60=a.horizons?.[60];
+        const fmtRet=(h)=>h?((Number(h.return)>=0?"+":"")+pct(Number(h.return))):"—";
+        const d=new Date(a.time);
+        const when=Number.isNaN(+d)?"—":d.toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+        return `<tr>
+          <td>${when}</td>
+          <td class="${Number(a.similarity)>=.8?"similarity-high":""}">${Math.round(Number(a.similarity||0)*100)}%${a.exact?" · exact":""}</td>
+          <td>${Number(a.entryPrice||0).toFixed(2)}</td>
+          <td class="${h15?.return>0?"positive":h15?.return<0?"negative":"neutral"}">${fmtRet(h15)}</td>
+          <td class="${h30?.return>0?"positive":h30?.return<0?"negative":"neutral"}">${fmtRet(h30)}</td>
+          <td class="${h60?.return>0?"positive":h60?.return<0?"negative":"neutral"}">${fmtRet(h60)}</td>
+          <td class="positive">${h15?pct(Number(h15.mfe||0)):"—"}</td>
+          <td class="negative">${h15?pct(Number(h15.mae||0)):"—"}</td>
+        </tr>`;
+      }).join("")
+    : '<tr><td colspan="8">Pattern Lab is waiting for enough real historical data for this symbol.</td></tr>';
+}
+
 function renderScanner() {
   if (!$("scannerBody")) return;
   const universe=scannerData.universe||{};
@@ -497,16 +555,18 @@ function renderAll() {
   renderTapeAndBook();
   renderPaper();
   renderLearning();
+  renderPatternLab();
   renderScanner();
   renderDeepStudy();
 }
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner]=await Promise.all([
-      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),client.studies(10),client.scanner(50)
+    const [st,wl,snap,preds,studies,scanner,patterns]=await Promise.all([
+      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
+      client.studies(10),client.scanner(50),client.patternLab(activeSymbol,40)
     ]);
-    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
+    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner; patternLabData=patterns;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
@@ -529,7 +589,12 @@ async function selectSymbol(symbol,{activate=true}={}) {
     activeSymbol=symbol;
     $("symbolInput").value=symbol;
     $("symbolResults").classList.add("hidden");
-    snapshot=await client.snapshot(symbol);
+    const [snap,patterns]=await Promise.all([
+      client.snapshot(symbol),
+      client.patternLab(symbol,40).catch(()=>({symbol,status:"BUILDING_HISTORY",statsByHorizon:{},analogs:[]}))
+    ]);
+    snapshot=snap;
+    patternLabData=patterns;
     renderAll();
     return true;
   } catch (err) {
@@ -589,7 +654,10 @@ function applyRealtime(event) {
     const rows=(snapshot.bars||[]).filter(x=>+new Date(x.ts)!==+new Date(d.ts));
     rows.push(d); rows.sort((a,b)=>+new Date(a.ts)-+new Date(b.ts));
     snapshot.bars=rows.slice(-1200);
-    client.snapshot(activeSymbol).then(s=>{snapshot=s;renderAll();maybeAutopilot();}).catch(()=>{});
+    Promise.all([
+      client.snapshot(activeSymbol),
+      client.patternLab(activeSymbol,40).catch(()=>patternLabData)
+    ]).then(([s,p])=>{snapshot=s;patternLabData=p;renderAll();maybeAutopilot();}).catch(()=>{});
   }
   if (event.type==="prediction" || event.type==="prediction_scored") {
     client.predictions().then(p=>{predictionData=p;renderLearning();}).catch(()=>{});
