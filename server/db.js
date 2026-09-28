@@ -32,6 +32,53 @@ export class Database {
       CREATE INDEX IF NOT EXISTS asset_universe_name_search
         ON asset_universe(LOWER(name));
 
+      CREATE TABLE IF NOT EXISTS market_bars_1d (
+        provider TEXT NOT NULL,
+        feed TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        day DATE NOT NULL,
+        open DOUBLE PRECISION NOT NULL,
+        high DOUBLE PRECISION NOT NULL,
+        low DOUBLE PRECISION NOT NULL,
+        close DOUBLE PRECISION NOT NULL,
+        volume DOUBLE PRECISION NOT NULL,
+        trade_count INTEGER,
+        vwap DOUBLE PRECISION,
+        inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(provider,feed,symbol,day)
+      );
+      CREATE INDEX IF NOT EXISTS market_bars_1d_symbol_day
+        ON market_bars_1d(symbol,day DESC);
+
+      CREATE TABLE IF NOT EXISTS universe_scan_runs (
+        scan_date DATE PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'RUNNING',
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        assets_scanned INTEGER NOT NULL DEFAULT 0,
+        daily_bars INTEGER NOT NULL DEFAULT 0,
+        candidates INTEGER NOT NULL DEFAULT 0,
+        error TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS universe_scan_results (
+        scan_date DATE NOT NULL,
+        symbol TEXT NOT NULL,
+        close DOUBLE PRECISION,
+        return_1d DOUBLE PRECISION,
+        return_5d DOUBLE PRECISION,
+        return_20d DOUBLE PRECISION,
+        avg_volume_20 DOUBLE PRECISION,
+        relative_volume DOUBLE PRECISION,
+        realized_vol_20 DOUBLE PRECISION,
+        avg_range_20 DOUBLE PRECISION,
+        interesting_score DOUBLE PRECISION,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        PRIMARY KEY(scan_date,symbol)
+      );
+      CREATE INDEX IF NOT EXISTS universe_scan_results_rank
+        ON universe_scan_results(scan_date,interesting_score DESC);
+
       CREATE TABLE IF NOT EXISTS raw_market_events (
         id BIGSERIAL PRIMARY KEY,
         provider TEXT NOT NULL,
@@ -281,6 +328,120 @@ export class Database {
         volume=EXCLUDED.volume,trade_count=EXCLUDED.trade_count,vwap=EXCLUDED.vwap,
         source=EXCLUDED.source
     `,values);
+  }
+
+  async upsertDailyBarsBatch(bars) {
+    if (!this.ready || !bars.length) return;
+    for (let i=0;i<bars.length;i+=800) {
+      const chunk=bars.slice(i,i+800);
+      const values=[];
+      const rows=[];
+      chunk.forEach((bar,j)=>{
+        const n=j*11;
+        rows.push("(" + Array.from({length:11},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        values.push(
+          bar.provider,bar.feed,bar.symbol,bar.day,bar.open,bar.high,bar.low,bar.close,
+          bar.volume,bar.tradeCount??null,bar.vwap??null
+        );
+      });
+      await this.pool.query(`
+        INSERT INTO market_bars_1d(
+          provider,feed,symbol,day,open,high,low,close,volume,trade_count,vwap
+        ) VALUES ${rows.join(",")}
+        ON CONFLICT(provider,feed,symbol,day) DO UPDATE SET
+          open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,close=EXCLUDED.close,
+          volume=EXCLUDED.volume,trade_count=EXCLUDED.trade_count,vwap=EXCLUDED.vwap
+      `,values);
+    }
+  }
+
+  async beginUniverseScan(scanDate) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO universe_scan_runs(scan_date,status,started_at)
+      VALUES($1,'RUNNING',NOW())
+      ON CONFLICT(scan_date) DO UPDATE SET
+        status='RUNNING',started_at=NOW(),completed_at=NULL,error=NULL,
+        assets_scanned=0,daily_bars=0,candidates=0
+    `,[scanDate]);
+  }
+
+  async saveUniverseScanResults(scanDate,rows) {
+    if (!this.ready || !rows.length) return;
+    for (let i=0;i<rows.length;i+=700) {
+      const chunk=rows.slice(i,i+700);
+      const values=[];
+      const placeholders=[];
+      chunk.forEach((r,j)=>{
+        const n=j*11;
+        placeholders.push("(" + Array.from({length:11},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        values.push(
+          scanDate,r.symbol,r.close,r.return1d,r.return5d,r.return20d,r.avgVolume20,
+          r.relativeVolume,r.realizedVol20,r.avgRange20,r.interestingScore
+        );
+      });
+      await this.pool.query(`
+        INSERT INTO universe_scan_results(
+          scan_date,symbol,close,return_1d,return_5d,return_20d,avg_volume_20,
+          relative_volume,realized_vol_20,avg_range_20,interesting_score
+        ) VALUES ${placeholders.join(",")}
+        ON CONFLICT(scan_date,symbol) DO UPDATE SET
+          close=EXCLUDED.close,return_1d=EXCLUDED.return_1d,return_5d=EXCLUDED.return_5d,
+          return_20d=EXCLUDED.return_20d,avg_volume_20=EXCLUDED.avg_volume_20,
+          relative_volume=EXCLUDED.relative_volume,realized_vol_20=EXCLUDED.realized_vol_20,
+          avg_range_20=EXCLUDED.avg_range_20,interesting_score=EXCLUDED.interesting_score
+      `,values);
+    }
+  }
+
+  async completeUniverseScan(scanDate,{assetsScanned,dailyBars,candidates}) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      UPDATE universe_scan_runs SET
+        status='COMPLETE',completed_at=NOW(),assets_scanned=$2,daily_bars=$3,candidates=$4,error=NULL
+      WHERE scan_date=$1
+    `,[scanDate,assetsScanned,dailyBars,candidates]);
+  }
+
+  async failUniverseScan(scanDate,error) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      UPDATE universe_scan_runs SET status='ERROR',completed_at=NOW(),error=$2
+      WHERE scan_date=$1
+    `,[scanDate,String(error).slice(0,2000)]);
+  }
+
+  async universeScanComplete(scanDate) {
+    if (!this.ready) return false;
+    const q=await this.pool.query(`
+      SELECT 1 FROM universe_scan_runs WHERE scan_date=$1 AND status='COMPLETE' LIMIT 1
+    `,[scanDate]);
+    return q.rowCount>0;
+  }
+
+  async latestUniverseScan() {
+    if (!this.ready) return null;
+    const q=await this.pool.query(`
+      SELECT scan_date,status,started_at,completed_at,assets_scanned,daily_bars,candidates,error
+      FROM universe_scan_runs ORDER BY scan_date DESC LIMIT 1
+    `);
+    return q.rows[0]||null;
+  }
+
+  async topUniverseCandidates(scanDate,{limit=30}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(200,Number(limit)||30));
+    const q=await this.pool.query(`
+      SELECT r.scan_date,r.symbol,r.close,r.return_1d,r.return_5d,r.return_20d,
+             r.avg_volume_20,r.relative_volume,r.realized_vol_20,r.avg_range_20,
+             r.interesting_score,a.name,a.exchange
+      FROM universe_scan_results r
+      LEFT JOIN asset_universe a ON a.symbol=r.symbol
+      WHERE r.scan_date=$1
+      ORDER BY r.interesting_score DESC
+      LIMIT ${n}
+    `,[scanDate]);
+    return q.rows;
   }
 
   async insertRawBatch(events) {
