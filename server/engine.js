@@ -23,6 +23,7 @@ export class RealMarketEngine extends EventEmitter {
     this.model=new OnlineModel(db);
     this.modelLab=null;
     this.paperBroker=null;
+    this.marketIntegrity=null;
     this.histories=new Map(this.symbols.map(s=>[s,[]]));
     this.latestQuotes=new Map();
     this.latestTrades=new Map();
@@ -75,9 +76,10 @@ export class RealMarketEngine extends EventEmitter {
     }
   }
 
-  attachIntelligence({modelLab=null,paperBroker=null}={}) {
+  attachIntelligence({modelLab=null,paperBroker=null,marketIntegrity=null}={}) {
     this.modelLab=modelLab;
     this.paperBroker=paperBroker;
+    this.marketIntegrity=marketIntegrity;
   }
 
   hotSymbols() {
@@ -701,9 +703,12 @@ export class RealMarketEngine extends EventEmitter {
     const confidence=blended.confidence;
     const sorted=[blended.pUp,blended.pFlat,blended.pDown].sort((a,b)=>b-a);
     const edge=(sorted[0]||0)-(sorted[1]||0);
+    const integrity=this.marketIntegrity?.cachedContext(bar.symbol)||{};
+    const eventVeto=Number(integrity.eventRisk||0)>=.85;
+    const corporateActionVeto=Number(integrity.corporateActionRisk||0)>=.5;
     const noTrade=learned
-      ? Boolean(learned.noTrade||confidence<.46||edge<.055)
-      : confidence<.52||edge<.07;
+      ? Boolean(learned.noTrade||confidence<.46||edge<.055||eventVeto||corporateActionVeto)
+      : confidence<.52||edge<.07||eventVeto||corporateActionVeto;
 
     const p={
       id,symbol:bar.symbol,provider:"alpaca",feed:this.provider.feed,
@@ -713,7 +718,14 @@ export class RealMarketEngine extends EventEmitter {
       features:{
         ...features,
         pattern:patternInsight,
-        ml:learned?{family:learned.family,edge:learned.edge,noTrade:learned.noTrade}:null
+        ml:learned?{family:learned.family,edge:learned.edge,noTrade:learned.noTrade}:null,
+        integrity:{
+          sector:integrity.metadata?.sector||null,
+          sectorProxy:integrity.sectorProxy||null,
+          eventRisk:Number(integrity.eventRisk)||0,
+          corporateActionRisk:Number(integrity.corporateActionRisk)||0,
+          eventVeto,corporateActionVeto
+        }
       },
       modelVersion,
       modelId,
@@ -721,6 +733,8 @@ export class RealMarketEngine extends EventEmitter {
         family:learned.family,
         edge,
         noTrade,
+        eventVeto,
+        corporateActionVeto,
         test:learned.metrics?.test||null,
         shadow:learned.metrics?.shadow||null
       }:{family:"legacy_online",edge,noTrade}
