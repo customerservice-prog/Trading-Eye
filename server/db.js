@@ -23,6 +23,7 @@ export class Database {
         easy_to_borrow BOOLEAN NOT NULL DEFAULT false,
         marginable BOOLEAN NOT NULL DEFAULT false,
         data_supported BOOLEAN NOT NULL DEFAULT true,
+        scanner_eligible BOOLEAN NOT NULL DEFAULT true,
         attributes JSONB NOT NULL DEFAULT '[]'::jsonb,
         provider TEXT NOT NULL DEFAULT 'alpaca',
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -31,6 +32,8 @@ export class Database {
         ON asset_universe(status,exchange,symbol);
       CREATE INDEX IF NOT EXISTS asset_universe_name_search
         ON asset_universe(LOWER(name));
+      ALTER TABLE asset_universe
+        ADD COLUMN IF NOT EXISTS scanner_eligible BOOLEAN NOT NULL DEFAULT true;
 
       CREATE TABLE IF NOT EXISTS market_bars_1d (
         provider TEXT NOT NULL,
@@ -205,24 +208,26 @@ export class Database {
       const values=[];
       const rows=[];
       chunk.forEach((a,j)=>{
-        const n=j*13;
-        rows.push("(" + Array.from({length:13},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        const n=j*14;
+        rows.push("(" + Array.from({length:14},(_,k)=>"$"+(n+k+1)).join(",") + ")");
         values.push(
           a.symbol,a.name||null,a.exchange||null,a.assetClass||"us_equity",a.status||"active",
           Boolean(a.tradable),Boolean(a.fractionable),Boolean(a.shortable),Boolean(a.easyToBorrow),
-          Boolean(a.marginable),Boolean(a.dataSupported),JSON.stringify(a.attributes||[]),"alpaca"
+          Boolean(a.marginable),Boolean(a.dataSupported),Boolean(a.scannerEligible),
+          JSON.stringify(a.attributes||[]),"alpaca"
         );
       });
       await this.pool.query(`
         INSERT INTO asset_universe(
           symbol,name,exchange,asset_class,status,tradable,fractionable,shortable,easy_to_borrow,
-          marginable,data_supported,attributes,provider
+          marginable,data_supported,scanner_eligible,attributes,provider
         ) VALUES ${rows.join(",")}
         ON CONFLICT(symbol) DO UPDATE SET
           name=EXCLUDED.name,exchange=EXCLUDED.exchange,asset_class=EXCLUDED.asset_class,
           status=EXCLUDED.status,tradable=EXCLUDED.tradable,fractionable=EXCLUDED.fractionable,
           shortable=EXCLUDED.shortable,easy_to_borrow=EXCLUDED.easy_to_borrow,
           marginable=EXCLUDED.marginable,data_supported=EXCLUDED.data_supported,
+          scanner_eligible=EXCLUDED.scanner_eligible,
           attributes=EXCLUDED.attributes,provider=EXCLUDED.provider,updated_at=NOW()
       `,values);
     }
@@ -244,7 +249,7 @@ export class Database {
     if (!this.ready) return null;
     const q=await this.pool.query(`
       SELECT symbol,name,exchange,status,tradable,fractionable,shortable,easy_to_borrow,
-             marginable,data_supported,attributes
+             marginable,data_supported,scanner_eligible,attributes
       FROM asset_universe WHERE symbol=$1 LIMIT 1
     `,[String(symbol).toUpperCase()]);
     return q.rows[0]||null;
@@ -268,10 +273,13 @@ export class Database {
     return r.rows;
   }
 
-  async listActiveAssets({limit=10000,dataSupportedOnly=true}={}) {
+  async listActiveAssets({limit=10000,dataSupportedOnly=true,scannerEligibleOnly=false}={}) {
     if (!this.ready) return [];
     const n=Math.max(1,Math.min(20000,Number(limit)||10000));
-    const where=dataSupportedOnly?"WHERE status='active' AND data_supported=true":"WHERE status='active'";
+    const filters=["status='active'"];
+    if (dataSupportedOnly) filters.push("data_supported=true");
+    if (scannerEligibleOnly) filters.push("scanner_eligible=true");
+    const where="WHERE "+filters.join(" AND ");
     const q=await this.pool.query(`
       SELECT symbol,name,exchange,status,tradable,fractionable,shortable,data_supported,attributes
       FROM asset_universe ${where}
@@ -353,6 +361,14 @@ export class Database {
           volume=EXCLUDED.volume,trade_count=EXCLUDED.trade_count,vwap=EXCLUDED.vwap
       `,values);
     }
+  }
+
+  async universeScannedSymbols(scanDate) {
+    if (!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT symbol FROM universe_scan_results WHERE scan_date=$1
+    `,[scanDate]);
+    return q.rows.map(r=>r.symbol);
   }
 
   async beginUniverseScan(scanDate) {
