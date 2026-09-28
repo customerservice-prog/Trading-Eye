@@ -17,6 +17,12 @@ function etDate(date=new Date()) {
   const p=etParts(date);
   return `${p.year}-${p.month}-${p.day}`;
 }
+function dbDateKey(value) {
+  if (!value) return "";
+  const d=value instanceof Date?value:new Date(value);
+  if (!Number.isNaN(+d)) return d.toISOString().slice(0,10);
+  return String(value).slice(0,10);
+}
 function minuteET(ts) {
   const p=Object.fromEntries(
     new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"})
@@ -424,7 +430,7 @@ export class DeepStudyEngine extends EventEmitter {
       if (latestScan) {
         this.universeState={
           state:latestScan.status,
-          scanDate:String(latestScan.scan_date).slice(0,10),
+          scanDate:dbDateKey(latestScan.scan_date),
           scanVersion:Number(latestScan.scan_version)||this.scanVersion,
           assetsScanned:Number(latestScan.assets_scanned)||0,
           dailyBars:Number(latestScan.daily_bars)||0,
@@ -456,7 +462,7 @@ export class DeepStudyEngine extends EventEmitter {
 
   async runUniverseScan(scanDate) {
     const previous=await this.db.latestUniverseScan();
-    const previousSameDate=previous && String(previous.scan_date).slice(0,10)===scanDate;
+    const previousSameDate=previous && dbDateKey(previous.scan_date)===scanDate;
     this.universeState={
       state:"RUNNING",scanDate,scanVersion:this.scanVersion,
       assetsScanned:previousSameDate?Number(previous.assets_scanned)||0:0,
@@ -676,7 +682,7 @@ export class DeepStudyEngine extends EventEmitter {
         Math.abs(Number(cur.breadthGreen??.5)-Number(m.breadthGreen??.5))*2+
         Math.abs(Number(cur.avgRealizedVol)-Number(m.avgRealizedVol))/0.02;
       return {
-        studyDate:String(r.study_date).slice(0,10),
+        studyDate:dbDateKey(r.study_date),
         distance:dist,
         avgReturn:Number(m.avgReturn),
         avgRange:Number(m.avgRange),
