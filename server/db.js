@@ -133,6 +133,122 @@ export class Database {
       CREATE INDEX IF NOT EXISTS universe_intraday_rank
         ON universe_intraday_profiles(scan_date,deep_score DESC);
 
+      CREATE TABLE IF NOT EXISTS asset_lifecycle (
+        symbol TEXT NOT NULL,
+        as_of_date DATE NOT NULL,
+        status TEXT NOT NULL,
+        exchange TEXT,
+        name TEXT,
+        tradable BOOLEAN,
+        source TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        PRIMARY KEY(symbol,as_of_date,source)
+      );
+      CREATE INDEX IF NOT EXISTS asset_lifecycle_symbol_date
+        ON asset_lifecycle(symbol,as_of_date DESC);
+
+      CREATE TABLE IF NOT EXISTS corporate_actions (
+        action_id TEXT PRIMARY KEY,
+        symbol TEXT,
+        action_type TEXT NOT NULL,
+        process_date DATE,
+        ex_date DATE,
+        record_date DATE,
+        payable_date DATE,
+        old_symbol TEXT,
+        new_symbol TEXT,
+        ratio DOUBLE PRECISION,
+        cash_amount DOUBLE PRECISION,
+        currency TEXT,
+        source TEXT NOT NULL DEFAULT 'alpaca',
+        raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS corporate_actions_symbol_date
+        ON corporate_actions(symbol,COALESCE(ex_date,process_date) DESC);
+      CREATE INDEX IF NOT EXISTS corporate_actions_type_date
+        ON corporate_actions(action_type,COALESCE(ex_date,process_date) DESC);
+
+      CREATE TABLE IF NOT EXISTS asset_metadata (
+        symbol TEXT PRIMARY KEY,
+        cik TEXT,
+        sic_code TEXT,
+        sic_description TEXT,
+        sector TEXT,
+        sector_proxy TEXT,
+        industry TEXT,
+        source TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        details JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS asset_metadata_sector
+        ON asset_metadata(sector,sector_proxy);
+
+      CREATE TABLE IF NOT EXISTS material_events (
+        event_id TEXT PRIMARY KEY,
+        symbol TEXT,
+        event_type TEXT NOT NULL,
+        event_ts TIMESTAMPTZ NOT NULL,
+        source TEXT NOT NULL,
+        headline TEXT,
+        accession_no TEXT,
+        url TEXT,
+        severity DOUBLE PRECISION NOT NULL DEFAULT 0,
+        raw JSONB NOT NULL DEFAULT '{}'::jsonb,
+        inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS material_events_symbol_ts
+        ON material_events(symbol,event_ts DESC);
+      CREATE INDEX IF NOT EXISTS material_events_type_ts
+        ON material_events(event_type,event_ts DESC);
+
+      CREATE TABLE IF NOT EXISTS data_quality_incidents (
+        incident_id TEXT PRIMARY KEY,
+        detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ,
+        severity TEXT NOT NULL,
+        category TEXT NOT NULL,
+        symbol TEXT,
+        source TEXT,
+        message TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'OPEN'
+      );
+      CREATE INDEX IF NOT EXISTS data_quality_incidents_status
+        ON data_quality_incidents(status,detected_at DESC);
+
+      CREATE TABLE IF NOT EXISTS model_drift_snapshots (
+        model_id TEXT NOT NULL,
+        measured_at TIMESTAMPTZ NOT NULL,
+        window_samples INTEGER NOT NULL,
+        recent_accuracy DOUBLE PRECISION,
+        recent_brier DOUBLE PRECISION,
+        recent_ece DOUBLE PRECISION,
+        baseline_accuracy DOUBLE PRECISION,
+        baseline_brier DOUBLE PRECISION,
+        baseline_ece DOUBLE PRECISION,
+        feature_drift JSONB NOT NULL DEFAULT '{}'::jsonb,
+        score DOUBLE PRECISION NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'STABLE',
+        reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+        PRIMARY KEY(model_id,measured_at)
+      );
+      CREATE INDEX IF NOT EXISTS model_drift_recent
+        ON model_drift_snapshots(measured_at DESC);
+
+      CREATE TABLE IF NOT EXISTS readiness_snapshots (
+        measured_at TIMESTAMPTZ PRIMARY KEY,
+        status TEXT NOT NULL,
+        score DOUBLE PRECISION NOT NULL,
+        gates JSONB NOT NULL,
+        blockers JSONB NOT NULL,
+        model_id TEXT,
+        paper_account_id TEXT,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS readiness_recent
+        ON readiness_snapshots(measured_at DESC);
+
       CREATE TABLE IF NOT EXISTS raw_market_events (
         id BIGSERIAL PRIMARY KEY,
         provider TEXT NOT NULL,
