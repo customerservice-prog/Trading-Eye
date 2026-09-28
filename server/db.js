@@ -1228,6 +1228,228 @@ export class Database {
     return q.rows;
   }
 
+  async upsertResearchJob(job) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO research_jobs(
+        job_key,job_type,status,phase,provider,progress,items_done,items_total,
+        bars_processed,details,started_at,updated_at,completed_at,error
+      ) VALUES(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,
+        COALESCE($11,NOW()),NOW(),$12,$13
+      )
+      ON CONFLICT(job_key) DO UPDATE SET
+        job_type=EXCLUDED.job_type,status=EXCLUDED.status,phase=EXCLUDED.phase,
+        provider=EXCLUDED.provider,progress=EXCLUDED.progress,
+        items_done=EXCLUDED.items_done,items_total=EXCLUDED.items_total,
+        bars_processed=EXCLUDED.bars_processed,details=EXCLUDED.details,
+        started_at=COALESCE(research_jobs.started_at,EXCLUDED.started_at),
+        updated_at=NOW(),completed_at=EXCLUDED.completed_at,error=EXCLUDED.error
+    `,[
+      job.jobKey,job.jobType,job.status,job.phase||null,job.provider||null,
+      Number(job.progress)||0,Number(job.itemsDone)||0,
+      job.itemsTotal==null?null:Number(job.itemsTotal),
+      Number(job.barsProcessed)||0,JSON.stringify(job.details||{}),
+      job.startedAt||null,job.completedAt||null,job.error||null
+    ]);
+  }
+
+  async addResearchEvent(event) {
+    if (!this.ready) return null;
+    const q=await this.pool.query(`
+      INSERT INTO research_events(category,level,job_key,title,message,details)
+      VALUES($1,$2,$3,$4,$5,$6::jsonb)
+      RETURNING id,event_ts,category,level,job_key,title,message,details
+    `,[
+      event.category||"SYSTEM",event.level||"INFO",event.jobKey||null,
+      event.title,event.message,JSON.stringify(event.details||{})
+    ]);
+    return q.rows[0]||null;
+  }
+
+  async recentResearchEvents({limit=120,afterId=null}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(500,Number(limit)||120));
+    if (afterId!=null) {
+      const q=await this.pool.query(`
+        SELECT id,event_ts,category,level,job_key,title,message,details
+        FROM research_events
+        WHERE id > $1
+        ORDER BY id ASC
+        LIMIT ${n}
+      `,[Number(afterId)]);
+      return q.rows;
+    }
+    const q=await this.pool.query(`
+      SELECT id,event_ts,category,level,job_key,title,message,details
+      FROM research_events
+      ORDER BY id DESC
+      LIMIT ${n}
+    `);
+    return q.rows.reverse();
+  }
+
+  async researchJobs() {
+    if (!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT job_key,job_type,status,phase,provider,progress,items_done,items_total,
+             bars_processed,details,started_at,updated_at,completed_at,error
+      FROM research_jobs
+      ORDER BY
+        CASE status WHEN 'RUNNING' THEN 0 WHEN 'QUEUED' THEN 1 ELSE 2 END,
+        updated_at DESC
+    `);
+    return q.rows;
+  }
+
+  async researchCoverage() {
+    if (!this.ready) return {};
+    const [m1,longDaily,patterns,models,preds]=await Promise.all([
+      this.pool.query(`
+        SELECT COUNT(*)::bigint AS bars,COUNT(DISTINCT symbol)::int AS symbols,
+               MIN(ts) AS first_ts,MAX(ts) AS last_ts
+        FROM market_bars_1m
+      `),
+      this.pool.query(`
+        SELECT COUNT(*)::bigint AS bars,COUNT(DISTINCT symbol)::int AS symbols,
+               MIN(day) AS first_day,MAX(day) AS last_day
+        FROM long_history_bars_1d
+      `),
+      this.pool.query(`
+        SELECT COUNT(*)::int AS findings,
+               COUNT(*) FILTER (WHERE status='PROMOTED')::int AS promoted
+        FROM research_pattern_findings
+      `),
+      this.pool.query(`
+        SELECT COUNT(*)::int AS models,
+               COUNT(*) FILTER (WHERE status='PRODUCTION')::int AS production,
+               COUNT(*) FILTER (WHERE status='SHADOW')::int AS shadow,
+               COUNT(*) FILTER (WHERE status='REJECTED')::int AS rejected
+        FROM model_registry
+      `),
+      this.pool.query(`
+        SELECT COUNT(*)::int AS predictions,
+               COUNT(*) FILTER (WHERE status='SCORED')::int AS scored
+        FROM predictions
+      `)
+    ]);
+    return {
+      intraday:{
+        bars:Number(m1.rows[0]?.bars)||0,
+        symbols:Number(m1.rows[0]?.symbols)||0,
+        first:m1.rows[0]?.first_ts||null,
+        last:m1.rows[0]?.last_ts||null
+      },
+      longHistory:{
+        bars:Number(longDaily.rows[0]?.bars)||0,
+        symbols:Number(longDaily.rows[0]?.symbols)||0,
+        first:longDaily.rows[0]?.first_day||null,
+        last:longDaily.rows[0]?.last_day||null
+      },
+      findings:patterns.rows[0]||{},
+      models:models.rows[0]||{},
+      predictions:preds.rows[0]||{}
+    };
+  }
+
+  async upsertLongHistoryBars(bars) {
+    if (!this.ready || !bars?.length) return 0;
+    let inserted=0;
+    for (let i=0;i<bars.length;i+=1000) {
+      const chunk=bars.slice(i,i+1000);
+      const values=[];
+      const rows=[];
+      chunk.forEach((b,j)=>{
+        const n=j*8;
+        rows.push("(" + Array.from({length:8},(_,k)=>"$"+(n+k+1)).join(",") + ")");
+        values.push(
+          b.provider||"stooq",b.symbol,b.day,b.open,b.high,b.low,b.close,b.volume||0
+        );
+      });
+      await this.pool.query(`
+        INSERT INTO long_history_bars_1d(
+          provider,symbol,day,open,high,low,close,volume
+        ) VALUES ${rows.join(",")}
+        ON CONFLICT(provider,symbol,day) DO UPDATE SET
+          open=EXCLUDED.open,high=EXCLUDED.high,low=EXCLUDED.low,
+          close=EXCLUDED.close,volume=EXCLUDED.volume
+      `,values);
+      inserted+=chunk.length;
+    }
+    return inserted;
+  }
+
+  async longHistorySymbols({limit=20000}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(50000,Number(limit)||20000));
+    const q=await this.pool.query(`
+      SELECT symbol,COUNT(*)::int AS bars,MIN(day) AS first_day,MAX(day) AS last_day
+      FROM long_history_bars_1d
+      GROUP BY symbol
+      ORDER BY COUNT(*) DESC,symbol
+      LIMIT ${n}
+    `);
+    return q.rows;
+  }
+
+  async getLongHistoryBars(symbol,{start="1999-01-01",limit=10000}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(20000,Number(limit)||10000));
+    const q=await this.pool.query(`
+      SELECT provider,symbol,day,open,high,low,close,volume
+      FROM long_history_bars_1d
+      WHERE symbol=$1 AND day >= $2::date
+      ORDER BY day
+      LIMIT ${n}
+    `,[String(symbol).toUpperCase(),start]);
+    return q.rows;
+  }
+
+  async upsertResearchFinding(f) {
+    if (!this.ready) return;
+    await this.pool.query(`
+      INSERT INTO research_pattern_findings(
+        finding_id,provider,scope,symbol,pattern_key,horizon_days,sample_count,
+        hit_rate,avg_forward_return,median_forward_return,avg_adverse_return,
+        avg_favorable_return,score,description,evidence,first_seen,last_seen,status
+      ) VALUES(
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,
+        NOW(),NOW(),$16
+      )
+      ON CONFLICT(finding_id) DO UPDATE SET
+        sample_count=EXCLUDED.sample_count,hit_rate=EXCLUDED.hit_rate,
+        avg_forward_return=EXCLUDED.avg_forward_return,
+        median_forward_return=EXCLUDED.median_forward_return,
+        avg_adverse_return=EXCLUDED.avg_adverse_return,
+        avg_favorable_return=EXCLUDED.avg_favorable_return,
+        score=EXCLUDED.score,description=EXCLUDED.description,
+        evidence=EXCLUDED.evidence,last_seen=NOW(),status=EXCLUDED.status
+    `,[
+      f.findingId,f.provider,f.scope,f.symbol||null,f.patternKey,f.horizonDays,
+      f.sampleCount,f.hitRate,f.avgForwardReturn,f.medianForwardReturn,
+      f.avgAdverseReturn,f.avgFavorableReturn,f.score,f.description,
+      JSON.stringify(f.evidence||{}),f.status||"CANDIDATE"
+    ]);
+  }
+
+  async topResearchFindings({limit=80,status=null}={}) {
+    if (!this.ready) return [];
+    const n=Math.max(1,Math.min(300,Number(limit)||80));
+    const params=[];
+    let where="";
+    if(status){ params.push(status); where="WHERE status=$1"; }
+    const q=await this.pool.query(`
+      SELECT finding_id,provider,scope,symbol,pattern_key,horizon_days,sample_count,
+             hit_rate,avg_forward_return,median_forward_return,avg_adverse_return,
+             avg_favorable_return,score,description,evidence,first_seen,last_seen,status
+      FROM research_pattern_findings
+      ${where}
+      ORDER BY score DESC,last_seen DESC
+      LIMIT ${n}
+    `,params);
+    return q.rows;
+  }
+
   async heartbeat(key,status,details={}) {
     if (!this.ready) return;
     await this.pool.query(`
