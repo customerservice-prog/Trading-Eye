@@ -153,7 +153,7 @@ export class LearningEngine {
         raw: a.raw
       };
       this.pending.push(locked);
-      this.lastPredictionStep[symbol] = this.step;
+      this.lastPredictionStep[symbol] = symbolStep;
       this.stats.predictions += 1;
       this.#save();
     }
