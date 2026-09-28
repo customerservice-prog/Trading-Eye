@@ -19,6 +19,13 @@ function etDate(date=new Date()){
   const p=etParts(date);
   return `${p.year}-${p.month}-${p.day}`;
 }
+function mistakeTimeBucket(ts){
+  const p=etParts(new Date(ts));
+  const minute=Number(p.hour)*60+Number(p.minute);
+  if(minute<10*60+30) return "OPENING_60M";
+  if(minute<14*60+30) return "MIDDAY";
+  return "LATE_DAY";
+}
 function modelFromRegistryArtifact(a){
   if(!a) return null;
   if(a.kind==="ensemble") return EnsembleModel.fromArtifact(a);
@@ -229,9 +236,75 @@ export class ModelLab {
       baselineErrorRate:Number(guard.baselineErrorRate)||0,
       highConfidenceErrorRate:Number(guard.highConfidenceErrorRate)||0,
       hardReversalRate:Number(guard.hardReversalRate)||0,
+      focusSymbols:Array.isArray(guard.focusSymbols)?guard.focusSymbols:[],
+      focusTimeBuckets:Array.isArray(guard.focusTimeBuckets)?guard.focusTimeBuckets:[],
+      focusDirections:Array.isArray(guard.focusDirections)?guard.focusDirections:[],
+      hardExampleReplayMultiplier:Math.max(1,Math.min(5,Number(guard.hardExampleReplayMultiplier)||1)),
       reason:String(guard.reason||"Mistake Lab is monitoring recent outcomes.")
     };
     return this.mistakeGuard;
+  }
+
+  #hardExampleReplay(train){
+    const symbolSet=new Set((this.mistakeGuard?.focusSymbols||[]).map(x=>String(x.symbol||x).toUpperCase()));
+    const timeSet=new Set((this.mistakeGuard?.focusTimeBuckets||[]).map(x=>String(x.bucket||x).toUpperCase()));
+    const multiplier=Math.max(1,Math.min(5,Number(this.mistakeGuard?.hardExampleReplayMultiplier)||1));
+
+    const hard=train.filter(e=>
+      symbolSet.has(String(e.symbol||"").toUpperCase()) ||
+      timeSet.has(mistakeTimeBucket(e.ts))
+    );
+
+    if(!hard.length||multiplier<=1){
+      return {
+        rows:train,
+        summary:{
+          enabled:false,baseSamples:train.length,hardCandidates:hard.length,
+          replaySamples:0,totalTrainingSamples:train.length,
+          focusSymbols:[...symbolSet],focusTimeBuckets:[...timeSet],multiplier
+        }
+      };
+    }
+
+    const baseLimit=Math.min(train.length,48000);
+    const base=train.length>baseLimit
+      ? Array.from({length:baseLimit},(_,i)=>train[Math.floor(i*(train.length/baseLimit))])
+      : [...train];
+
+    const hardLimit=Math.min(hard.length,9000);
+    const hardSample=hard.length>hardLimit
+      ? Array.from({length:hardLimit},(_,i)=>hard[Math.floor(i*(hard.length/hardLimit))])
+      : hard;
+
+    const replayCopies=Math.min(4,multiplier-1);
+    const replay=[];
+    for(let copy=0;copy<replayCopies;copy++){
+      for(const e of hardSample) replay.push(e);
+    }
+
+    const rows=[];
+    let ri=0;
+    for(let i=0;i<base.length;i++){
+      rows.push(base[i]);
+      const targetReplay=Math.floor((i+1)*(replay.length/Math.max(1,base.length)));
+      while(ri<targetReplay&&ri<replay.length) rows.push(replay[ri++]);
+    }
+    while(ri<replay.length) rows.push(replay[ri++]);
+
+    return {
+      rows,
+      summary:{
+        enabled:true,
+        baseSamples:base.length,
+        hardCandidates:hard.length,
+        hardSampled:hardSample.length,
+        replaySamples:replay.length,
+        totalTrainingSamples:rows.length,
+        focusSymbols:[...symbolSet],
+        focusTimeBuckets:[...timeSet],
+        multiplier
+      }
+    };
   }
 
   async loadProduction(){
@@ -837,12 +910,17 @@ export class ModelLab {
       if(dataset.length<3000) throw new Error(`Model Lab needs at least 3000 chronological examples; found ${dataset.length}`);
 
       const splits=splitChronologically(dataset);
+      const replay=this.#hardExampleReplay(splits.train);
+      const trainingRows=replay.rows;
       const datasetSummary={
         reason,
         coverage,
         symbols:usableSymbols,
         total:dataset.length,
         train:splits.train.length,
+        trainWithHardReplay:trainingRows.length,
+        hardExampleReplay:replay.summary,
+        mistakeGuard:this.mistakeGuard,
         validation:splits.validation.length,
         test:splits.test.length,
         shadow:splits.shadow.length,
@@ -855,11 +933,11 @@ export class ModelLab {
       for(const spec of this.#candidateSpecs()){
         const model=spec.build();
         if(model.kind==="softmax"){
-          model.train(splits.train,{epochs:4,learningRate:.022,l2:.001,maxSamples:70000});
+          model.train(trainingRows,{epochs:5,learningRate:.020,l2:.001,maxSamples:80000});
         }else if(model.kind==="boosted_stumps"){
-          model.train(splits.train,{rounds:18,learningRate:.20,maxSamples:14000});
+          model.train(trainingRows,{rounds:20,learningRate:.18,maxSamples:16000});
         }else{
-          model.train(splits.train,{maxSamples:120000});
+          model.train(trainingRows,{maxSamples:120000});
         }
         const calibrated=chooseTemperature(model,splits.validation);
         const test=metricsFor(model,splits.test,{temperature:calibrated.temperature});
@@ -1038,6 +1116,8 @@ export class ModelLab {
         event:"model_lab_complete",
         runId,
         examples:dataset.length,
+        trainingSamples:trainingRows.length,
+        hardReplay:replay.summary,
         symbols:usableSymbols.length,
         winner:winner.modelId,
         promoted:promote,
