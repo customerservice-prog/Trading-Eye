@@ -354,6 +354,12 @@ export class RealMarketEngine extends EventEmitter {
       event:"backfill_complete",
       rows:this.backfill.rows
     }));
+    this.db.pool?.query(`
+      UPDATE data_quality_incidents
+      SET status='RESOLVED',resolved_at=NOW()
+      WHERE status='OPEN' AND source='engine'
+        AND category IN ('SYMBOL_BACKFILL','FEED_SWITCH_BACKFILL')
+    `).catch(()=>{});
     await this.#bootstrapHistoricalModel();
     this.emit("status",this.status());
   }
@@ -374,6 +380,14 @@ export class RealMarketEngine extends EventEmitter {
       if (missing.length) {
         this.#backfillSymbols(missing,3).catch(err=>this.#recordError("feed_switch_backfill",err));
       }
+    }
+    if(status.state==="LIVE"){
+      this.db.pool?.query(`
+        UPDATE data_quality_incidents
+        SET status='RESOLVED',resolved_at=NOW()
+        WHERE status='OPEN' AND source='engine'
+          AND category='PROVIDER_START'
+      `).catch(()=>{});
     }
     this.providerStatus={...status,at:new Date().toISOString()};
     console.log(JSON.stringify({
