@@ -1417,6 +1417,17 @@ export class Database {
     return q.rows;
   }
 
+  async demoteLegacyResearchFindings() {
+    if (!this.ready) return 0;
+    const q=await this.pool.query(`
+      UPDATE research_pattern_findings
+      SET status='LEGACY_UNVALIDATED',last_seen=NOW()
+      WHERE status='PROMOTED'
+        AND COALESCE(validation_version,'legacy')='legacy'
+    `);
+    return q.rowCount||0;
+  }
+
   async upsertResearchFinding(f) {
     if (!this.ready) return;
     await this.pool.query(`
