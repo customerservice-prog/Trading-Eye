@@ -6,6 +6,7 @@ import { AlpacaProvider } from "./alpaca.js";
 import { RealMarketEngine } from "./engine.js";
 import { DeepStudyEngine } from "./deep-study.js";
 import { AssetUniverse } from "./universe.js";
+import { explainAttention } from "./regime.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -130,11 +131,18 @@ app.get("/api/watchlist",async(req,res)=>{
 app.get("/api/scanner/latest",async(req,res)=>{
   const latest=await db.latestUniverseScan();
   const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
-  const candidates=scanDate?await db.topUniverseCandidates(scanDate,{limit:Number(req.query.limit)||50}):[];
+  const rawCandidates=scanDate?await db.topUniverseCandidates(scanDate,{limit:Number(req.query.limit)||50}):[];
+  const regime=await db.latestMarketRegime();
+  const candidates=rawCandidates.map(row=>({
+    ...row,
+    attention_score:Number(row.interesting_score||0)+Number(row.deep_score||0),
+    attention_reasons:explainAttention(row,regime)
+  }));
   const universeStats=await universe.stats();
   res.json({
     universe:universeStats,
     scan:latest,
+    regime,
     candidates,
     hotSymbols:engine.hotSymbols(),
     pinnedSymbols:[...engine.pinnedSymbols]
