@@ -412,13 +412,6 @@ export class Database {
 
   async beginUniverseScan(scanDate,scanVersion=1) {
     if (!this.ready) return;
-    const current=await this.pool.query(
-      "SELECT scan_version FROM universe_scan_runs WHERE scan_date=$1 LIMIT 1",
-      [scanDate]
-    );
-    if (current.rowCount && Number(current.rows[0].scan_version)!==Number(scanVersion)) {
-      await this.pool.query("DELETE FROM universe_scan_results WHERE scan_date=$1",[scanDate]);
-    }
     await this.pool.query(`
       INSERT INTO universe_scan_runs(scan_date,scan_version,status,started_at)
       VALUES($1,$2,'RUNNING',NOW())
@@ -565,6 +558,8 @@ export class Database {
       FROM universe_scan_results r
       LEFT JOIN asset_universe a ON a.symbol=r.symbol
       WHERE r.scan_date=$1
+        AND COALESCE(a.scanner_eligible,true)=true
+        AND COALESCE(a.data_supported,true)=true
       ORDER BY (r.interesting_score + COALESCE(r.deep_score,0)) DESC
       LIMIT ${n}
     `,[scanDate]);
