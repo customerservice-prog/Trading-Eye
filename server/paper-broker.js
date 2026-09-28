@@ -319,6 +319,10 @@ export class PaperBroker {
         order_id,account_id,symbol,side,qty,status,source,model_id,reference_quote,reject_reason
       ) VALUES($1,$2,$3,$4,$5,'REJECTED',$6,$7,'{}'::jsonb,$8)
     `,[orderId,this.accountId,symbol,side,qty,source,modelId,reason]);
+    console.log(JSON.stringify({
+      event:"paper_order_rejected",accountId:this.accountId,lane:this.sourceTag,
+      symbol,side,qty,source,modelId,reason
+    }));
     return {ok:false,orderId,status:"REJECTED",reason};
   }
 
@@ -401,6 +405,14 @@ export class PaperBroker {
     }finally{
       client.release();
     }
+
+    console.log(JSON.stringify({
+      event:"paper_fill",
+      accountId:this.accountId,lane:this.sourceTag,
+      symbol,side,qty,fillPrice,source,modelId,realized,
+      spreadBps:execution.spreadBps,
+      effectiveBufferBps:execution.effectiveBufferBps
+    }));
 
     return {
       ok:true,orderId,fillId,status:"FILLED",symbol,side,qty,
