@@ -253,9 +253,20 @@ export class RealMarketEngine extends EventEmitter {
   }
 
   #onProviderStatus(status) {
-    if (status.state==="LIMIT_ADJUSTED" && Array.isArray(status.symbols)) {
-      this.liveSymbolLimit=Number(status.maxSymbols)||status.symbols.length||this.liveSymbolLimit;
+    if (Array.isArray(status.symbols) && ["LIVE","LIMIT_ADJUSTED"].includes(status.state)) {
+      if (status.state==="LIMIT_ADJUSTED" && this.provider.feed!=="overnight") {
+        this.liveSymbolLimit=Number(status.maxSymbols)||status.symbols.length||this.liveSymbolLimit;
+      }
       this.symbols=[...status.symbols];
+      for (const symbol of this.symbols) {
+        if (!this.histories.has(symbol)) this.histories.set(symbol,[]);
+        if (!this.barCounters.has(symbol)) this.barCounters.set(symbol,0);
+        this.hotLastUsed.set(symbol,this.hotLastUsed.get(symbol)||Date.now());
+      }
+      const missing=this.symbols.filter(s=>(this.histories.get(s)||[]).length<120);
+      if (missing.length) {
+        this.#backfillSymbols(missing,3).catch(err=>this.#recordError("feed_switch_backfill",err));
+      }
     }
     this.providerStatus={...status,at:new Date().toISOString()};
     console.log(JSON.stringify({
