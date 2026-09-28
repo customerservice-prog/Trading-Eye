@@ -39,6 +39,8 @@ export class MarketIntegrity {
     this.lastCorporateActionSync=null;
     this.lastSecSync=null;
     this.syncing=false;
+    this.contextCache=new Map();
+    this.contextTimer=null;
   }
 
   configured(){return Boolean(this.key&&this.secret);}
@@ -47,20 +49,24 @@ export class MarketIntegrity {
     await this.syncAssetsAll().catch(err=>this.#incident("ASSET_SYNC","WARN",null,String(err?.message||err)));
     await this.syncCorporateActions({days:120}).catch(err=>this.#incident("CORPORATE_ACTION_SYNC","WARN",null,String(err?.message||err)));
     await this.syncSecHotSet().catch(()=>{});
+    await this.refreshContextCache().catch(()=>{});
     this.timer=setInterval(()=>this.tick().catch(()=>{}),60*60*1000);
     this.secTimer=setInterval(()=>this.syncSecHotSet().catch(()=>{}),6*60*60*1000);
+    this.contextTimer=setInterval(()=>this.refreshContextCache().catch(()=>{}),5*60*1000);
   }
 
   stop(){
     clearInterval(this.timer);
     clearInterval(this.secTimer);
+    clearInterval(this.contextTimer);
   }
 
   status(){
     return {
       lastAssetSync:this.lastAssetSync,
       lastCorporateActionSync:this.lastCorporateActionSync,
-      lastSecSync:this.lastSecSync
+      lastSecSync:this.lastSecSync,
+      cachedSymbols:this.contextCache.size
     };
   }
 
@@ -236,6 +242,24 @@ export class MarketIntegrity {
       await sleep(120);
     }
     this.lastSecSync=new Date().toISOString();
+  }
+
+  async refreshContextCache(){
+    const symbols=[...new Set(this.hotSymbols().map(s=>String(s).toUpperCase()))].slice(0,32);
+    for(const symbol of symbols){
+      try{
+        const c=await this.context(symbol,new Date());
+        this.contextCache.set(symbol,{...c,updatedAt:new Date().toISOString()});
+      }catch{}
+    }
+    return this.contextCache.size;
+  }
+
+  cachedContext(symbol){
+    return this.contextCache.get(String(symbol||"").toUpperCase())||{
+      metadata:null,sectorProxy:null,eventRisk:0,corporateActionRisk:0,
+      lifecycle:null,events:[],corporateActions:[]
+    };
   }
 
   async context(symbol,ts=new Date()){
