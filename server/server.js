@@ -79,7 +79,7 @@ app.use(express.static(".",{
   }
 }));
 
-app.get("*",(req,res)=>res.sendFile("index.html",{root:process.cwd()}));
+app.use((req,res)=>res.sendFile("index.html",{root:process.cwd()}));
 
 const server=http.createServer(app);
 const wss=new WebSocketServer({server,path:"/ws"});
