@@ -343,6 +343,80 @@ export class Database {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS research_jobs (
+        job_key TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        phase TEXT,
+        provider TEXT,
+        progress DOUBLE PRECISION NOT NULL DEFAULT 0,
+        items_done BIGINT NOT NULL DEFAULT 0,
+        items_total BIGINT,
+        bars_processed BIGINT NOT NULL DEFAULT 0,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        started_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS research_jobs_status_updated
+        ON research_jobs(status,updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS research_events (
+        id BIGSERIAL PRIMARY KEY,
+        event_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        category TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'INFO',
+        job_key TEXT,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb
+      );
+      CREATE INDEX IF NOT EXISTS research_events_ts
+        ON research_events(event_ts DESC);
+      CREATE INDEX IF NOT EXISTS research_events_job
+        ON research_events(job_key,event_ts DESC);
+
+      CREATE TABLE IF NOT EXISTS research_pattern_findings (
+        finding_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        symbol TEXT,
+        pattern_key TEXT NOT NULL,
+        horizon_days INTEGER NOT NULL,
+        sample_count INTEGER NOT NULL,
+        hit_rate DOUBLE PRECISION,
+        avg_forward_return DOUBLE PRECISION,
+        median_forward_return DOUBLE PRECISION,
+        avg_adverse_return DOUBLE PRECISION,
+        avg_favorable_return DOUBLE PRECISION,
+        score DOUBLE PRECISION NOT NULL,
+        description TEXT NOT NULL,
+        evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        status TEXT NOT NULL DEFAULT 'CANDIDATE'
+      );
+      CREATE INDEX IF NOT EXISTS research_pattern_findings_rank
+        ON research_pattern_findings(score DESC,last_seen DESC);
+
+      CREATE TABLE IF NOT EXISTS long_history_bars_1d (
+        provider TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        day DATE NOT NULL,
+        open DOUBLE PRECISION NOT NULL,
+        high DOUBLE PRECISION NOT NULL,
+        low DOUBLE PRECISION NOT NULL,
+        close DOUBLE PRECISION NOT NULL,
+        volume DOUBLE PRECISION NOT NULL DEFAULT 0,
+        inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(provider,symbol,day)
+      );
+      CREATE INDEX IF NOT EXISTS long_history_symbol_day
+        ON long_history_bars_1d(symbol,day DESC);
+      CREATE INDEX IF NOT EXISTS long_history_day
+        ON long_history_bars_1d(day);
+
       CREATE TABLE IF NOT EXISTS service_heartbeats (
         service_key TEXT PRIMARY KEY,
         status TEXT NOT NULL,
