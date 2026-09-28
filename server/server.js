@@ -10,6 +10,7 @@ import { explainAttention } from "./regime.js";
 import { fingerprintFromFeatures, patternProbabilities, blendProbabilities } from "./patterns.js";
 import { ModelLab } from "./model-lab.js";
 import { PaperBroker } from "./paper-broker.js";
+import { ResearchBrain } from "./research-brain.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -27,6 +28,10 @@ const MODEL_LAB_FORCE_TRAIN_ON_START=String(process.env.MODEL_LAB_FORCE_TRAIN_ON
 const PAPER_AUTOPILOT_ENABLED=String(process.env.PAPER_AUTOPILOT_ENABLED ?? "true").toLowerCase() === "true";
 const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL_BUFFER_BPS || 1.5)));
 const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1");
+const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
+const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
+const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
+const LONG_HISTORY_URL=String(process.env.LONG_HISTORY_URL || "https://stooq.com/db/h/d_us_txt.zip");
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
@@ -72,6 +77,15 @@ engine.attachIntelligence({modelLab,paperBroker});
 const deepStudy=new DeepStudyEngine({db,marketEngine:engine,symbols:SYMBOLS,model:engine.model});
 await deepStudy.init();
 
+const researchBrain=new ResearchBrain({
+  db,marketEngine:engine,modelLab,deepStudy,
+  longHistoryEnabled:LONG_HISTORY_ENABLED,
+  longHistoryProvider:LONG_HISTORY_PROVIDER,
+  longHistoryStart:LONG_HISTORY_START,
+  longHistoryUrl:LONG_HISTORY_URL
+});
+await researchBrain.init();
+
 const app=express();
 app.disable("x-powered-by");
 app.use(express.json({limit:"100kb"}));
@@ -94,6 +108,11 @@ app.get("/health",async(req,res)=>{
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
     paperBroker:true,
+    researchBrain:{
+      longHistoryEnabled:LONG_HISTORY_ENABLED,
+      longHistoryProvider:LONG_HISTORY_PROVIDER,
+      longHistoryStart:LONG_HISTORY_START
+    },
     lastEventAt:s.lastEventAt,
     lastBarAt:s.lastBarAt
   });
@@ -109,6 +128,22 @@ app.get("/api/status",async(req,res)=>{
 
 app.get("/api/model-lab",async(req,res)=>{
   res.json(modelLab.status());
+});
+
+app.get("/api/research",async(req,res)=>{
+  res.json(await researchBrain.status());
+});
+
+app.get("/api/research/events",async(req,res)=>{
+  const afterId=req.query.afterId==null?null:Number(req.query.afterId);
+  const limit=Math.max(1,Math.min(500,Number(req.query.limit)||120));
+  res.json({rows:await db.recentResearchEvents({limit,afterId})});
+});
+
+app.get("/api/research/findings",async(req,res)=>{
+  const limit=Math.max(1,Math.min(300,Number(req.query.limit)||80));
+  const status=req.query.status?String(req.query.status):null;
+  res.json({rows:await db.topResearchFindings({limit,status})});
 });
 
 app.get("/api/paper",async(req,res)=>{
@@ -305,6 +340,8 @@ engine.on("market",event=>broadcast(event));
 engine.on("status",status=>broadcast({type:"status",data:status}));
 deepStudy.on("status",status=>broadcast({type:"deep_study_status",data:status}));
 deepStudy.on("study",study=>broadcast({type:"deep_study_complete",data:study}));
+researchBrain.on("event",event=>broadcast({type:"research_event",data:event}));
+researchBrain.on("status",status=>broadcast({type:"research_status",data:status}));
 
 wss.on("connection",ws=>{
   ws.send(JSON.stringify({type:"status",data:engine.status()}));
@@ -329,6 +366,7 @@ const shutdown=async()=>{
   deepStudy.stop();
   modelLab.stop();
   paperBroker.stop();
+  researchBrain.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
 };
