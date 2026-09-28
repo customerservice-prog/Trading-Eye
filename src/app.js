@@ -34,6 +34,7 @@ let researchData={
   running:false,heartbeatAt:null,lastResearchEventAt:null,
   sources:{},coverage:{},jobs:[],events:[],findings:[]
 };
+let proofData={rows:[],governance:{readiness:null,drift:null}};
 let refreshTimer=null;
 let researchTimer=null;
 let commandTimer=null;
@@ -101,32 +102,31 @@ function latestSelectedMarketTs() {
 }
 
 function readinessSummary() {
-  const production=modelLabData?.production||predictionData.modelLab?.production||null;
-  const live=production?.liveMetrics||{};
-  const liveSamples=Number(live.samples)||0;
-  const brier=live.brier==null?null:Number(live.brier);
-  const ece=live.ece==null?null:Number(live.ece);
-  const closed=Number(paperData?.closedOutcomes)||0;
-  const pf=paperData?.profitFactor==null?null:Number(paperData.profitFactor);
-  const dd=paperData?.maxDrawdown==null?null:Number(paperData.maxDrawdown);
-  const realized=Number(paperData?.realizedPnl)||0;
+  const server=proofData?.governance?.readiness||status?.governance?.readiness||null;
+  if(server){
+    const map={
+      LOCKED:{label:"LOCKED",review:false},
+      PROVING:{label:"PROVING",review:false},
+      NOT_READY:{label:"NOT READY",review:false},
+      REVIEW_ELIGIBLE:{label:"REVIEW ELIGIBLE",review:true}
+    };
+    const state=map[server.status]||map.LOCKED;
+    const passed=(server.gates||[]).filter(g=>g.passed).length;
+    const total=(server.gates||[]).length;
+    const failed=(server.gates||[]).filter(g=>!g.passed&&g.key!=="manual_approval");
+    const detail=server.status==="REVIEW_ELIGIBLE"
+      ?"All automated proof gates passed. Real money is still locked until a manual tiny-test review."
+      : failed.length
+        ? `${passed}/${total} proof gates pass. Next blocker: ${failed[0].message}`
+        : `${passed}/${total} proof gates pass. Real money remains locked.`;
+    return {...state,detail,score:Number(server.score)||0};
+  }
 
-  if (!production) {
-    return {label:"LOCKED",detail:"No production model has completed the proof pipeline yet.",review:false};
-  }
-  if (liveSamples<500) {
-    return {label:"PROVING",detail:`${num(liveSamples)} future live samples collected · target is much more evidence before review.`,review:false};
-  }
-  if (closed<100) {
-    return {label:"PROVING",detail:`${num(closed)} closed paper outcomes · paper execution still needs a larger sample.`,review:false};
-  }
-  if ((brier!=null&&brier>.22)||(ece!=null&&ece>.08)||realized<=0||(pf!=null&&pf<=1)||(dd!=null&&dd<-.10)) {
-    return {label:"NOT READY",detail:"The current live/paper evidence has not earned a real-money review.",review:false};
-  }
   return {
-    label:"REVIEW ELIGIBLE",
-    detail:"Evidence gates passed for manual review only. Real money remains locked until you deliberately approve a tiny live test.",
-    review:true
+    label:"LOCKED",
+    detail:"Server proof gates are still loading. Real money stays locked by default.",
+    review:false,
+    score:0
   };
 }
 
@@ -148,6 +148,12 @@ function renderBeginnerCommandCenter() {
   if (!a) {
     actionEl.textContent="WAIT";
     $("beginnerActionDetail").textContent="The AI does not have enough real evidence yet.";
+  } else if (a.eventRisk?.blocked) {
+    actionEl.textContent="WAIT — EVENT RISK";
+    $("beginnerActionDetail").textContent=
+      a.eventRisk.events?.[0]?.headline
+        ? `A high-impact sourced event is active: ${a.eventRisk.events[0].headline}`
+        : "A high-impact sourced event is active. Paper entry is blocked.";
   } else if (a.noTrade || a.confidence<.46 || a.edge<.055) {
     actionEl.textContent="WAIT — NO EDGE";
     $("beginnerActionDetail").textContent=
@@ -261,6 +267,7 @@ function normalizeAnalysis(a) {
     edge:Number(a.edge)||0,
     noTrade:Boolean(a.noTrade),
     family:a.family||null,
+    eventRisk:a.eventRisk||snapshot.eventRisk||null,
     probabilities:{up:Number(a.pUp),flat:Number(a.pFlat),down:Number(a.pDown)},
     contributions:Array.isArray(a.contributions)?a.contributions:[]
   };
@@ -914,12 +921,13 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,lab,research]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,lab,research,proof]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research()
+      client.studies(10),client.scanner(50),client.paper(),client.modelLab(),client.research(),
+      client.proofScoreboard()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; modelLabData=lab; researchData=research;
+    paperData=paperState; modelLabData=lab; researchData=research; proofData=proof;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
