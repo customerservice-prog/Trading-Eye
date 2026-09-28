@@ -749,32 +749,43 @@ $("simplifyBtn").addEventListener("click",()=>{
   $("simplifyBtn").textContent=simpleReasons?"Show model math":"Explain simply";
   renderAI();
 });
-$("autopilotToggle").addEventListener("change",e=>{
-  autopilot=e.target.checked;
-  toast(autopilot?"AI autopilot enabled for PAPER MONEY using real market data only.":"AI paper autopilot disabled.");
+$("autopilotToggle").addEventListener("change",async e=>{
+  try{
+    paperData=await client.setPaperAutopilot(e.target.checked);
+    renderPaper();
+    toast(e.target.checked
+      ?"Server AI paper autopilot enabled. It will keep running with this tab closed."
+      :"Server AI paper autopilot disabled.");
+  }catch(err){
+    e.target.checked=!e.target.checked;
+    toast(String(err.message||err));
+  }
 });
-$("paperBuyBtn").addEventListener("click",()=>{
-  const price=currentRealPrice();
-  if (price==null) return toast("No real market price is available.");
-  const qty=paper.suggestedQty(price,.008);
-  const t=paper.trade(activeSymbol,"BUY",qty,price,"MANUAL PAPER · REAL DATA");
-  if (t) toast(`Paper buy ${qty} ${activeSymbol}. Fill is simulated; reference market price is real.`);
-  renderPaper();
+$("paperBuyBtn").addEventListener("click",async()=>{
+  try{
+    const fill=await client.paperOrder({symbol:activeSymbol,side:"BUY",source:"MANUAL_PAPER"});
+    toast(`Paper BUY filled ${fill.qty} ${activeSymbol} @ ${Number(fill.fillPrice).toFixed(2)} using ${fill.fillModel}.`);
+    paperData=await client.paper();
+    renderPaper();
+  }catch(err){ toast(String(err.message||err)); }
 });
-$("paperSellBtn").addEventListener("click",()=>{
-  const price=currentRealPrice();
-  if (price==null) return toast("No real market price is available.");
-  const qty=paper.suggestedQty(price,.008);
-  const t=paper.trade(activeSymbol,"SELL",qty,price,"MANUAL PAPER · REAL DATA");
-  if (t) toast(`Paper sell ${qty} ${activeSymbol}. Fill is simulated; reference market price is real.`);
-  renderPaper();
+$("paperSellBtn").addEventListener("click",async()=>{
+  try{
+    const fill=await client.paperOrder({symbol:activeSymbol,side:"SELL",source:"MANUAL_PAPER"});
+    toast(`Paper SELL filled ${fill.qty} ${activeSymbol} @ ${Number(fill.fillPrice).toFixed(2)} using ${fill.fillModel}.`);
+    paperData=await client.paper();
+    renderPaper();
+  }catch(err){ toast(String(err.message||err)); }
 });
-$("flattenBtn").addEventListener("click",()=>{
-  const price=currentRealPrice();
-  if (price==null) return toast("No real market price is available.");
-  const t=paper.flatten(activeSymbol,price,"MANUAL PAPER · REAL DATA");
-  toast(t?"Paper position flattened. Fill is simulated.":"No open paper position in "+activeSymbol+".");
-  renderPaper();
+$("flattenBtn").addEventListener("click",async()=>{
+  try{
+    const fill=await client.flattenPaper(activeSymbol);
+    toast(fill.ok
+      ? `Paper position flattened @ ${Number(fill.fillPrice).toFixed(2)}.`
+      :"No open paper position in "+activeSymbol+".");
+    paperData=await client.paper();
+    renderPaper();
+  }catch(err){ toast(String(err.message||err)); }
 });
 $("scannerBody")?.addEventListener("click",e=>{
   const row=e.target.closest("tr[data-symbol]");
@@ -809,5 +820,6 @@ window.TradingEye=Object.freeze({
   mode:"REAL_DATA_ONLY",
   status:()=>status,
   activeSymbol:()=>activeSymbol,
-  paperAccount:()=>paper.snapshot()
+  paperAccount:()=>paperData,
+  modelLab:()=>modelLabData
 });
