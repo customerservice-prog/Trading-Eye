@@ -186,6 +186,15 @@ app.get("/api/studies/latest",async(req,res)=>{
   res.json({status:deepStudy.status(),rows});
 });
 
+app.get("/api/pattern-lab/:symbol",async(req,res)=>{
+  const symbol=String(req.params.symbol||"").trim().toUpperCase();
+  if (!engine.hotSymbols().includes(symbol)) {
+    return res.status(404).json({error:"Symbol is not active in the live hot set"});
+  }
+  const limit=Math.max(5,Math.min(100,Number(req.query.limit)||40));
+  res.json(engine.patternLab(symbol,{limit}));
+});
+
 app.get("/api/predictions",async(req,res)=>{
   const symbol=req.query.symbol?String(req.query.symbol).toUpperCase():null;
   const rows=await db.recentPredictions({symbol,limit:Number(req.query.limit)||200});
