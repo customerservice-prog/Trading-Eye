@@ -714,6 +714,7 @@ export class RealMarketEngine extends EventEmitter {
       }:{family:"legacy_online",edge,noTrade}
     };
     await this.db.savePrediction(p);
+    if (this.modelLab) await this.modelLab.shadowPredict(bar.symbol,bar);
     this.emit("market",{type:"prediction",data:{...p,edge,noTrade}});
     if (this.paperBroker) {
       this.paperBroker.handlePrediction({...p,edge,noTrade}).catch(err=>this.#recordError("paper_prediction",err));
@@ -736,6 +737,7 @@ export class RealMarketEngine extends EventEmitter {
         id:p.id,symbol:p.symbol,actualDirection,correct,resultPrice:bar.close,resultReturn:ret,scoredAt:bar.ts
       }});
     }
+    if (this.modelLab) await this.modelLab.scoreShadowDue(bar);
   }
 
   async #flushRaw() {
