@@ -324,12 +324,12 @@
                 <div class="metric"><span>Predictions made</span><strong id="predictionCount">0</strong></div>
                 <div class="metric"><span>Scored</span><strong id="scoredCount">0</strong></div>
                 <div class="metric"><span>Live high-confidence accuracy</span><strong id="highConfidenceAccuracy">—</strong></div>
-                <div class="metric"><span>Historical holdout</span><strong id="historicalHoldoutAccuracy">—</strong></div>
-                <div class="metric"><span>Learning updates</span><strong id="learningUpdates">0</strong></div>
+                <div class="metric"><span>Production test accuracy</span><strong id="historicalHoldoutAccuracy">—</strong></div>
+                <div class="metric"><span>Production shadow Brier</span><strong id="learningUpdates">—</strong></div>
               </div>
               <div class="learning-explainer">
                 <span class="learning-icon">◎</span>
-                <div><strong>No hindsight allowed.</strong><br>Historical training uses an older time-ordered segment and a separate holdout segment. Live forecasts are then stored before the outcome exists, scored later, and tracked separately.</div>
+                <div id="modelLabSummary"><strong>No hindsight allowed.</strong><br>Model Lab trains challengers on older data, calibrates them separately, tests unseen periods, then compares them with production before any promotion.</div>
               </div>
             </div>
           </div>
