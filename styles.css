@@ -1427,3 +1427,40 @@ body[data-data-state="missing"] #marketChart { opacity:.28; }
     grid-template-columns:1fr;
   }
 }
+
+.research-top-btn {
+  height:28px;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:0 9px;
+  border:1px solid rgba(73,226,154,.18);
+  border-radius:999px;
+  background:rgba(73,226,154,.055);
+  color:var(--green);
+  font-size:7px;
+  font-weight:900;
+  letter-spacing:.055em;
+  cursor:pointer;
+}
+.research-top-btn:hover {
+  background:rgba(73,226,154,.10);
+  border-color:rgba(73,226,154,.30);
+}
+.research-top-dot {
+  width:6px;
+  height:6px;
+  border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 11px rgba(73,226,154,.7);
+  animation:researchPulse 1.3s ease-in-out infinite;
+}
+.research-top-btn.error {
+  color:var(--red);
+  border-color:rgba(255,101,118,.22);
+  background:rgba(255,101,118,.055);
+}
+.research-top-btn.error .research-top-dot {
+  background:var(--red);
+  box-shadow:0 0 11px rgba(255,101,118,.55);
+}
