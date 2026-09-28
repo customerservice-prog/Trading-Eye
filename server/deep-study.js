@@ -363,7 +363,7 @@ export class DeepStudyEngine extends EventEmitter {
     this.running=false;
     this.lastStudy=null;
     this.patternState={state:"WAITING",patterns:0,lastBuiltAt:null,error:null};
-    this.scanVersion=2;
+    this.scanVersion=3;
     this.universeState={state:"WAITING",scanDate:null,scanVersion:this.scanVersion,assetsScanned:0,dailyBars:0,candidates:0,error:null};
     this.timer=null;
     this.initialized=false;
@@ -455,7 +455,14 @@ export class DeepStudyEngine extends EventEmitter {
   }
 
   async runUniverseScan(scanDate) {
-    this.universeState={state:"RUNNING",scanDate,scanVersion:this.scanVersion,assetsScanned:0,dailyBars:0,candidates:0,error:null};
+    const previous=await this.db.latestUniverseScan();
+    const previousSameDate=previous && String(previous.scan_date).slice(0,10)===scanDate;
+    this.universeState={
+      state:"RUNNING",scanDate,scanVersion:this.scanVersion,
+      assetsScanned:previousSameDate?Number(previous.assets_scanned)||0:0,
+      dailyBars:previousSameDate?Number(previous.daily_bars)||0:0,
+      candidates:0,error:null
+    };
     this.emit("status",this.status());
     await this.db.beginUniverseScan(scanDate,this.scanVersion);
     try {
@@ -468,7 +475,8 @@ export class DeepStudyEngine extends EventEmitter {
       const pendingAssets=assets.filter(a=>!completedSymbols.has(a.symbol));
       const start=new Date(addDays(scanDate,-180)+"T00:00:00Z");
       const end=new Date(addDays(scanDate,1)+"T23:59:59Z");
-      let assetsScanned=completedSymbols.size,dailyBars=0;
+      let assetsScanned=completedSymbols.size;
+      let dailyBars=previousSameDate?Number(previous.daily_bars)||0:0;
 
       for (let offset=0;offset<pendingAssets.length;offset+=100) {
         const chunk=pendingAssets.slice(offset,offset+100);
