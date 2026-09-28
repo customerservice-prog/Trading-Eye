@@ -76,6 +76,7 @@ export class ResearchBrain extends EventEmitter {
     longHistoryStart="1999-01-01",
     longHistoryUrl="https://static.stooq.com/db/h/d_us_txt.zip",
     longHistoryApiKey="",
+    symbolFallbackEnabled=true,
     role="all"
   }){
     super();
@@ -88,6 +89,7 @@ export class ResearchBrain extends EventEmitter {
     this.longHistoryStart=longHistoryStart;
     this.longHistoryUrl=longHistoryUrl;
     this.longHistoryApiKey=String(longHistoryApiKey||"");
+    this.symbolFallbackEnabled=Boolean(symbolFallbackEnabled);
     this.role=String(role||"all").toLowerCase();
     this.longHistoryRetryAfter=0;
     this.longHistoryAuthNoticeSent=false;
@@ -154,13 +156,16 @@ export class ResearchBrain extends EventEmitter {
           targetStart:this.longHistoryStart,
           enabled:this.longHistoryEnabled,
           keyConfigured:Boolean(this.longHistoryApiKey),
+          fallbackEnabled:this.symbolFallbackEnabled,
           status:this.longHistoryRunning
             ?"SYNCING"
             :Number(coverage.longHistory?.bars)>0
               ?"READY"
-              :this.longHistoryEnabled&&!this.longHistoryApiKey
-                ?"AUTH_REQUIRED"
-                :"WAITING",
+              :this.longHistoryEnabled&&!this.longHistoryApiKey&&this.symbolFallbackEnabled
+                ?"TRYING_PUBLIC_CSV"
+                :this.longHistoryEnabled&&!this.longHistoryApiKey
+                  ?"AUTH_REQUIRED"
+                  :"WAITING",
           note:"Separate daily-history lane; never labeled as Alpaca."
         }
       },
@@ -179,6 +184,14 @@ export class ResearchBrain extends EventEmitter {
     const coverage=await this.db.researchCoverage();
     if(this.role!=="orchestrator" && this.longHistoryEnabled && !this.longHistoryRunning){
       if(!this.longHistoryApiKey){
+        if(this.symbolFallbackEnabled){
+          if(Date.now()<this.longHistoryRetryAfter) return;
+          this.longHistoryRunning=true;
+          this.#syncLongHistoryPerSymbol()
+            .catch(err=>this.#error("long_history",err))
+            .finally(()=>{this.longHistoryRunning=false;});
+          return;
+        }
         if(!this.longHistoryAuthNoticeSent){
           this.longHistoryAuthNoticeSent=true;
           await this.#event({
@@ -186,7 +199,7 @@ export class ResearchBrain extends EventEmitter {
             level:"IMPORTANT",
             jobKey:"long-history-1999-present",
             title:"1999+ research lane is waiting for a free history key",
-            message:"Alpaca starts in 2016. The separate long-history lane is ready, but its bulk provider now requires a free Stooq download key before 1999+ ingestion can start.",
+            message:"Alpaca starts in 2016. The separate long-history lane is ready, but its bulk provider requires a free Stooq download key before ingestion can start.",
             details:{keyUrl:"https://stooq.com/q/d/?s=spy.us&get_apikey"}
           });
         }
@@ -352,6 +365,166 @@ export class ResearchBrain extends EventEmitter {
       }
     });
     this.emit("status",{heartbeatAt:this.lastHeartbeatAt});
+  }
+
+  #stooqSymbol(symbol){
+    return String(symbol||"").trim().toLowerCase().replaceAll(".","-")+".us";
+  }
+
+  async #fetchPublicCsvSymbol(symbol){
+    const end=etDate().replaceAll("-","");
+    const start=this.longHistoryStart.replaceAll("-","");
+    const s=this.#stooqSymbol(symbol);
+    const url=`https://stooq.com/q/d/l/?s=${encodeURIComponent(s)}&i=d&d1=${start}&d2=${end}`;
+    const res=await fetch(url,{
+      headers:{
+        "user-agent":"Mozilla/5.0 Trading-Eye-Research/1.0",
+        "accept":"text/csv,text/plain,*/*",
+        "accept-language":"en-US,en;q=0.9"
+      }
+    });
+    const body=await res.text();
+    if(!res.ok){
+      const err=new Error(`Stooq public CSV HTTP ${res.status}`);
+      err.status=res.status;
+      throw err;
+    }
+    if(/<!doctype|<html|enable javascript|captcha/i.test(body.slice(0,500))){
+      const err=new Error("Stooq public CSV returned browser verification instead of data");
+      err.status=403;
+      throw err;
+    }
+    const lines=body.replace(/\r/g,"").split("\n").filter(Boolean);
+    if(lines.length<3 || !/^date,/i.test(lines[0])){
+      return [];
+    }
+    const out=[];
+    for(let i=1;i<lines.length;i++){
+      const cols=lines[i].split(",");
+      const day=parseDay(cols[0]);
+      const open=num(cols[1]),high=num(cols[2]),low=num(cols[3]),close=num(cols[4]);
+      const volume=num(cols[5])||0;
+      if(!day||day<this.longHistoryStart||![open,high,low,close].every(x=>x!=null&&x>0)) continue;
+      out.push({
+        provider:"stooq_symbol_csv",
+        symbol:String(symbol).toUpperCase(),
+        day,open,high,low,close,volume
+      });
+    }
+    return out;
+  }
+
+  async #syncLongHistoryPerSymbol(){
+    const jobKey="long-history-1999-present";
+    const coverage=await this.db.researchCoverage();
+    const already=new Set((await this.db.longHistorySymbols({limit:50000})).map(x=>x.symbol));
+    const assets=await this.db.listActiveAssets({
+      limit:20000,
+      dataSupportedOnly:true,
+      scannerEligibleOnly:true
+    });
+    const priority=["SPY","QQQ","DIA","IWM","AAPL","MSFT","NVDA","AMZN","META","GOOGL"];
+    const ordered=[
+      ...priority.map(symbol=>assets.find(a=>a.symbol===symbol)).filter(Boolean),
+      ...assets.filter(a=>!priority.includes(a.symbol))
+    ];
+    const pending=ordered.filter(a=>!already.has(a.symbol));
+    const batch=pending.slice(0,50);
+
+    if(!batch.length){
+      await this.db.upsertResearchJob({
+        jobKey,jobType:"LONG_HISTORY_INGEST",status:"COMPLETE",phase:"READY",
+        provider:"stooq_symbol_csv",progress:1,itemsDone:already.size,itemsTotal:assets.length,
+        barsProcessed:Number(coverage.longHistory?.bars)||0,
+        completedAt:new Date().toISOString(),
+        details:{mode:"public_symbol_csv",coverage:coverage.longHistory}
+      });
+      return;
+    }
+
+    await this.db.upsertResearchJob({
+      jobKey,jobType:"LONG_HISTORY_INGEST",status:"RUNNING",phase:"PUBLIC_CSV",
+      provider:"stooq_symbol_csv",
+      progress:assets.length?already.size/assets.length:0,
+      itemsDone:already.size,itemsTotal:assets.length,
+      barsProcessed:Number(coverage.longHistory?.bars)||0,
+      details:{mode:"public_symbol_csv",batch:batch.map(x=>x.symbol),targetStart:this.longHistoryStart}
+    });
+
+    if(!this.longHistoryAuthNoticeSent){
+      this.longHistoryAuthNoticeSent=true;
+      await this.#event({
+        category:"DATA",
+        jobKey,
+        title:"Trying no-key 1999+ symbol history",
+        message:"Bulk history requires a key, so Trading Eye is testing Stooq's public per-symbol CSV path at a conservative rate before asking you for anything.",
+        details:{symbols:batch.slice(0,5).map(x=>x.symbol)}
+      });
+    }
+
+    let symbolsDone=0,barsStored=0,misses=0;
+    for(const asset of batch){
+      try{
+        const rows=await this.#fetchPublicCsvSymbol(asset.symbol);
+        if(rows.length){
+          barsStored+=await this.db.upsertLongHistoryBars(rows);
+        }else{
+          misses++;
+        }
+      }catch(err){
+        if([401,403,429].includes(Number(err?.status))){
+          this.symbolFallbackEnabled=false;
+          this.longHistoryRetryAfter=Date.now()+6*60*60*1000;
+          await this.db.upsertResearchJob({
+            jobKey,jobType:"LONG_HISTORY_INGEST",status:"WAITING",phase:"AUTH_REQUIRED",
+            provider:this.longHistoryProvider,progress:0,
+            itemsDone:already.size+symbolsDone,itemsTotal:assets.length,
+            barsProcessed:Number(coverage.longHistory?.bars)||0,
+            error:String(err?.message||err),
+            details:{
+              publicCsvBlocked:true,
+              keyRequired:true,
+              keyUrl:"https://stooq.com/q/d/?s=spy.us&get_apikey"
+            }
+          });
+          await this.#event({
+            category:"DATA",
+            level:"IMPORTANT",
+            jobKey,
+            title:"No-key long-history path is blocked",
+            message:"Stooq blocked the public CSV fallback too. The 1999+ lane now genuinely requires the free Stooq history key; Trading Eye will not scrape around that restriction.",
+            details:{status:err?.status||null,keyUrl:"https://stooq.com/q/d/?s=spy.us&get_apikey"}
+          });
+          return;
+        }
+        misses++;
+      }
+      symbolsDone++;
+      if(symbolsDone%10===0){
+        console.log(JSON.stringify({
+          event:"research_symbol_history_progress",
+          symbolsDone,barsStored,misses
+        }));
+      }
+      await new Promise(r=>setTimeout(r,1800));
+    }
+
+    const refreshed=await this.db.researchCoverage();
+    await this.db.upsertResearchJob({
+      jobKey,jobType:"LONG_HISTORY_INGEST",status:"RUNNING",phase:"PUBLIC_CSV",
+      provider:"stooq_symbol_csv",
+      progress:assets.length?(already.size+symbolsDone)/assets.length:0,
+      itemsDone:already.size+symbolsDone,itemsTotal:assets.length,
+      barsProcessed:Number(refreshed.longHistory?.bars)||0,
+      details:{mode:"public_symbol_csv",barsStored,misses,coverage:refreshed.longHistory}
+    });
+    await this.#event({
+      category:"DATA",
+      jobKey,
+      title:"Long-history batch stored",
+      message:`Processed ${symbolsDone} symbols and stored ${barsStored.toLocaleString()} historical daily bars without an API key.`,
+      details:{symbolsDone,barsStored,misses,coverage:refreshed.longHistory}
+    });
   }
 
   async #syncLongHistory(){
