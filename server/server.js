@@ -28,6 +28,8 @@ const PAPER_FILL_BUFFER_BPS=Math.max(0,Math.min(20,Number(process.env.PAPER_FILL
 
 const db=new Database(process.env.DATABASE_URL);
 await db.init();
+const coreSchema=await db.coreSchemaCheck();
+console.log(JSON.stringify({event:"core_schema_check",...coreSchema}));
 
 const universe=new AssetUniverse({
   db,
@@ -74,8 +76,9 @@ app.get("/health",async(req,res)=>{
   const database=await db.ping();
   const s=engine.status();
   res.status(database?200:503).json({
-    ok:database,
+    ok:database&&coreSchema.ok,
     database,
+    coreSchema,
     providerConfigured:s.configured,
     providerState:s.provider.state,
     feed:s.provider.feed,
