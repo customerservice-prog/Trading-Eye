@@ -50,6 +50,11 @@ export class RealMarketEngine extends EventEmitter {
         this.backfill.state="ERROR";
         this.backfill.error=String(err?.message||err);
         this.backfill.finishedAt=new Date().toISOString();
+        console.log(JSON.stringify({
+          event:"backfill_error",
+          message:this.backfill.error,
+          rows:this.backfill.rows
+        }));
         this.emit("status",this.status());
       });
       this.provider.start().catch(err=>this.#recordError("provider_start",err));
@@ -69,6 +74,12 @@ export class RealMarketEngine extends EventEmitter {
 
   async #backfill() {
     this.backfill={state:"RUNNING",rows:0,startedAt:new Date().toISOString(),finishedAt:null,error:null};
+    console.log(JSON.stringify({
+      event:"backfill_started",
+      feed:this.provider.feed,
+      days:this.backfillDays,
+      symbols:this.symbols
+    }));
     this.emit("status",this.status());
     const end=new Date(Date.now()-20*60*1000);
     const start=new Date(end.getTime()-this.backfillDays*24*60*60*1000);
@@ -89,6 +100,11 @@ export class RealMarketEngine extends EventEmitter {
           await this.db.upsertBarsBatch(batch.slice(i,i+700));
         }
         this.backfill.rows+=batch.length;
+        console.log(JSON.stringify({
+          event:"backfill_page",
+          rowsAdded:batch.length,
+          totalRows:this.backfill.rows
+        }));
         this.emit("status",this.status());
       }
     });
@@ -99,6 +115,10 @@ export class RealMarketEngine extends EventEmitter {
     }
     this.backfill.state="COMPLETE";
     this.backfill.finishedAt=new Date().toISOString();
+    console.log(JSON.stringify({
+      event:"backfill_complete",
+      rows:this.backfill.rows
+    }));
     await this.#bootstrapHistoricalModel();
     this.emit("status",this.status());
   }
