@@ -96,6 +96,18 @@ export class MarketClient {
     return r.json();
   }
 
+  async explorationPaper() {
+    const r=await fetch("/api/paper/exploration",{cache:"no-store"});
+    if (!r.ok) throw new Error("Exploration paper request failed: "+r.status);
+    return r.json();
+  }
+
+  async mistakes() {
+    const r=await fetch("/api/mistakes",{cache:"no-store"});
+    if (!r.ok) throw new Error("Mistake Lab request failed: "+r.status);
+    return r.json();
+  }
+
   async setPaperAutopilot(enabled) {
     const r=await fetch("/api/paper/autopilot",{
       method:"POST",
