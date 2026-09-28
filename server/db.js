@@ -163,7 +163,7 @@ export class Database {
     let where="WHERE symbol=$1";
     if (start) { params.push(start); where+=` AND ts >= $${params.length}`; }
     if (end) { params.push(end); where+=` AND ts <= $${params.length}`; }
-    params.push(Math.max(1,Math.min(5000,limit)));
+    params.push(Math.max(1,Math.min(100000,limit)));
     const q=await this.pool.query(`
       SELECT provider,feed,symbol,ts,open,high,low,close,volume,trade_count,vwap,source
       FROM market_bars_1m
