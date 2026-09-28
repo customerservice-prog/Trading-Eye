@@ -15,6 +15,7 @@ export const MODEL_FEATURES=[
   "high20Dist","low20Dist","rangeCompression",
   "trendSlope10","trendSlope30","closeLocation",
   "spyRet5","qqqRet5","breadth5","relativeSpy5","relativeQqq5",
+  "sectorRet5","relativeSector5","eventRisk","corporateActionRisk",
   "timeSin","timeCos"
 ];
 
@@ -126,15 +127,20 @@ export class FeatureFactory {
       breadth5:clamp(Number(context.breadth5)||0,-1,1),
       relativeSpy5:clamp((pct(close,c(5))-(Number(context.spyRet5)||0))/0.025,-3,3),
       relativeQqq5:clamp((pct(close,c(5))-(Number(context.qqqRet5)||0))/0.03,-3,3),
+      sectorRet5:clamp((Number(context.sectorRet5)||0)/0.03,-3,3),
+      relativeSector5:clamp((pct(close,c(5))-(Number(context.sectorRet5)||0))/0.03,-3,3),
+      eventRisk:clamp(Number(context.eventRisk)||0,0,1),
+      corporateActionRisk:clamp(Number(context.corporateActionRisk)||0,0,1),
       timeSin:Math.sin(angle),
       timeCos:Math.cos(angle)
     };
     return feature;
   }
 
-  buildContextMap(histories){
+  buildContextMap(histories,sectorProxyBySymbol={}){
     const accum=new Map();
     const core={SPY:new Map(),QQQ:new Map()};
+    const symbolReturns=new Map();
     for(const [symbol,rows] of histories.entries()){
       if(!Array.isArray(rows)||rows.length<6) continue;
       for(let i=5;i<rows.length;i++){
@@ -146,6 +152,8 @@ export class FeatureFactory {
         if(!a){ a={up:0,total:0}; accum.set(ts,a); }
         a.total++;
         if(r>0) a.up++;
+        if(!symbolReturns.has(symbol)) symbolReturns.set(symbol,new Map());
+        symbolReturns.get(symbol).set(ts,r);
         if(symbol==="SPY") core.SPY.set(ts,r);
         if(symbol==="QQQ") core.QQQ.set(ts,r);
       }
@@ -155,13 +163,14 @@ export class FeatureFactory {
       out.set(ts,{
         spyRet5:core.SPY.get(ts)||0,
         qqqRet5:core.QQQ.get(ts)||0,
-        breadth5:a.total?((a.up/a.total)-.5)*2:0
+        breadth5:a.total?((a.up/a.total)-.5)*2:0,
+        symbolReturns
       });
     }
     return out;
   }
 
-  contextAt(histories,ts){
+  contextAt(histories,ts,sectorProxy=null,extra={}){
     const target=+new Date(ts);
     let up=0,total=0,spyRet5=0,qqqRet5=0;
     for(const [symbol,rows] of histories.entries()){
@@ -176,9 +185,21 @@ export class FeatureFactory {
       if(symbol==="SPY") spyRet5=r;
       if(symbol==="QQQ") qqqRet5=r;
     }
+    let sectorRet5=0;
+    if(sectorProxy){
+      const rows=histories.get(sectorProxy)||[];
+      let idx=rows.length-1;
+      while(idx>5 && +new Date(rows[idx].ts||rows[idx].time)>target) idx--;
+      if(idx>=5){
+        const prev=Number(rows[idx-5].close),cur=Number(rows[idx].close);
+        if(prev&&Number.isFinite(cur)) sectorRet5=(cur-prev)/prev;
+      }
+    }
     return {
-      spyRet5,qqqRet5,
-      breadth5:total?((up/total)-.5)*2:0
+      spyRet5,qqqRet5,sectorRet5,
+      breadth5:total?((up/total)-.5)*2:0,
+      eventRisk:Number(extra.eventRisk)||0,
+      corporateActionRisk:Number(extra.corporateActionRisk)||0
     };
   }
 
@@ -200,16 +221,27 @@ export class FeatureFactory {
     };
   }
 
-  buildDataset(histories,{symbols=null,horizon=15,step=5,maxSamples=220000}={}){
+  buildDataset(histories,{symbols=null,horizon=15,step=5,maxSamples=220000,sectorProxyBySymbol={},eventRiskBySymbol={}}={}){
     const examples=[];
     const chosen=symbols||[...histories.keys()];
-    const contextMap=this.buildContextMap(histories);
+    const contextMap=this.buildContextMap(histories,sectorProxyBySymbol);
     for(const symbol of chosen){
       const rows=histories.get(symbol)||[];
       if(rows.length<100) continue;
       for(let i=40;i<rows.length-horizon-1;i+=step){
         const ts=+new Date(rows[i].ts||rows[i].time);
-        const features=this.extract(rows,i,contextMap.get(ts)||{});
+        const base=contextMap.get(ts)||{};
+        const sectorProxy=sectorProxyBySymbol[symbol]||null;
+        const sectorRet5=sectorProxy
+          ?(base.symbolReturns?.get(sectorProxy)?.get(ts)||0)
+          :0;
+        const extra=eventRiskBySymbol[symbol]||{};
+        const features=this.extract(rows,i,{
+          ...base,
+          sectorRet5,
+          eventRisk:Number(extra.eventRisk)||0,
+          corporateActionRisk:Number(extra.corporateActionRisk)||0
+        });
         const target=this.target(rows,i,horizon);
         if(!features||!target) continue;
         examples.push({
