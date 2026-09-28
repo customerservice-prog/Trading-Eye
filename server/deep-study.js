@@ -266,7 +266,8 @@ export class DeepStudyEngine extends EventEmitter {
     this.running=false;
     this.lastStudy=null;
     this.patternState={state:"WAITING",patterns:0,lastBuiltAt:null,error:null};
-    this.universeState={state:"WAITING",scanDate:null,assetsScanned:0,dailyBars:0,candidates:0,error:null};
+    this.scanVersion=2;
+    this.universeState={state:"WAITING",scanDate:null,scanVersion:this.scanVersion,assetsScanned:0,dailyBars:0,candidates:0,error:null};
     this.timer=null;
     this.initialized=false;
   }
@@ -319,14 +320,15 @@ export class DeepStudyEngine extends EventEmitter {
     if (!isWeekday(scanDate) || minute<16*60+20) {
       do { scanDate=addDays(scanDate,-1); } while(!isWeekday(scanDate));
     }
-    if (!(await this.db.universeScanComplete(scanDate)) && this.universeState.state!=="RUNNING") {
+    if (!(await this.db.universeScanComplete(scanDate,this.scanVersion)) && this.universeState.state!=="RUNNING") {
       await this.runUniverseScan(scanDate);
-    } else if (await this.db.universeScanComplete(scanDate)) {
+    } else if (await this.db.universeScanComplete(scanDate,this.scanVersion)) {
       const latestScan=await this.db.latestUniverseScan();
       if (latestScan) {
         this.universeState={
           state:latestScan.status,
           scanDate:String(latestScan.scan_date).slice(0,10),
+          scanVersion:Number(latestScan.scan_version)||this.scanVersion,
           assetsScanned:Number(latestScan.assets_scanned)||0,
           dailyBars:Number(latestScan.daily_bars)||0,
           candidates:Number(latestScan.candidates)||0,
@@ -356,9 +358,9 @@ export class DeepStudyEngine extends EventEmitter {
   }
 
   async runUniverseScan(scanDate) {
-    this.universeState={state:"RUNNING",scanDate,assetsScanned:0,dailyBars:0,candidates:0,error:null};
+    this.universeState={state:"RUNNING",scanDate,scanVersion:this.scanVersion,assetsScanned:0,dailyBars:0,candidates:0,error:null};
     this.emit("status",this.status());
-    await this.db.beginUniverseScan(scanDate);
+    await this.db.beginUniverseScan(scanDate,this.scanVersion);
     try {
       const assets=await this.db.listActiveAssets({
         limit:20000,
@@ -405,7 +407,7 @@ export class DeepStudyEngine extends EventEmitter {
         await this.db.saveUniverseScanResults(scanDate,results);
         assetsScanned+=chunk.length;
 
-        this.universeState={state:"RUNNING",scanDate,assetsScanned,dailyBars,candidates:0,error:null};
+        this.universeState={state:"RUNNING",scanDate,scanVersion:this.scanVersion,assetsScanned,dailyBars,candidates:0,error:null};
         if (offset%500===0) {
           console.log(JSON.stringify({event:"universe_scan_progress",scanDate,assetsScanned,dailyBars}));
           this.emit("status",this.status());
@@ -418,7 +420,7 @@ export class DeepStudyEngine extends EventEmitter {
       await this.db.completeUniverseScan(scanDate,{
         assetsScanned:assets.length,dailyBars,candidates:top.length
       });
-      this.universeState={state:"COMPLETE",scanDate,assetsScanned:assets.length,dailyBars,candidates:top.length,error:null};
+      this.universeState={state:"COMPLETE",scanDate,scanVersion:this.scanVersion,assetsScanned:assets.length,dailyBars,candidates:top.length,error:null};
       console.log(JSON.stringify({
         event:"universe_scan_complete",scanDate,assetsScanned:assets.length,dailyBars,candidates:top.length
       }));
