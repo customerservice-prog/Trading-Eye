@@ -92,6 +92,7 @@ export class RealMarketEngine extends EventEmitter {
     }
     this.backfill.state="COMPLETE";
     this.backfill.finishedAt=new Date().toISOString();
+    await this.#bootstrapHistoricalModel();
     this.emit("status",this.status());
   }
 
@@ -189,6 +190,75 @@ export class RealMarketEngine extends EventEmitter {
       breadth:clamp((breadth-.5)*2,-1,1),
       vwap:clamp(((last.close-vwap)/Math.max(vwap,1))/.006,-1,1)
     };
+  }
+
+
+  #historicalFeatures(rows,index) {
+    if (index<29) return null;
+    const window=rows.slice(Math.max(0,index-23),index+1);
+    const last=rows[index],prev3=rows[index-3],prev12=rows[index-12];
+    if (!last||!prev3||!prev12||window.length<20) return null;
+    const past=window.slice(0,-1);
+    const avgVol=past.reduce((a,x)=>a+x.volume,0)/Math.max(1,past.length);
+    const returns=window.slice(1).map((x,i)=>pct(x.close,window[i].close));
+    const rv=Math.sqrt(returns.reduce((a,r)=>a+r*r,0)/Math.max(1,returns.length));
+    const body=(last.close-last.open)/Math.max(last.high-last.low,last.close*.00001);
+    const volSum=window.reduce((a,x)=>a+x.volume,0);
+    const vwap=window.reduce((a,x)=>a+((x.high+x.low+x.close)/3)*x.volume,0)/Math.max(1,volSum);
+    return {
+      trend:clamp(pct(last.close,prev12.close)/.012,-1,1),
+      momentum:clamp(pct(last.close,prev3.close)/.006,-1,1),
+      volume:clamp((last.volume/Math.max(avgVol,1)-1)/1.2,-1,1),
+      volatility:clamp((rv-.0017)/.003,-1,1),
+      orderFlow:clamp(body,-1,1),
+      breadth:0,
+      vwap:clamp(((last.close-vwap)/Math.max(vwap,1))/.006,-1,1)
+    };
+  }
+
+  async #bootstrapHistoricalModel() {
+    if (this.model.stats?.historicalBootstrappedAt) return;
+    let trainingSamples=0,holdoutSamples=0,holdoutCorrect=0,highConfidenceSamples=0,highConfidenceCorrect=0;
+    for (const symbol of this.symbols) {
+      const rows=this.histories.get(symbol)||[];
+      if (rows.length<120) continue;
+      const split=Math.floor(rows.length*.70);
+      const lastTrain=Math.max(30,split-this.horizonMinutes-1);
+      for (let i=30;i<lastTrain;i+=3) {
+        const features=this.#historicalFeatures(rows,i);
+        const future=rows[i+this.horizonMinutes];
+        if (!features||!future) continue;
+        const predicted=this.model.analyze(features);
+        const ret=(future.close-rows[i].close)/rows[i].close;
+        const actual=ret>.001?"UP":ret<-.001?"DOWN":"FLAT";
+        await this.model.learn(features,actual,{
+          p_up:predicted.pUp,p_down:predicted.pDown
+        },{persist:false,historical:true});
+        trainingSamples++;
+      }
+      for (let i=Math.max(30,split);i<rows.length-this.horizonMinutes;i+=3) {
+        const features=this.#historicalFeatures(rows,i);
+        const future=rows[i+this.horizonMinutes];
+        if (!features||!future) continue;
+        const predicted=this.model.analyze(features);
+        const ret=(future.close-rows[i].close)/rows[i].close;
+        const actual=ret>.001?"UP":ret<-.001?"DOWN":"FLAT";
+        const correct=predicted.direction===actual;
+        holdoutSamples++;
+        if (correct) holdoutCorrect++;
+        if (predicted.confidence>=.60) {
+          highConfidenceSamples++;
+          if (correct) highConfidenceCorrect++;
+        }
+      }
+    }
+    await this.model.setHistoricalValidation({
+      trainingSamples,
+      holdoutSamples,
+      holdoutAccuracy:holdoutSamples?holdoutCorrect/holdoutSamples:null,
+      highConfidenceSamples,
+      highConfidenceAccuracy:highConfidenceSamples?highConfidenceCorrect/highConfidenceSamples:null
+    });
   }
 
   async #maybePredict(bar) {
