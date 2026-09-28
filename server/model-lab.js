@@ -779,9 +779,23 @@ export class ModelLab {
       const trainingHistories=await this.#trainingHistories();
       const usableSymbols=[...trainingHistories.keys()];
       const sectorProxyBySymbol=await this.#sectorProxyMap(usableSymbols);
+      const allRows=[...trainingHistories.values()].flatMap(x=>x);
+      const rangeStart=allRows.length
+        ?new Date(Math.min(...allRows.map(x=>+new Date(x.ts||x.time))))
+        :new Date(Date.now()-90*86400000);
+      const rangeEnd=allRows.length
+        ?new Date(Math.max(...allRows.map(x=>+new Date(x.ts||x.time))))
+        :new Date();
+      const excludeDaysBySymbol=this.marketIntegrity
+        ?await this.marketIntegrity.exclusionMap({
+          symbols:usableSymbols,
+          start:rangeStart,
+          end:rangeEnd
+        })
+        :new Map();
       const dataset=this.factory.buildDataset(trainingHistories,{
         symbols:usableSymbols,horizon:this.horizonMinutes,step:5,maxSamples:160000,
-        sectorProxyBySymbol
+        sectorProxyBySymbol,excludeDaysBySymbol
       });
       if(dataset.length<3000) throw new Error(`Model Lab needs at least 3000 chronological examples; found ${dataset.length}`);
 
