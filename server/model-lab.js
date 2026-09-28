@@ -112,6 +112,7 @@ export class ModelLab {
     this.productionModel=this.productionRecord
       ? modelFromRegistryArtifact(this.productionRecord.artifact)
       : null;
+    this.productionTemperature=Number(this.productionRecord?.calibration?.temperature)||1;
   }
 
   async loadShadowModels(){
@@ -150,6 +151,7 @@ export class ModelLab {
         promotedAt:p.promoted_at,
         validationMetrics:p.validation_metrics,
         testMetrics:p.test_metrics,
+        walkForwardMetrics:p.walk_forward_metrics,
         shadowMetrics:p.shadow_metrics,
         liveMetrics:this.productionLiveMetrics,
         liveShadowMetrics:p.live_shadow_metrics,
@@ -189,7 +191,7 @@ export class ModelLab {
     const features=this.currentFeatures(symbol);
     if(!features) return null;
     const x=this.factory.vector(features);
-    const probs=this.productionModel.predict(x);
+    const probs=applyTemperature(this.productionModel.predict(x),this.productionTemperature);
     const direction=directionFromProbs(probs);
     const confidence=Math.max(...probs);
     const edge=edgeFromProbs(probs);
@@ -431,6 +433,98 @@ export class ModelLab {
     ];
   }
 
+  #specByName(name){
+    return this.#candidateSpecs().find(x=>x.name===name)||null;
+  }
+
+  #fitBaseCandidate(name,train,validation){
+    const spec=this.#specByName(name);
+    if(!spec) return null;
+    const model=spec.build();
+    if(model.kind==="softmax"){
+      model.train(train,{epochs:3,learningRate:.022,l2:.001,maxSamples:30000});
+    }else{
+      model.train(train,{maxSamples:50000});
+    }
+    const calibrated=chooseTemperature(model,validation);
+    return {name,model,temperature:calibrated.temperature};
+  }
+
+  #fitCandidateByName(name,train,validation,memberNames=[]){
+    if(name!=="meta_ensemble") return this.#fitBaseCandidate(name,train,validation);
+
+    const names=memberNames.length?memberNames:["softmax_full","softmax_momentum","gaussian_full"];
+    const members=names.map(n=>this.#fitBaseCandidate(n,train,validation)).filter(Boolean);
+    if(!members.length) return null;
+    const weights=members.map(m=>{
+      const metrics=metricsFor(m.model,validation,{temperature:m.temperature});
+      return buildEnsembleWeight(metrics);
+    });
+    const ensemble=new EnsembleModel({
+      members:members.map(m=>({name:m.name,model:m.model,temperature:m.temperature})),
+      weights,
+      temperature:1,
+      name:"meta_ensemble"
+    });
+    const calibrated=chooseTemperature(ensemble,validation);
+    ensemble.temperature=calibrated.temperature;
+    return {name,model:ensemble,temperature:ensemble.temperature};
+  }
+
+  async #walkForward(name,dataset,memberNames=[]){
+    const maxSamples=36000;
+    const data=dataset.length>maxSamples
+      ? Array.from({length:maxSamples},(_,i)=>dataset[Math.floor(i*(dataset.length/maxSamples))])
+      : dataset;
+    if(data.length<5000) return {folds:[],samples:0,accuracy:0,brier:1,logLoss:10,ece:1,accuracyStd:1};
+
+    const fractions=[
+      [.50,.62],
+      [.62,.74],
+      [.74,.86]
+    ];
+    const folds=[];
+    for(let i=0;i<fractions.length;i++){
+      const [trainEndFrac,testEndFrac]=fractions[i];
+      const trainEnd=Math.floor(data.length*trainEndFrac);
+      const testEnd=Math.floor(data.length*testEndFrac);
+      const pre=data.slice(0,trainEnd);
+      const calStart=Math.floor(pre.length*.84);
+      const train=pre.slice(0,calStart);
+      const validation=pre.slice(calStart);
+      const test=data.slice(trainEnd,testEnd);
+      if(train.length<1000||validation.length<200||test.length<200) continue;
+      const fitted=this.#fitCandidateByName(name,train,validation,memberNames);
+      if(!fitted) continue;
+      const metrics=metricsFor(fitted.model,test,{temperature:fitted.temperature});
+      folds.push({
+        fold:i+1,
+        trainStart:new Date(train[0].ts).toISOString(),
+        trainEnd:new Date(train.at(-1).ts).toISOString(),
+        testStart:new Date(test[0].ts).toISOString(),
+        testEnd:new Date(test.at(-1).ts).toISOString(),
+        ...metrics
+      });
+      await sleepTick();
+    }
+    const total=folds.reduce((s,x)=>s+x.samples,0)||1;
+    const avg=key=>folds.reduce((s,x)=>s+Number(x[key]||0)*x.samples,0)/total;
+    const accs=folds.map(x=>x.accuracy);
+    const am=accs.length?accs.reduce((a,b)=>a+b,0)/accs.length:0;
+    const accuracyStd=accs.length
+      ?Math.sqrt(accs.reduce((s,x)=>s+(x-am)**2,0)/accs.length)
+      :1;
+    return {
+      folds,
+      samples:folds.reduce((s,x)=>s+x.samples,0),
+      accuracy:avg("accuracy"),
+      brier:avg("brier"),
+      logLoss:avg("logLoss"),
+      ece:avg("ece"),
+      accuracyStd
+    };
+  }
+
   async trainNow(reason="manual"){
     if(this.training) return null;
     this.training=true;
@@ -505,6 +599,7 @@ export class ModelLab {
       candidates.push({
         name:"meta_ensemble",
         model:ensemble,
+        memberNames:members.map(x=>x.name),
         temperature:ensemble.temperature,
         validation:ensembleCalibration.metrics,
         test:ensembleTest,
@@ -521,13 +616,14 @@ export class ModelLab {
           calibration:{temperature:c.temperature},
           validation:c.validation,
           test:c.test,
-          shadow:c.shadow
+          shadow:c.shadow,
+          walkForward:null
         });
         await this.db.pool.query(`
           INSERT INTO model_registry(
             model_id,family,horizon_minutes,status,trained_at,train_start,train_end,
-            feature_names,artifact,calibration,validation_metrics,test_metrics,shadow_metrics,dataset,notes
-          ) VALUES($1,$2,$3,'CHALLENGER',NOW(),$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13)
+            feature_names,artifact,calibration,validation_metrics,test_metrics,walk_forward_metrics,shadow_metrics,dataset,notes
+          ) VALUES($1,$2,$3,'CHALLENGER',NOW(),$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14)
           ON CONFLICT(model_id) DO NOTHING
         `,[
           modelId,c.name,this.horizonMinutes,
@@ -535,7 +631,7 @@ export class ModelLab {
           JSON.stringify(MODEL_FEATURES),
           JSON.stringify(c.model.artifact()),
           JSON.stringify({temperature:c.temperature}),
-          JSON.stringify(c.validation),JSON.stringify(c.test),JSON.stringify(c.shadow),
+          JSON.stringify(c.validation),JSON.stringify(c.test),JSON.stringify({}),JSON.stringify(c.shadow),
           JSON.stringify(datasetSummary),reason
         ]);
       }
@@ -546,12 +642,28 @@ export class ModelLab {
         return sa-sb;
       })[0];
 
+      const walkForward=await this.#walkForward(
+        winner.name,
+        dataset,
+        winner.memberNames||[]
+      );
+      winner.walkForward=walkForward;
+      const winnerSummary=candidateSummaries.find(x=>x.modelId===winner.modelId);
+      if(winnerSummary) winnerSummary.walkForward=walkForward;
+      await this.db.pool.query(
+        "UPDATE model_registry SET walk_forward_metrics=$2::jsonb WHERE model_id=$1",
+        [winner.modelId,JSON.stringify(walkForward)]
+      );
+
       let promote=false;
       let enterShadow=false;
       let promotionReason="";
 
       if(!this.productionRecord){
-        promote=winner.shadow.samples>=500;
+        const wfSafe=walkForward.folds.length>=2 &&
+          walkForward.brier<=winner.shadow.brier*1.18 &&
+          walkForward.accuracyStd<=.10;
+        promote=winner.shadow.samples>=500&&wfSafe;
         promotionReason=promote
           ?"Bootstrap production selected from chronological train/validation/test/final-holdout data. Future replacements require live shadow proof."
           :"Not enough chronological holdout samples for first production model.";
@@ -564,7 +676,10 @@ export class ModelLab {
           const testSafe=winner.test.brier<=incTest.brier*1.005;
           const accuracySafe=winner.shadow.accuracy>=incHoldout.accuracy-.01;
           const calibrated=winner.shadow.ece<=incHoldout.ece+.02;
-          enterShadow=winner.shadow.samples>=500&&holdoutBrierBetter&&testSafe&&accuracySafe&&calibrated;
+          const wfSafe=walkForward.folds.length>=2 &&
+            walkForward.brier<=winner.shadow.brier*1.18 &&
+            walkForward.accuracyStd<=.10;
+          enterShadow=winner.shadow.samples>=500&&holdoutBrierBetter&&testSafe&&accuracySafe&&calibrated&&wfSafe;
           promotionReason=enterShadow
             ?`Historical gates passed. ${winner.modelId} entered LIVE SHADOW; it cannot replace production until enough future real-time outcomes beat production on paired Brier/calibration/accuracy.`
             :`Rejected before live shadow: challenger did not beat incumbent under chronological Brier/test/accuracy/calibration guards.`;
