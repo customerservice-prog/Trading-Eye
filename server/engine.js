@@ -293,10 +293,21 @@ export class RealMarketEngine extends EventEmitter {
     this.emit("status",this.status());
     const end=new Date(Date.now()-20*60*1000);
     const defaultStart=new Date(end.getTime()-this.backfillDays*24*60*60*1000);
-    const start=await this.db.getBackfillStart(this.symbols,defaultStart);
-    await this.provider.historicalBars({
-      start,end,
-      onPage:async barsBySymbol=>{
+    const startRaw=await this.db.getBackfillStart(this.symbols,defaultStart);
+    const start=new Date(startRaw);
+    const shouldFetch=Number.isFinite(+start) && +start < +end;
+
+    if (!shouldFetch) {
+      console.log(JSON.stringify({
+        event:"backfill_skipped",
+        reason:"database_already_caught_up",
+        start:Number.isFinite(+start)?start.toISOString():null,
+        end:end.toISOString()
+      }));
+    } else {
+      await this.provider.historicalBars({
+        start,end,
+        onPage:async barsBySymbol=>{
         const batch=[];
         for (const [symbol,rows] of Object.entries(barsBySymbol)) {
           for (const r of rows) {
@@ -325,8 +336,9 @@ export class RealMarketEngine extends EventEmitter {
           totalRows:this.backfill.rows
         }));
         this.emit("status",this.status());
-      }
-    });
+        }
+      });
+    }
     for (const symbol of this.symbols) {
       const historyLimit=Math.min(100000,Math.max(5000,this.backfillDays*600));
       const rows=await this.db.getBars(symbol,{limit:historyLimit});
