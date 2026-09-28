@@ -194,6 +194,10 @@ export class ModelLab {
     this.productionRecentLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
     this.productionBaselineLiveMetrics={samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
     this.drift={level:"INSUFFICIENT",blocked:false,recentSamples:0,baselineSamples:0};
+    this.mistakeGuard={
+      level:"INSUFFICIENT",blockStrictEntries:false,recentSamples:0,
+      reason:"Mistake Lab is waiting for scored future outcomes."
+    };
     this.shadowMinSamples=300;
     this.shadowScoreCounter=0;
     this.training=false;
@@ -214,6 +218,21 @@ export class ModelLab {
   }
 
   stop(){ clearInterval(this.timer); }
+
+  setMistakeGuard(guard={}){
+    this.mistakeGuard={
+      level:String(guard.level||"INSUFFICIENT").toUpperCase(),
+      blockStrictEntries:Boolean(guard.blockStrictEntries),
+      recentSamples:Number(guard.recentSamples)||0,
+      baselineSamples:Number(guard.baselineSamples)||0,
+      errorRate:Number(guard.errorRate)||0,
+      baselineErrorRate:Number(guard.baselineErrorRate)||0,
+      highConfidenceErrorRate:Number(guard.highConfidenceErrorRate)||0,
+      hardReversalRate:Number(guard.hardReversalRate)||0,
+      reason:String(guard.reason||"Mistake Lab is monitoring recent outcomes.")
+    };
+    return this.mistakeGuard;
+  }
 
   async loadProduction(){
     const q=await this.db.pool.query(`
@@ -294,7 +313,8 @@ export class ModelLab {
         candidates:this.latestRun.candidates,
         error:this.latestRun.error
       }:null,
-      drift:this.drift
+      drift:this.drift,
+      mistakeGuard:this.mistakeGuard
     };
   }
 
@@ -325,7 +345,8 @@ export class ModelLab {
       pFlat:probs[1],
       pDown:probs[2],
       driftBlocked:Boolean(this.drift?.blocked),
-      noTrade:Boolean(this.drift?.blocked)||confidence<.46||edge<.055,
+      mistakeBlocked:Boolean(this.mistakeGuard?.blockStrictEntries),
+      noTrade:Boolean(this.drift?.blocked)||Boolean(this.mistakeGuard?.blockStrictEntries)||confidence<.46||edge<.055,
       modelId:this.productionRecord.model_id,
       modelVersion:Math.floor(new Date(this.productionRecord.trained_at).getTime()/1000),
       family:this.productionRecord.family,
@@ -338,7 +359,8 @@ export class ModelLab {
         shadow:this.productionRecord.shadow_metrics,
         live:this.productionLiveMetrics,
         recentLive:this.productionRecentLiveMetrics,
-        drift:this.drift
+        drift:this.drift,
+        mistakeGuard:this.mistakeGuard
       }
     };
   }
