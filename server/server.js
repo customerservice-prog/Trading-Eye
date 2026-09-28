@@ -95,8 +95,11 @@ app.get("/api/predictions",async(req,res)=>{
 app.use(express.static(".",{
   extensions:["html"],
   setHeaders(res,path){
-    if (path.endsWith(".html")) res.setHeader("Cache-Control","no-store");
-    else res.setHeader("Cache-Control","public, max-age=300");
+    if (path.endsWith(".html")||path.endsWith(".js")||path.endsWith(".css")) {
+      res.setHeader("Cache-Control","no-store, max-age=0");
+    } else {
+      res.setHeader("Cache-Control","public, max-age=300");
+    }
   }
 }));
 
