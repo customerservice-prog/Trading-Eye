@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import crypto from "node:crypto";
 import { OnlineModel } from "./model.js";
 import { fingerprintFromFeatures, patternProbabilities, blendProbabilities, timeBucketET } from "./patterns.js";
 
@@ -773,7 +774,18 @@ export class RealMarketEngine extends EventEmitter {
   }
 
   #recordError(area,err) {
-    this.emit("status",{...this.status(),engineError:{area,message:String(err?.message||err),at:new Date().toISOString()}});
+    const message=String(err?.message||err);
+    const at=new Date().toISOString();
+    this.emit("status",{...this.status(),engineError:{area,message,at}});
+    const severe=/provider_start|raw_flush|paper_prediction|paper_bar/i.test(area)?"HIGH":"MEDIUM";
+    this.db.pool?.query(`
+      INSERT INTO data_quality_incidents(
+        incident_id,severity,category,symbol,source,message,details,status
+      ) VALUES($1,$2,$3,NULL,'engine',$4,$5::jsonb,'OPEN')
+    `,[
+      crypto.randomUUID(),severe,String(area).toUpperCase(),message,
+      JSON.stringify({area,at})
+    ]).catch(()=>{});
   }
 
   async #heartbeat() {
