@@ -142,13 +142,16 @@ function liveMetrics(rows){
 }
 
 export class ModelLab {
-  constructor({db,marketEngine,horizonMinutes=15,enabled=true,forceTrainOnStart=false}){
+  constructor({db,marketEngine,horizonMinutes=15,enabled=true,forceTrainOnStart=false,marketIntegrity=null}){
     this.db=db;
     this.marketEngine=marketEngine;
     this.horizonMinutes=horizonMinutes;
     this.enabled=enabled;
     this.forceTrainOnStart=Boolean(forceTrainOnStart);
+    this.marketIntegrity=marketIntegrity;
     this.factory=new FeatureFactory();
+    this.contextHistories=new Map();
+    this.sectorEtfs=["XLK","XLF","XLV","XLY","XLP","XLI","XLE","XLB","XLU","XLRE","XLC"];
     this.productionRecord=null;
     this.productionModel=null;
     this.latestRun=null;
@@ -165,6 +168,7 @@ export class ModelLab {
   async init(){
     await this.loadProduction();
     await this.loadShadowModels();
+    await this.refreshContextHistories();
     await this.refreshLiveShadowMetrics();
     this.latestRun=await this.#loadLatestRun();
     this.timer=setInterval(()=>this.tick().catch(err=>this.#capture(err)),5*60*1000);
@@ -175,6 +179,37 @@ export class ModelLab {
   }
 
   stop(){ clearInterval(this.timer); }
+
+  async refreshContextHistories(){
+    const symbols=["SPY","QQQ",...this.sectorEtfs];
+    const map=new Map();
+    for(const symbol of symbols){
+      const live=this.marketEngine.histories.get(symbol);
+      if(live?.length>=50){
+        map.set(symbol,live);
+        continue;
+      }
+      const rows=await this.db.getBars(symbol,{limit:26000});
+      if(rows?.length) map.set(symbol,rows);
+    }
+    this.contextHistories=map;
+    return map.size;
+  }
+
+  #combinedHistories(){
+    const map=new Map(this.contextHistories);
+    for(const [symbol,rows] of this.marketEngine.histories.entries()) map.set(symbol,rows);
+    return map;
+  }
+
+  async #sectorProxyMap(symbols){
+    if(!symbols?.length) return {};
+    const q=await this.db.pool.query(`
+      SELECT symbol,sector_proxy FROM asset_metadata
+      WHERE symbol = ANY($1::text[])
+    `,[symbols]);
+    return Object.fromEntries(q.rows.filter(x=>x.sector_proxy).map(x=>[x.symbol,x.sector_proxy]));
+  }
 
   async loadProduction(){
     const q=await this.db.pool.query(`
@@ -256,10 +291,21 @@ export class ModelLab {
   }
 
   currentFeatures(symbol){
-    const rows=this.marketEngine.histories.get(String(symbol).toUpperCase())||[];
+    symbol=String(symbol).toUpperCase();
+    const rows=this.marketEngine.histories.get(symbol)||[];
     if(rows.length<50) return null;
     const last=rows.at(-1);
-    const context=this.factory.contextAt(this.marketEngine.histories,last?.ts||Date.now());
+    const integrity=this.marketIntegrity?.cachedContext(symbol)||{};
+    const histories=this.#combinedHistories();
+    const context=this.factory.contextAt(
+      histories,
+      last?.ts||Date.now(),
+      integrity.sectorProxy||null,
+      {
+        eventRisk:Number(integrity.eventRisk)||0,
+        corporateActionRisk:Number(integrity.corporateActionRisk)||0
+      }
+    );
     return this.factory.extract(rows,rows.length-1,context);
   }
 
@@ -490,7 +536,8 @@ export class ModelLab {
     const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
     const ranked=scanDate?await this.db.topUniverseCandidates(scanDate,{limit:28}):[];
     const wanted=[...new Set([
-      "SPY","QQQ","AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
+      "SPY","QQQ",...this.sectorEtfs,
+      "AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
       ...ranked.map(x=>x.symbol)
     ])].slice(0,24);
 
@@ -569,7 +616,7 @@ export class ModelLab {
       await sleepTick();
     }
 
-    for(const symbol of ["SPY","QQQ"]){
+    for(const symbol of ["SPY","QQQ",...this.sectorEtfs]){
       if(histories.has(symbol)) continue;
       const bars=await this.db.getBars(symbol,{limit:26000});
       if(bars.length>=1500) histories.set(symbol,bars);
@@ -731,8 +778,10 @@ export class ModelLab {
       const coverage=await this.#ensureTrainingCoverage();
       const trainingHistories=await this.#trainingHistories();
       const usableSymbols=[...trainingHistories.keys()];
+      const sectorProxyBySymbol=await this.#sectorProxyMap(usableSymbols);
       const dataset=this.factory.buildDataset(trainingHistories,{
-        symbols:usableSymbols,horizon:this.horizonMinutes,step:5,maxSamples:160000
+        symbols:usableSymbols,horizon:this.horizonMinutes,step:5,maxSamples:160000,
+        sectorProxyBySymbol
       });
       if(dataset.length<3000) throw new Error(`Model Lab needs at least 3000 chronological examples; found ${dataset.length}`);
 
