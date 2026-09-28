@@ -293,7 +293,6 @@ function renderChart() {
 
   $("vwapValue").textContent=bar?.vwap==null?"—":Number(bar.vwap).toFixed(2);
   $("volumeValue").textContent=bar?num(bar.volume):"—";
-  const q=snapshot.quote;
   const spread=q && Number.isFinite(Number(q.askPrice)) && Number.isFinite(Number(q.bidPrice))
     ? Number(q.askPrice)-Number(q.bidPrice):null;
   $("spreadValue").textContent=spread==null?"—":"$"+spread.toFixed(3);
