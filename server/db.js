@@ -453,6 +453,25 @@ export class Database {
     ]);
   }
 
+  async patternMemoryStats() {
+    if (!this.ready) return {patterns:0,totalSamples:0};
+    const q=await this.pool.query(`
+      SELECT
+        COUNT(*)::int AS patterns,
+        COALESCE(SUM(sample_count),0)::bigint AS total_samples,
+        COUNT(*) FILTER (WHERE horizon_minutes=15)::int AS h15,
+        COUNT(*) FILTER (WHERE horizon_minutes=30)::int AS h30,
+        COUNT(*) FILTER (WHERE horizon_minutes=60)::int AS h60
+      FROM pattern_memory
+    `);
+    const r=q.rows[0]||{};
+    return {
+      patterns:Number(r.patterns)||0,
+      totalSamples:Number(r.total_samples)||0,
+      byHorizon:{15:Number(r.h15)||0,30:Number(r.h30)||0,60:Number(r.h60)||0}
+    };
+  }
+
   async getPattern(symbol,fingerprint,horizonMinutes) {
     if (!this.ready) return null;
     const q=await this.pool.query(`
