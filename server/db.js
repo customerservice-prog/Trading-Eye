@@ -542,6 +542,8 @@ export class Database {
         notes JSONB NOT NULL DEFAULT '[]'::jsonb
       );
       ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      ALTER TABLE readiness_snapshots ALTER COLUMN measured_at SET DEFAULT NOW();
       ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'LOCKED';
       ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS eligible BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE readiness_snapshots ADD COLUMN IF NOT EXISTS score DOUBLE PRECISION NOT NULL DEFAULT 0;
