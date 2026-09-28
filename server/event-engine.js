@@ -91,7 +91,7 @@ export class EventEngine {
           if(!filingDate||!accession) continue;
           const ts=accepted ? new Date(accepted) : new Date(filingDate+"T16:00:00-04:00");
           if(Date.now()-ts.getTime()>14*24*60*60*1000) continue;
-          const importance=form==="8-K"||form==="10-Q"||form==="10-K"?.85:.65;
+          const importance=["8-K","10-Q","10-K"].includes(form)?.85:.65;
           await this.#upsertEvent({
             eventId:`sec-${cik}-${accession}`,
             source:"SEC",
