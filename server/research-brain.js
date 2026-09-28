@@ -914,7 +914,32 @@ export class ResearchBrain extends EventEmitter {
       open:Number(r.open),high:Number(r.high),low:Number(r.low),
       close:Number(r.close),volume:Number(r.volume)||0
     })).filter(r=>r.close>0);
-    if(rows.length<260) return [];
+    if(rows.length<320) return [];
+
+    const summarize=(samples,directionSign=null)=>{
+      const valid=(samples||[]).filter(x=>x?.return!=null);
+      const returns=valid.map(x=>Number(x.return));
+      if(!returns.length){
+        return {
+          samples:0,hitRate:null,directionalHitRate:null,avgReturn:null,
+          medianReturn:null,avgFavorable:null,avgAdverse:null,start:null,end:null
+        };
+      }
+      const hitRate=returns.filter(x=>x>0).length/returns.length;
+      const avgReturn=mean(returns);
+      const sign=directionSign==null?(avgReturn>=0?1:-1):directionSign;
+      return {
+        samples:returns.length,
+        hitRate,
+        directionalHitRate:sign>0?hitRate:1-hitRate,
+        avgReturn,
+        medianReturn:median(returns),
+        avgFavorable:mean(valid.map(x=>Number(x.favorable)||0)),
+        avgAdverse:mean(valid.map(x=>Number(x.adverse)||0)),
+        start:valid[0]?.day||null,
+        end:valid.at(-1)?.day||null
+      };
+    };
 
     const groups=new Map();
     for(let i=80;i<rows.length-65;i++){
@@ -951,25 +976,82 @@ export class ResearchBrain extends EventEmitter {
     }
 
     const findings=[];
+    const minEffectByHorizon={5:.004,20:.008,60:.012};
+
     for(const g of groups.values()){
       for(const h of [5,20,60]){
-        const samples=g.samples.map(x=>({day:x.day,...x.horizons[h]})).filter(x=>x.return!=null);
-        if(samples.length<40) continue;
-        const returns=samples.map(x=>x.return);
-        const hitRate=returns.filter(x=>x>0).length/returns.length;
-        const avgReturn=mean(returns);
-        const medReturn=median(returns);
-        const avgFav=mean(samples.map(x=>x.favorable));
-        const avgAdv=mean(samples.map(x=>x.adverse));
-        const edge=Math.abs(hitRate-.5);
-        const score=edge*Math.sqrt(samples.length)+Math.abs(avgReturn)*12;
-        if(edge<.075 && Math.abs(avgReturn)<.012) continue;
-        const status=samples.length>=100 && edge>=.10 && Math.abs(avgReturn)>=.01?"PROMOTED":"CANDIDATE";
-        const direction=avgReturn>=0?"positive":"negative";
+        const samples=g.samples
+          .map(x=>({day:x.day,...x.horizons[h]}))
+          .filter(x=>x.return!=null)
+          .sort((a,b)=>String(a.day).localeCompare(String(b.day)));
+
+        if(samples.length<60) continue;
+
+        const dEnd=Math.max(30,Math.floor(samples.length*.60));
+        const vEnd=Math.max(dEnd+12,Math.floor(samples.length*.80));
+        if(vEnd>=samples.length-11) continue;
+
+        const discoverySamples=samples.slice(0,dEnd);
+        const validationSamples=samples.slice(dEnd,vEnd);
+        const holdoutSamples=samples.slice(vEnd);
+
+        const discovery=summarize(discoverySamples);
+        const directionSign=Number(discovery.avgReturn)>=0?1:-1;
+        const validation=summarize(validationSamples,directionSign);
+        const holdout=summarize(holdoutSamples,directionSign);
+        const minEffect=minEffectByHorizon[h];
+
+        const discoverySignedAvg=directionSign*Number(discovery.avgReturn||0);
+        const validationSignedAvg=directionSign*Number(validation.avgReturn||0);
+        const holdoutSignedAvg=directionSign*Number(holdout.avgReturn||0);
+
+        const discoveryPass=
+          discovery.samples>=30 &&
+          Number(discovery.directionalHitRate)>=.56 &&
+          discoverySignedAvg>=minEffect*.70;
+
+        if(!discoveryPass) continue;
+
+        const enoughValidation=validation.samples>=12;
+        const enoughHoldout=holdout.samples>=12;
+        const validationPass=
+          enoughValidation &&
+          Number(validation.directionalHitRate)>=.53 &&
+          validationSignedAvg>=minEffect*.50;
+        const holdoutPass=
+          enoughHoldout &&
+          Number(holdout.directionalHitRate)>=.52 &&
+          holdoutSignedAvg>=minEffect*.35;
+
+        let status="CANDIDATE";
+        if(enoughValidation&&!validationPass) status="REJECTED_VALIDATION";
+        else if(validationPass&&enoughHoldout&&!holdoutPass) status="REJECTED_HOLDOUT";
+        else if(validationPass&&holdoutPass) status="PROMOTED";
+        else if(validationPass) status="VALIDATED";
+
+        const valEdge=(Number(validation.directionalHitRate)||.5)-.5;
+        const holdEdge=(Number(holdout.directionalHitRate)||.5)-.5;
+        const score=
+          valEdge*Math.sqrt(Math.max(1,validation.samples)) +
+          holdEdge*Math.sqrt(Math.max(1,holdout.samples))*1.4 +
+          Math.max(-1,Math.min(2,validationSignedAvg/Math.max(minEffect,1e-9)))*.30 +
+          Math.max(-1,Math.min(2,holdoutSignedAvg/Math.max(minEffect,1e-9)))*.50;
+
+        const direction=directionSign>0?"positive":"negative";
         const findingId=crypto
           .createHash("sha1")
           .update([this.longHistoryProvider,symbol,g.patternKey,h].join("|"))
           .digest("hex");
+
+        const headline=holdout.samples?holdout:validation.samples?validation:discovery;
+        const laterEvidence=status==="PROMOTED"
+          ? `It survived both later validation and the most recent holdout period.`
+          : status==="REJECTED_VALIDATION"
+            ? `It failed to repeat in the later validation period.`
+            : status==="REJECTED_HOLDOUT"
+              ? `It repeated in validation but failed the most recent holdout.`
+              : `It is still waiting for enough later unseen evidence.`;
+
         findings.push({
           findingId,
           provider:this.longHistoryProvider,
@@ -978,23 +1060,35 @@ export class ResearchBrain extends EventEmitter {
           patternKey:g.patternKey,
           horizonDays:h,
           sampleCount:samples.length,
-          hitRate,
-          avgForwardReturn:avgReturn,
-          medianForwardReturn:medReturn,
-          avgAdverseReturn:avgAdv,
-          avgFavorableReturn:avgFav,
+          hitRate:headline.directionalHitRate,
+          avgForwardReturn:headline.avgReturn,
+          medianForwardReturn:headline.medianReturn,
+          avgAdverseReturn:headline.avgAdverse,
+          avgFavorableReturn:headline.avgFavorable,
           score,
           status,
-          description:`${symbol}: ${g.patternKey.replaceAll("|"," + ")} historically had a ${direction} average ${h}-day outcome across ${samples.length} observations.`,
+          validationVersion:"v2_chrono_60_20_20",
+          discoveryMetrics:discovery,
+          validationMetrics:validation,
+          holdoutMetrics:holdout,
+          description:`${symbol}: ${g.patternKey.replaceAll("|"," + ")} showed a ${direction} ${h}-day pattern in discovery. ${laterEvidence}`,
           evidence:{
-            start:samples[0]?.day,
-            end:samples.at(-1)?.day,
-            examples:samples.slice(-8)
+            validationVersion:"v2_chrono_60_20_20",
+            intendedDirection:directionSign>0?"UP":"DOWN",
+            totalSamples:samples.length,
+            discoveryWindow:{start:discovery.start,end:discovery.end,samples:discovery.samples},
+            validationWindow:{start:validation.start,end:validation.end,samples:validation.samples},
+            holdoutWindow:{start:holdout.start,end:holdout.end,samples:holdout.samples},
+            recentHoldoutExamples:holdoutSamples.slice(-8)
           }
         });
       }
     }
-    return findings.sort((a,b)=>b.score-a.score).slice(0,12);
+
+    const rankStatus=s=>s==="PROMOTED"?0:s==="VALIDATED"?1:s==="CANDIDATE"?2:3;
+    return findings
+      .sort((a,b)=>rankStatus(a.status)-rankStatus(b.status)||b.score-a.score)
+      .slice(0,18);
   }
 
   async #event(event){
