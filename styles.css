@@ -1895,3 +1895,84 @@ body.research-focus .research-brain-layout {
   .simple-mode-banner{gap:8px}
   .simple-mode-pills{width:100%}
 }
+
+
+/* exploration paper + mistake lab */
+.exploration-paper-panel{
+  margin:10px 11px 12px;
+  border:1px solid rgba(156,140,255,.20);
+  border-radius:10px;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 0 0,rgba(156,140,255,.08),transparent 42%),
+    #080e16;
+}
+.exploration-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:12px 13px;border-bottom:1px solid var(--line);
+}
+.exploration-head strong{display:block;margin-top:3px;font-size:12px;color:var(--text)}
+.exploration-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+}
+.exploration-grid>div{
+  min-height:70px;padding:10px 12px;background:#080e16;
+  display:flex;flex-direction:column;justify-content:center;
+}
+.exploration-grid span{font-size:7px;color:var(--muted)}
+.exploration-grid strong{margin-top:5px;font-size:15px;color:var(--text-2);font-variant-numeric:tabular-nums}
+#explorationExplanation{margin:0;padding:10px 13px;color:var(--muted-2);font-size:8px;line-height:1.45}
+.exploration-position-list{padding:0 13px 10px}
+.exploration-position{
+  display:grid;grid-template-columns:1fr auto auto;gap:12px;
+  padding:7px 0;border-top:1px solid rgba(25,37,54,.55);font-size:8px;
+}
+.exploration-position strong{color:var(--text)}
+.exploration-position span{color:var(--muted)}
+.exploration-empty{padding:7px 0;color:var(--muted);font-size:8px}
+
+.mistake-lab-layout{padding:12px;display:grid;gap:12px;min-height:100%}
+.mistake-summary{
+  display:grid;grid-template-columns:minmax(280px,1.3fr) 2fr;gap:12px;
+  border:1px solid var(--line);border-radius:10px;background:#080e16;padding:14px;
+}
+.mistake-summary>div:first-child strong{display:block;margin-top:5px;font-size:20px;letter-spacing:-.025em}
+.mistake-summary p{margin:6px 0 0;color:var(--muted-2);font-size:8px;line-height:1.5}
+.mistake-metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line)}
+.mistake-metric-grid>div{padding:10px;background:#07101a;display:flex;flex-direction:column;justify-content:center}
+.mistake-metric-grid span{font-size:7px;color:var(--muted)}
+.mistake-metric-grid strong{margin-top:5px;font-size:17px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.mistake-lessons-panel,.mistake-table-panel{
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#080e16
+}
+.mistake-section-head{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 13px;border-bottom:1px solid var(--line)
+}
+.mistake-section-head strong{display:block;margin-top:3px;font-size:12px;color:var(--text)}
+.mistake-section-head>span{color:var(--muted);font-size:7px}
+.mistake-lessons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px}
+.mistake-lesson{
+  display:grid;grid-template-columns:auto 1fr;gap:10px;padding:10px;
+  border:1px solid var(--line);border-radius:8px;background:#07101a
+}
+.mistake-lesson>span{
+  align-self:start;padding:3px 5px;border-radius:5px;font-size:6px;font-weight:900;letter-spacing:.08em
+}
+.mistake-lesson.high>span{color:var(--red);background:rgba(255,101,118,.08);border:1px solid rgba(255,101,118,.18)}
+.mistake-lesson.medium>span{color:var(--amber);background:rgba(244,190,93,.07);border:1px solid rgba(244,190,93,.16)}
+.mistake-lesson.low>span{color:var(--green);background:rgba(73,226,154,.06);border:1px solid rgba(73,226,154,.16)}
+.mistake-lesson strong{font-size:10px;color:var(--text-2)}
+.mistake-lesson p{margin:4px 0 0;color:var(--muted);font-size:8px;line-height:1.45}
+.mistake-table-panel .table-wrap{max-height:320px}
+
+@media(max-width:900px){
+  .exploration-grid{grid-template-columns:repeat(2,1fr)}
+  .mistake-summary{grid-template-columns:1fr}
+  .mistake-metric-grid{grid-template-columns:repeat(2,1fr)}
+  .mistake-lessons{grid-template-columns:1fr}
+}
+@media(max-width:520px){
+  .exploration-grid,.mistake-metric-grid{grid-template-columns:1fr}
+  .exploration-position{grid-template-columns:1fr}
+}
