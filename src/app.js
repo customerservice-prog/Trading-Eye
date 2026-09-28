@@ -1,6 +1,6 @@
-import { MarketClient } from "./market-client.js?v=20260928-1415";
-import { MarketChart } from "./chart.js?v=20260928-1415";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1415";
+import { MarketClient } from "./market-client.js?v=20260928-1830";
+import { MarketChart } from "./chart.js?v=20260928-1830";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-1830";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
@@ -40,6 +40,7 @@ let researchData={
 };
 let refreshTimer=null;
 let researchTimer=null;
+let paperTimer=null;
 let commandTimer=null;
 let symbolSearchTimer=null;
 let lastSymbolResults=[];
@@ -118,87 +119,117 @@ function readinessSummary() {
 }
 
 function renderBeginnerCommandCenter() {
-  if (!$("beginnerCommandTitle")) return;
+  if (!$("heroPaperEquity")) return;
+
+  const p=paperData||{};
+  const positions=Array.isArray(p.positions)?p.positions:[];
+  const fills=Array.isArray(p.fills)?p.fills:[];
+  const starting=Number(p.startingCash)||100000;
+  const equity=Number(p.equity);
+  const safeEquity=Number.isFinite(equity)?equity:starting;
+  const totalPnl=safeEquity-starting;
   const session=marketSessionET();
   const a=normalizeAnalysis(snapshot.analysis);
   const latestTs=latestSelectedMarketTs();
   const ageMs=latestTs==null?null:Date.now()-latestTs;
-  const age=latestTs==null?"NO UPDATE YET":ageText(latestTs);
 
-  $("beginnerSession").textContent=session.label;
-  $("beginnerSessionDetail").textContent=session.detail;
+  $("heroPaperEquity").textContent=money(safeEquity);
+  $("heroPaperPnl").textContent=`${totalPnl>0?"+":""}${money(totalPnl)} total profit / loss`;
+  $("heroPaperPnl").className="paper-money-pnl "+(totalPnl>0?"positive":totalPnl<0?"negative":"neutral");
+  $("heroPaperAutopilot").textContent=p.autopilotEnabled?"ON — AI CAN PAPER TRADE":"OFF";
+  $("heroPaperAutopilot").className=p.autopilotEnabled?"positive":"neutral";
+
+  if (positions.length) {
+    $("heroPaperBalanceNote").textContent="This fake balance refreshes every 3 seconds and moves with the real market while a paper position is open.";
+    if (positions.length===1) {
+      const pos=positions[0];
+      const side=Number(pos.qty)>0?"LONG":"SHORT";
+      $("heroPaperPosition").textContent=`${side} ${pos.symbol}`;
+      $("heroPaperPositionDetail").textContent=`${Math.abs(Number(pos.qty)||0)} shares · open profit/loss ${money(pos.pnl)}`;
+      $("heroPaperPosition").className=Number(pos.pnl)>0?"positive":Number(pos.pnl)<0?"negative":"neutral";
+    } else {
+      const openPnl=positions.reduce((sum,pos)=>sum+(Number(pos.pnl)||0),0);
+      $("heroPaperPosition").textContent=`${positions.length} OPEN TRADES`;
+      $("heroPaperPositionDetail").textContent=`Combined open profit/loss ${money(openPnl)} · ${positions.slice(0,3).map(x=>x.symbol).join(", ")}`;
+      $("heroPaperPosition").className=openPnl>0?"positive":openPnl<0?"negative":"neutral";
+    }
+  } else {
+    $("heroPaperBalanceNote").textContent=fills.length
+      ?"No paper trade is open now, so the fake balance should stay still until the next trade."
+      :"No paper trade has opened yet, so $100,000 staying still is correct.";
+    $("heroPaperPosition").textContent="NONE";
+    $("heroPaperPositionDetail").textContent="No fake money is in the market right now.";
+    $("heroPaperPosition").className="neutral";
+  }
+
+  const last=fills[0]||null;
+  if (last) {
+    const source=String(last.source||"PAPER").toUpperCase();
+    const who=source.startsWith("AI_")?"AI":"PAPER";
+    $("heroPaperLastAction").textContent=`${who} ${last.side} ${last.qty} ${last.symbol}`;
+    const realized=Number(last.realizedPnl)||0;
+    $("heroPaperLastDetail").textContent=`Filled at ${money(last.fillPrice)} · ${safeTime(last.createdAt)}${Math.abs(realized)>0.000001?" · closed P/L "+money(realized):""}`;
+    $("heroPaperLastAction").className=last.side==="BUY"?"positive":"negative";
+  } else {
+    $("heroPaperLastAction").textContent="NO TRADES YET";
+    $("heroPaperLastDetail").textContent=p.autopilotEnabled
+      ?"Autopilot is on. The AI is waiting for a setup strong enough to risk fake money."
+      :"Turn on paper autopilot below if you want the AI to place fake trades automatically.";
+    $("heroPaperLastAction").className="neutral";
+  }
 
   const actionEl=$("beginnerAction");
-  const actionBox=actionEl?.closest(".beginner-command-item");
-  actionBox?.classList.remove("positive","negative");
+  const actionCard=$("heroActionCard");
+  actionCard?.classList.remove("positive","negative");
 
-  if (!a) {
-    actionEl.textContent="WAIT";
-    $("beginnerActionDetail").textContent="The AI does not have enough real evidence yet.";
-  } else if (a.noTrade || a.confidence<.46 || a.edge<.055) {
-    actionEl.textContent="WAIT — NO EDGE";
-    $("beginnerActionDetail").textContent=
-      `UP ${Math.round(a.probabilities.up*100)}% · FLAT ${Math.round(a.probabilities.flat*100)}% · DOWN ${Math.round(a.probabilities.down*100)}%. That is too close to call.`;
-  } else if (a.direction==="UP") {
-    actionBox?.classList.add("positive");
-    actionEl.textContent="PAPER: UP SETUP";
-    $("beginnerActionDetail").textContent=
-      `The model sees ${Math.round(a.probabilities.up*100)}% UP probability. Paper-only while it proves itself.`;
-  } else if (a.direction==="DOWN") {
-    actionBox?.classList.add("negative");
-    actionEl.textContent="PAPER: DOWN SETUP";
-    $("beginnerActionDetail").textContent=
-      `The model sees ${Math.round(a.probabilities.down*100)}% DOWN probability. Paper-only while it proves itself.`;
+  if (positions.length) {
+    const openPnl=positions.reduce((sum,pos)=>sum+(Number(pos.pnl)||0),0);
+    actionEl.textContent="PAPER TRADE OPEN";
+    $("beginnerActionDetail").textContent=`Fake money is currently in ${positions.length===1?positions[0].symbol:positions.length+" positions"} · open P/L ${money(openPnl)}.`;
+    actionCard?.classList.add(openPnl>=0?"positive":"negative");
+  } else if (!a) {
+    actionEl.textContent="WAITING";
+    $("beginnerActionDetail").textContent="The AI is still collecting enough real market evidence.";
   } else {
-    actionEl.textContent="WAIT — SIDEWAYS";
-    $("beginnerActionDetail").textContent="The model currently expects no strong directional move.";
+    const up=Math.round(a.probabilities.up*100);
+    const flat=Math.round(a.probabilities.flat*100);
+    const down=Math.round(a.probabilities.down*100);
+    if (a.direction==="FLAT" && a.probabilities.flat>=a.probabilities.up && a.probabilities.flat>=a.probabilities.down) {
+      actionEl.textContent="WAIT — SIDEWAYS";
+      $("beginnerActionDetail").textContent=`${flat}% flat/sideways. The AI will not use paper money here.`;
+    } else if (a.noTrade || a.confidence<.46 || a.edge<.055) {
+      actionEl.textContent="WAIT — NO TRADE";
+      $("beginnerActionDetail").textContent=`UP ${up}% · SIDEWAYS ${flat}% · DOWN ${down}%. Not strong enough for a paper trade.`;
+    } else if (a.direction==="UP") {
+      actionEl.textContent="WATCHING TO BUY";
+      $("beginnerActionDetail").textContent=`${up}% up. If all paper-trade rules pass, autopilot may open a fake long trade.`;
+      actionCard?.classList.add("positive");
+    } else if (a.direction==="DOWN") {
+      actionEl.textContent="WATCHING TO SHORT";
+      $("beginnerActionDetail").textContent=`${down}% down. If all paper-trade rules pass, autopilot may open a fake short trade.`;
+      actionCard?.classList.add("negative");
+    } else {
+      actionEl.textContent="WAITING";
+      $("beginnerActionDetail").textContent="No clear paper-trade setup right now.";
+    }
   }
 
-  $("beginnerDataAge").textContent=age;
-  if (!providerConnected()) {
-    $("beginnerDataDetail").textContent="Provider is reconnecting or unavailable. Trading Eye will not invent prices.";
-  } else if (latestTs==null) {
-    $("beginnerDataDetail").textContent=`${sourceName()} is connected, but this symbol has not produced a new real update yet.`;
-  } else if (session.key==="CLOSED") {
-    $("beginnerDataDetail").textContent=`${sourceName()} · last selected-symbol update ${age}.`;
-  } else if (ageMs!=null && ageMs>5*60*1000) {
-    $("beginnerDataDetail").textContent=`${sourceName()} connected · selected stock has been quiet for ${age}.`;
-  } else {
-    $("beginnerDataDetail").textContent=`${sourceName()} · selected-symbol data is current.`;
-  }
+  $("beginnerSession").textContent=session.label;
+  $("beginnerDataAge").textContent=!providerConnected()
+    ?"OFFLINE"
+    : latestTs==null
+      ?"WAITING"
+      : ageMs!=null&&ageMs<60000
+        ?"LIVE"
+        : ageText(latestTs);
 
   const jobs=Array.isArray(researchData.jobs)?researchData.jobs:[];
   const running=jobs.filter(j=>j.status==="RUNNING");
-  const current=
-    running.find(j=>j.job_key==="long-history-1999-present") ||
-    running.find(j=>j.job_type==="PATTERN_MINING") ||
-    running.find(j=>j.job_type==="MODEL_RESEARCH") ||
-    running.find(j=>j.job_key!=="research-brain-heartbeat-orchestrator"&&!String(j.job_key||"").startsWith("research-brain-heartbeat")) ||
-    running[0] || null;
-
-  if (current) {
-    $("beginnerResearchState").textContent="WORKING NOW";
-    const item=Number(current.items_done)||0;
-    const total=current.items_total==null?null:Number(current.items_total);
-    const bars=Number(current.bars_processed)||0;
-    $("beginnerResearchDetail").textContent=
-      `${String(current.phase||current.job_type||"research").replaceAll("_"," ")} · ${bars?num(bars)+" bars":""}${total?" · "+num(item)+"/"+num(total)+" items":""}`.replace(/ · $/,"");
-  } else {
-    $("beginnerResearchState").textContent="MONITORING";
-    $("beginnerResearchDetail").textContent="No heavy job this second; live observation and shadow scoring continue.";
-  }
+  $("beginnerResearchState").textContent=running.length?"WORKING":"MONITORING";
 
   const ready=readinessSummary();
-  $("beginnerReadiness").textContent=ready.label;
-  $("beginnerReadinessDetail").textContent=ready.detail;
-  $("beginnerReadiness")?.closest(".beginner-command-item")?.classList.toggle("review",ready.review);
-
-  const actionLabel=actionEl?.textContent||"WAIT";
-  $("beginnerCommandTitle").textContent=`${activeSymbol}: ${actionLabel}`;
-  $("beginnerCommandSubtitle").textContent=
-    session.key==="OPEN"
-      ?"The market is open. Trading Eye is watching real data and will stay out when the edge is weak."
-      :`${session.label}. Trading Eye is still researching; paper entries only happen when the model has enough edge.`;
+  $("beginnerReadiness").textContent=ready.review?"REVIEW ELIGIBLE":"LOCKED";
+  $("beginnerReadiness").className=ready.review?"positive":"";
 }
 
 function openResearchFocus() {
@@ -300,25 +331,31 @@ function chartPredictions(rows) {
 }
 
 function directionCopy(a) {
-  if (!a) return {title:"Waiting for real data",summary:"No prediction is shown until enough real market bars have been received."};
+  if (!a) return {title:"WAITING FOR DATA",summary:"No paper trade can happen until the model has enough real market data."};
+
+  const up=Number(a.probabilities.up)||0;
+  const flat=Number(a.probabilities.flat)||0;
+  const down=Number(a.probabilities.down)||0;
+
+  if (a.direction==="FLAT" && flat>=up && flat>=down) {
+    return {
+      title:`${Math.round(flat*100)}% SIDEWAYS — NO PAPER TRADE`,
+      summary:"The model currently thinks sideways/flat is most likely, so the AI should wait instead of buying or shorting."
+    };
+  }
   if (a.noTrade) return {
-    title:"NO TRADE — edge too weak",
-    summary:"The production model does not have enough separation between outcomes to justify a paper entry. Trading Eye will keep watching instead of forcing a trade."
-  };
-  const gap=Math.abs(a.probabilities.up-a.probabilities.down);
-  if (a.confidence<.46 || gap<.10) return {
-    title:"Wait — unclear",
-    summary:"The real-data signals do not agree strongly enough for the model to take a clear side."
+    title:"WAIT — NO PAPER TRADE",
+    summary:"The directional edge is not strong enough. The AI should keep the fake money in cash."
   };
   if (a.direction==="UP") return {
-    title:a.confidence>=.60?"Buyers look stronger":"Leaning upward",
-    summary:"The current model assigns the highest probability to an upward move over its prediction horizon."
+    title:`${Math.round(up*100)}% UP — WATCHING TO BUY`,
+    summary:"Up is the strongest directional outcome, but paper-trade risk rules still have to pass before an entry."
   };
   if (a.direction==="DOWN") return {
-    title:a.confidence>=.60?"Sellers look stronger":"Leaning downward",
-    summary:"The current model assigns the highest probability to a downward move over its prediction horizon."
+    title:`${Math.round(down*100)}% DOWN — WATCHING TO SHORT`,
+    summary:"Down is the strongest directional outcome, but paper-trade risk rules still have to pass before an entry."
   };
-  return {title:"Sideways is most likely",summary:"The current model assigns the highest probability to a flat move over its prediction horizon."};
+  return {title:"WAIT — NO PAPER TRADE",summary:"The AI does not have a strong enough directional setup right now."};
 }
 
 function beginnerExplanation(a) {
@@ -439,6 +476,15 @@ function renderAI() {
   const conf=a?Math.round(a.confidence*100):0;
   $("confidenceValue").textContent=a?conf+"%":"—";
   $("confidenceRing").style.setProperty("--confidence",conf);
+  if ($("confidenceLabel")) {
+    $("confidenceLabel").textContent=!a
+      ?"model read"
+      : a.direction==="FLAT"
+        ?"sideways chance"
+        : a.direction==="UP"
+          ?"up chance"
+          :"down chance";
+  }
 
   const vals=a
     ? [Math.round(a.probabilities.up*100),Math.round(a.probabilities.flat*100),Math.round(a.probabilities.down*100)]
@@ -1147,6 +1193,7 @@ $("autopilotToggle").addEventListener("change",async e=>{
   try{
     paperData=await client.setPaperAutopilot(e.target.checked);
     renderPaper();
+    renderBeginnerCommandCenter();
     toast(e.target.checked
       ?"Server AI paper autopilot enabled. It will keep running with this tab closed."
       :"Server AI paper autopilot disabled.");
@@ -1161,6 +1208,7 @@ $("paperBuyBtn").addEventListener("click",async()=>{
     toast(`Paper BUY filled ${fill.qty} ${activeSymbol} @ ${Number(fill.fillPrice).toFixed(2)} using ${fill.fillModel}.`);
     paperData=await client.paper();
     renderPaper();
+    renderBeginnerCommandCenter();
   }catch(err){ toast(String(err.message||err)); }
 });
 $("paperSellBtn").addEventListener("click",async()=>{
@@ -1169,6 +1217,7 @@ $("paperSellBtn").addEventListener("click",async()=>{
     toast(`Paper SELL filled ${fill.qty} ${activeSymbol} @ ${Number(fill.fillPrice).toFixed(2)} using ${fill.fillModel}.`);
     paperData=await client.paper();
     renderPaper();
+    renderBeginnerCommandCenter();
   }catch(err){ toast(String(err.message||err)); }
 });
 $("flattenBtn").addEventListener("click",async()=>{
@@ -1179,12 +1228,19 @@ $("flattenBtn").addEventListener("click",async()=>{
       :"No open paper position in "+activeSymbol+".");
     paperData=await client.paper();
     renderPaper();
+    renderBeginnerCommandCenter();
   }catch(err){ toast(String(err.message||err)); }
 });
 $("scannerBody")?.addEventListener("click",e=>{
   const row=e.target.closest("tr[data-symbol]");
   if (!row) return;
   selectSymbol(row.dataset.symbol,{activate:true});
+});
+
+$("paperDetailsBtn")?.addEventListener("click",()=>{
+  const btn=document.querySelector('#lowerTabs button[data-tab="paper"]');
+  btn?.click();
+  document.querySelector(".lower-panel")?.scrollIntoView({behavior:"smooth",block:"start"});
 });
 
 $("lowerTabs").addEventListener("click",e=>{
@@ -1215,6 +1271,14 @@ researchTimer=setInterval(()=>{
     .then(r=>{researchData=r;renderResearchBrain();renderBeginnerCommandCenter();})
     .catch(()=>{});
 },10000);
+
+clearInterval(paperTimer);
+paperTimer=setInterval(()=>{
+  client.paper()
+    .then(p=>{paperData=p;renderPaper();renderBeginnerCommandCenter();})
+    .catch(()=>{});
+},3000);
+
 clearInterval(commandTimer);
 commandTimer=setInterval(renderBeginnerCommandCenter,1000);
 
