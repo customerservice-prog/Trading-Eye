@@ -13,6 +13,7 @@ import { PaperBroker } from "./paper-broker.js";
 import { ResearchBrain } from "./research-brain.js";
 import { ReadinessEvaluator } from "./readiness.js";
 import { MistakeLab } from "./mistake-lab.js";
+import { ReplayArena } from "./replay-arena.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -33,6 +34,9 @@ const PAPER_ACCOUNT_ID=String(process.env.PAPER_ACCOUNT_ID || "TE_PAPER_MAIN_V1"
 const PAPER_EXPLORATION_ENABLED=String(process.env.PAPER_EXPLORATION_ENABLED ?? "true").toLowerCase()==="true";
 const PAPER_EXPLORATION_ACCOUNT_ID=String(process.env.PAPER_EXPLORATION_ACCOUNT_ID || "TE_PAPER_EXPLORATION_V1");
 const MISTAKE_LAB_ENABLED=String(process.env.MISTAKE_LAB_ENABLED ?? "true").toLowerCase()==="true";
+const REPLAY_ARENA_ENABLED=String(process.env.REPLAY_ARENA_ENABLED ?? "true").toLowerCase()==="true";
+const REPLAY_ARENA_INTERVAL_MS=Math.max(30000,Number(process.env.REPLAY_ARENA_INTERVAL_MS || 90000));
+const REPLAY_ARENA_MAX_SYMBOLS=Math.max(6,Math.min(24,Number(process.env.REPLAY_ARENA_MAX_SYMBOLS || 16)));
 const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
 const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
 const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
@@ -187,6 +191,14 @@ const mistakeLab=new MistakeLab({
 });
 await mistakeLab.init();
 
+const replayArena=new ReplayArena({
+  db,modelLab,marketEngine:engine,
+  enabled:REPLAY_ARENA_ENABLED,
+  intervalMs:REPLAY_ARENA_INTERVAL_MS,
+  maxSymbols:REPLAY_ARENA_MAX_SYMBOLS
+});
+await replayArena.init();
+
 engine.attachIntelligence({
   modelLab,
   paperBroker,
@@ -277,6 +289,7 @@ app.get("/health",async(req,res)=>{
     deepStudy:deepStudy.status(),
     modelLab:modelLab.status(),
     mistakeLab:mistakeLab.status(),
+    replayArena:replayArena.status(),
     paperBroker:true,
     paperExploration:Boolean(explorationBroker),
     researchBrain:{
@@ -296,7 +309,8 @@ app.get("/api/status",async(req,res)=>{
   res.json({
     ...engine.status(),
     database:await db.ping(),
-    modelLab:modelLab.status()
+    modelLab:modelLab.status(),
+    replayArena:replayArena.status()
   });
 });
 
@@ -335,6 +349,23 @@ app.get("/api/paper/exploration",async(req,res)=>{
 
 app.get("/api/mistakes",async(req,res)=>{
   res.json(mistakeLab.status());
+});
+
+app.get("/api/replay",async(req,res)=>{
+  const [runs,leaderboard]=await Promise.all([
+    replayArena.recentRuns(Number(req.query.limit)||10),
+    replayArena.leaderboard()
+  ]);
+  res.json({status:replayArena.status(),runs,leaderboard});
+});
+
+app.post("/api/replay/run",async(req,res)=>{
+  try{
+    const result=await replayArena.runCycle();
+    res.json({ok:true,result,status:replayArena.status()});
+  }catch(err){
+    res.status(400).json({ok:false,error:String(err?.message||err),status:replayArena.status()});
+  }
 });
 
 app.post("/api/paper/autopilot",async(req,res)=>{
@@ -546,7 +577,10 @@ server.listen(PORT,"0.0.0.0",()=>{
     modelLabForceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START,
     paperAutopilotEnabled:PAPER_AUTOPILOT_ENABLED,
     paperExplorationEnabled:PAPER_EXPLORATION_ENABLED,
-    mistakeLabEnabled:MISTAKE_LAB_ENABLED
+    mistakeLabEnabled:MISTAKE_LAB_ENABLED,
+    replayArenaEnabled:REPLAY_ARENA_ENABLED,
+    replayArenaIntervalMs:REPLAY_ARENA_INTERVAL_MS,
+    replayArenaMaxSymbols:REPLAY_ARENA_MAX_SYMBOLS
   }));
 });
 
@@ -560,6 +594,7 @@ const shutdown=async()=>{
   paperBroker.stop();
   explorationBroker?.stop();
   mistakeLab.stop();
+  replayArena.stop();
   researchBrain.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
