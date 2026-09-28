@@ -20,7 +20,7 @@ export class LearningEngine {
     this.predictionEvery = predictionEvery;
     this.learningRate = learningRate;
     this.weights = { ...DEFAULT_WEIGHTS };
-    this.step = 0;
+    this.symbolSteps = {};
     this.pending = [];
     this.history = [];
     this.lastPredictionStep = {};
@@ -91,7 +91,7 @@ export class LearningEngine {
     this.step += 1;
     const scored = [];
 
-    for (const p of this.pending.filter(x => x.symbol === symbol && this.step - x.step >= this.horizonSteps)) {
+    for (const p of this.pending.filter(x => x.symbol === symbol && symbolStep - x.step >= this.horizonSteps)) {
       const move = (price - p.price) / p.price;
       const actual = move > 0.0010 ? "UP" : move < -0.0010 ? "DOWN" : "FLAT";
       const predicted = p.direction;
@@ -138,13 +138,13 @@ export class LearningEngine {
 
     let locked = null;
     const lastStep = this.lastPredictionStep[symbol] ?? -Infinity;
-    if (this.step - lastStep >= this.predictionEvery) {
+    if (symbolStep - lastStep >= this.predictionEvery) {
       const a = this.analyze(features);
       locked = {
-        id: symbol + "-" + time + "-" + this.step,
+        id: symbol + "-" + time + "-" + symbolStep,
         symbol,
         time,
-        step: this.step,
+        step: symbolStep,
         price,
         features: { ...features },
         direction: a.direction,
