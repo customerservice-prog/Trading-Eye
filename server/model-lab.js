@@ -559,7 +559,7 @@ export class ModelLab {
     const scanDate=latest?.scan_date?String(latest.scan_date).slice(0,10):null;
     const ranked=scanDate?await this.db.topUniverseCandidates(scanDate,{limit:28}):[];
     const wanted=[...new Set([
-      "SPY","QQQ","AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
+      "SPY","QQQ","IWM","DIA","AAPL","MSFT","NVDA","AMZN","META","GOOGL","AMD","TSLA",
       ...ranked.map(x=>x.symbol)
     ])].slice(0,24);
 
@@ -638,7 +638,7 @@ export class ModelLab {
       await sleepTick();
     }
 
-    for(const symbol of ["SPY","QQQ"]){
+    for(const symbol of ["SPY","QQQ","IWM","DIA"]){
       if(histories.has(symbol)) continue;
       const bars=await this.db.getBars(symbol,{limit:26000});
       if(bars.length>=1500) histories.set(symbol,bars);
@@ -672,8 +672,16 @@ export class ModelLab {
     const momentum=[
       "ret1","ret3","ret5","ret10","ret20","momAccel",
       "volRel5","volRel20","volAccel","trendSlope10","trendSlope30",
-      "spyRet5","qqqRet5","breadth5","relativeSpy5","relativeQqq5",
+      "spyRet5","qqqRet5","iwmRet5","diaRet5",
+      "breadth5","breadth20","dispersion5",
+      "relativeSpy5","relativeQqq5","relativeIwm5",
       "timeSin","timeCos"
+    ].map(idx).filter(i=>i>=0);
+    const marketContext=[
+      "spyRet5","qqqRet5","iwmRet5","diaRet5",
+      "breadth5","breadth20","dispersion5",
+      "relativeSpy5","relativeQqq5","relativeIwm5",
+      "ret5","ret20","rv20","volRel20","timeSin","timeCos"
     ].map(idx).filter(i=>i>=0);
     const reversion=[
       "ret1","ret3","rv5","rv20","vwapDist","ma5Dist","ma20Dist","maCross",
@@ -684,6 +692,7 @@ export class ModelLab {
     return [
       {name:"softmax_full",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,name:"softmax_full"})},
       {name:"softmax_momentum",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:momentum,name:"softmax_momentum"})},
+      {name:"softmax_market_context",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:marketContext,name:"softmax_market_context"})},
       {name:"softmax_reversion",build:()=>new SoftmaxModel({featureCount:MODEL_FEATURES.length,featureIndices:reversion,name:"softmax_reversion"})},
       {name:"gaussian_full",build:()=>new GaussianNBModel({featureCount:MODEL_FEATURES.length,name:"gaussian_full"})},
       {name:"boosted_stumps",build:()=>new BoostedStumpModel({featureCount:MODEL_FEATURES.length,name:"boosted_stumps"})}
@@ -712,7 +721,7 @@ export class ModelLab {
   #fitCandidateByName(name,train,validation,memberNames=[]){
     if(name!=="meta_ensemble") return this.#fitBaseCandidate(name,train,validation);
 
-    const names=memberNames.length?memberNames:["softmax_full","softmax_momentum","gaussian_full"];
+    const names=memberNames.length?memberNames:["softmax_full","softmax_momentum","softmax_market_context","gaussian_full"];
     const members=names.map(n=>this.#fitBaseCandidate(n,train,validation)).filter(Boolean);
     if(!members.length) return null;
     const weights=members.map(m=>{
