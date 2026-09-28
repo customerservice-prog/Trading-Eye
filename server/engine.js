@@ -93,7 +93,8 @@ export class RealMarketEngine extends EventEmitter {
       }
     });
     for (const symbol of this.symbols) {
-      const rows=await this.db.getBars(symbol,{limit:1200});
+      const historyLimit=Math.min(100000,Math.max(5000,this.backfillDays*600));
+      const rows=await this.db.getBars(symbol,{limit:historyLimit});
       this.histories.set(symbol,rows.map(r=>this.#rowToBar(r)));
     }
     this.backfill.state="COMPLETE";
