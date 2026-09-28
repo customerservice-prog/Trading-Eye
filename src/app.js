@@ -28,6 +28,7 @@ let status=null;
 let snapshot={bars:[],quote:null,trades:[],analysis:null,features:null,predictions:[]};
 let watchlist={rows:[],provider:"alpaca",feed:"iex"};
 let predictionData={rows:[],stats:null,model:null};
+let studyData={status:null,rows:[]};
 let lastAutoTradeAt=0;
 let refreshTimer=null;
 
@@ -361,6 +362,46 @@ function renderLearning() {
     </tr>`).join(""):`<tr><td colspan="5">No real-data predictions have been recorded yet.</td></tr>`;
 }
 
+function renderDeepStudy() {
+  if (!$("deepStudyState")) return;
+  const state=studyData.status||{};
+  const pattern=state.patternState||{};
+  const latest=(studyData.rows||[])[0]||null;
+
+  let label="Waiting";
+  if (state.running) label="Studying now";
+  else if (pattern.state==="BUILDING") label="Building 90-day memory";
+  else if (latest?.status==="COMPLETE") label="Study complete";
+  else if (pattern.state==="COMPLETE") label="Pattern memory ready";
+
+  $("deepStudyState").textContent=label;
+  $("deepStudyDate").textContent=latest
+    ? `${String(latest.study_date).slice(0,10)} · ${String(latest.stage||"regular_close").replaceAll("_"," ")}`
+    : pattern.lastBuiltAt
+      ? "Pattern memory built "+safeTime(pattern.lastBuiltAt)
+      : "Waiting for a completed market session";
+
+  const findings=latest?.pattern_findings||{};
+  $("patternMemoryCount").textContent=num(pattern.patterns||findings.memorySize||0);
+  $("deepStudyBars").textContent=num(latest?.market?.totalBars||0);
+  $("deepStudyPredictions").textContent=num(latest?.prediction_review?.scored||0);
+  $("deepStudyAnalogs").textContent=num(Array.isArray(latest?.analogs)?latest.analogs.length:0);
+
+  const lessons=Array.isArray(latest?.lessons)?latest.lessons:[];
+  $("deepStudyLessons").innerHTML=lessons.length
+    ? lessons.slice(0,6).map(x=>`<div class="study-item">${x.text||"Study result recorded."}</div>`).join("")
+    : `<div class="study-item">${state.running?"Trading Eye is studying the completed session now.":"The next completed daily study will appear here."}</div>`;
+
+  const patterns=Array.isArray(findings.strongest)?findings.strongest:[];
+  $("deepStudyPatterns").innerHTML=patterns.length
+    ? patterns.slice(0,6).map(p=>{
+        const up=Math.round(Number(p.upRate||0)*100);
+        const down=Math.round(Number(p.downRate||0)*100);
+        return `<div class="study-item"><strong>${p.symbol} · ${p.horizonMinutes}m</strong> · ${num(p.samples)} matches · ↑ ${up}% / ↓ ${down}%</div>`;
+      }).join("")
+    : `<div class="study-item">${pattern.state==="BUILDING"?"Scanning the 90-day real market history for repeating setups…":"No sufficiently repeated pattern has been promoted yet."}</div>`;
+}
+
 function renderAll() {
   renderStatus();
   renderWatchlist();
@@ -369,14 +410,15 @@ function renderAll() {
   renderTapeAndBook();
   renderPaper();
   renderLearning();
+  renderDeepStudy();
 }
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds]=await Promise.all([
-      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions()
+    const [st,wl,snap,preds,studies]=await Promise.all([
+      client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),client.studies(10)
     ]);
-    status=st; watchlist=wl; snapshot=snap; predictionData=preds;
+    status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies;
     monitoredSymbols=st.symbols||monitoredSymbols;
     renderAll();
     if (!quiet) toast(st.configured?`Connected: ${sourceName()}`:"Backend online; real market provider still needs credentials.");
@@ -445,6 +487,9 @@ function applyRealtime(event) {
   if (event.type==="prediction" || event.type==="prediction_scored") {
     client.predictions().then(p=>{predictionData=p;renderLearning();}).catch(()=>{});
     client.snapshot(activeSymbol).then(s=>{snapshot=s;renderAI();renderChart();}).catch(()=>{});
+  }
+  if (event.type==="deep_study_status" || event.type==="deep_study_complete") {
+    client.studies(10).then(s=>{studyData=s;renderDeepStudy();}).catch(()=>{});
   }
   renderChart(); renderTapeAndBook(); renderPaper();
 }
