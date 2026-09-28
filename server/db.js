@@ -1621,6 +1621,151 @@ export class Database {
     return q.rows;
   }
 
+  async refreshHistoricalSecurityMaster(symbols=null) {
+    if (!this.ready) return 0;
+    const params=[];
+    let where="";
+    if(Array.isArray(symbols)&&symbols.length){
+      params.push(symbols.map(s=>String(s).toUpperCase()));
+      where="WHERE h.symbol = ANY($1::text[])";
+    }
+    const q=await this.pool.query(`
+      INSERT INTO historical_security_master(
+        symbol,first_day,last_day,current_active,survivorship_class,
+        current_name,current_exchange,source,bars,updated_at
+      )
+      SELECT
+        h.symbol,MIN(h.day),MAX(h.day),
+        BOOL_OR(a.symbol IS NOT NULL AND a.status='active') AS current_active,
+        CASE
+          WHEN BOOL_OR(a.symbol IS NOT NULL AND a.status='active') THEN 'CURRENT_ACTIVE'
+          ELSE 'HISTORICAL_ONLY'
+        END,
+        MAX(a.name),MAX(a.exchange),'long_history',COUNT(*)::bigint,NOW()
+      FROM long_history_bars_1d h
+      LEFT JOIN asset_universe a ON a.symbol=h.symbol
+      ${where}
+      GROUP BY h.symbol
+      ON CONFLICT(symbol) DO UPDATE SET
+        first_day=EXCLUDED.first_day,last_day=EXCLUDED.last_day,
+        current_active=EXCLUDED.current_active,
+        survivorship_class=EXCLUDED.survivorship_class,
+        current_name=EXCLUDED.current_name,current_exchange=EXCLUDED.current_exchange,
+        bars=EXCLUDED.bars,updated_at=NOW()
+      RETURNING symbol
+    `,params);
+    return q.rowCount;
+  }
+
+  async auditCorporateActionCandidates(symbols) {
+    if (!this.ready || !Array.isArray(symbols) || !symbols.length) return {actions:0,quality:0};
+    const syms=symbols.map(s=>String(s).toUpperCase());
+    const q=await this.pool.query(`
+      WITH x AS (
+        SELECT symbol,day,close,
+               LAG(close) OVER(PARTITION BY symbol ORDER BY day) AS prev_close
+        FROM long_history_bars_1d
+        WHERE symbol=ANY($1::text[])
+      ),
+      jumps AS (
+        SELECT symbol,day,close,prev_close,
+               close/NULLIF(prev_close,0) AS ratio
+        FROM x
+        WHERE prev_close>0
+          AND (close/prev_close >= 1.45 OR close/prev_close <= .69)
+      )
+      SELECT * FROM jumps
+      ORDER BY symbol,day
+    `,[syms]);
+
+    let actions=0,quality=0;
+    const common=[2,3,4,5,10,1.5];
+    for(const r of q.rows){
+      const ratio=Number(r.ratio);
+      const inv=ratio>0?1/ratio:Infinity;
+      const candidate=[ratio,inv].some(v=>common.some(f=>Math.abs(v-f)/f<=.08));
+      if(candidate){
+        await this.pool.query(`
+          INSERT INTO corporate_action_flags(
+            symbol,action_day,action_type,confidence,source,details
+          ) VALUES($1,$2,'SPLIT_LIKE',.75,'price_jump_heuristic',$3::jsonb)
+          ON CONFLICT(symbol,action_day,action_type,source) DO UPDATE SET
+            confidence=EXCLUDED.confidence,details=EXCLUDED.details
+        `,[
+          r.symbol,r.day,JSON.stringify({
+            previousClose:Number(r.prev_close),close:Number(r.close),ratio
+          })
+        ]);
+        actions++;
+      }else if(Math.abs(ratio-1)>=.60){
+        await this.pool.query(`
+          INSERT INTO data_quality_flags(
+            severity,scope,symbol,flag_type,message,details,active
+          )
+          SELECT 'WARN','HISTORICAL_SYMBOL',$1,'EXTREME_DAILY_JUMP',
+                 'Extreme historical daily jump requires caution in research.',
+                 $2::jsonb,true
+          WHERE NOT EXISTS(
+            SELECT 1 FROM data_quality_flags
+            WHERE active=true AND symbol=$1 AND flag_type='EXTREME_DAILY_JUMP'
+              AND details->>'day'=$3
+          )
+        `,[
+          r.symbol,
+          JSON.stringify({day:String(r.day).slice(0,10),ratio,previousClose:Number(r.prev_close),close:Number(r.close)}),
+          String(r.day).slice(0,10)
+        ]);
+        quality++;
+      }
+    }
+    return {actions,quality};
+  }
+
+  async corporateActionDays(symbol) {
+    if(!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT action_day
+      FROM corporate_action_flags
+      WHERE symbol=$1 AND confidence>=.6
+      ORDER BY action_day
+    `,[String(symbol).toUpperCase()]);
+    return q.rows.map(r=>String(r.action_day).slice(0,10));
+  }
+
+  async historicalUniverseStats() {
+    if(!this.ready) return {};
+    const q=await this.pool.query(`
+      SELECT
+        COUNT(*)::int AS symbols,
+        COUNT(*) FILTER(WHERE current_active)::int AS current_active,
+        COUNT(*) FILTER(WHERE NOT current_active)::int AS historical_only,
+        MIN(first_day) AS first_day,
+        MAX(last_day) AS last_day,
+        SUM(bars)::bigint AS bars
+      FROM historical_security_master
+    `);
+    const r=q.rows[0]||{};
+    return {
+      symbols:Number(r.symbols)||0,
+      currentActive:Number(r.current_active)||0,
+      historicalOnly:Number(r.historical_only)||0,
+      firstDay:r.first_day||null,lastDay:r.last_day||null,bars:Number(r.bars)||0
+    };
+  }
+
+  async activeDataQualityFlags() {
+    if(!this.ready) return [];
+    const q=await this.pool.query(`
+      SELECT flag_id,severity,scope,symbol,flag_type,message,details,created_at
+      FROM data_quality_flags
+      WHERE active=true
+      ORDER BY CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'ERROR' THEN 1 WHEN 'WARN' THEN 2 ELSE 3 END,
+               created_at DESC
+      LIMIT 200
+    `);
+    return q.rows;
+  }
+
   async heartbeat(key,status,details={}) {
     if (!this.ready) return;
     await this.pool.query(`
