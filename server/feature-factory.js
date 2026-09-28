@@ -14,7 +14,8 @@ export const MODEL_FEATURES=[
   "vwapDist","ma5Dist","ma20Dist","maCross",
   "high20Dist","low20Dist","rangeCompression",
   "trendSlope10","trendSlope30","closeLocation",
-  "spyRet5","qqqRet5","breadth5","relativeSpy5","relativeQqq5",
+  "spyRet5","qqqRet5","breadth5","dispersion5","crossRank5",
+  "relativeSpy5","relativeQqq5","sectorRet5","relativeSector5",
   "timeSin","timeCos"
 ];
 
@@ -26,6 +27,21 @@ function etMinute(ts){
     }).formatToParts(d).filter(x=>x.type!=="literal").map(x=>[x.type,x.value])
   );
   return Number(parts.hour)*60+Number(parts.minute);
+}
+
+const SECTOR_ETFS=["XLK","XLF","XLE","XLV","XLY","XLP","XLI","XLB","XLU","XLRE","XLC"];
+
+function correlation(a,b){
+  const n=Math.min(a.length,b.length);
+  if(n<30) return 0;
+  const aa=a.slice(-n),bb=b.slice(-n);
+  const ma=mean(aa),mb=mean(bb);
+  let num=0,da=0,db=0;
+  for(let i=0;i<n;i++){
+    const x=aa[i]-ma,y=bb[i]-mb;
+    num+=x*y;da+=x*x;db+=y*y;
+  }
+  return da&&db?num/Math.sqrt(da*db):0;
 }
 
 function slope(values){
@@ -124,47 +140,104 @@ export class FeatureFactory {
       spyRet5:clamp((Number(context.spyRet5)||0)/0.025,-3,3),
       qqqRet5:clamp((Number(context.qqqRet5)||0)/0.03,-3,3),
       breadth5:clamp(Number(context.breadth5)||0,-1,1),
+      dispersion5:clamp((Number(context.dispersion5)||0)/0.03,0,3),
+      crossRank5:clamp(Number(context.crossRank5)||0,-1,1),
       relativeSpy5:clamp((pct(close,c(5))-(Number(context.spyRet5)||0))/0.025,-3,3),
       relativeQqq5:clamp((pct(close,c(5))-(Number(context.qqqRet5)||0))/0.03,-3,3),
+      sectorRet5:clamp((Number(context.sectorRet5)||0)/0.03,-3,3),
+      relativeSector5:clamp((pct(close,c(5))-(Number(context.sectorRet5)||0))/0.03,-3,3),
       timeSin:Math.sin(angle),
       timeCos:Math.cos(angle)
     };
     return feature;
   }
 
-  buildContextMap(histories){
-    const accum=new Map();
-    const core={SPY:new Map(),QQQ:new Map()};
+  #returnMaps(histories){
+    const maps=new Map();
     for(const [symbol,rows] of histories.entries()){
-      if(!Array.isArray(rows)||rows.length<6) continue;
-      for(let i=5;i<rows.length;i++){
-        const ts=+new Date(rows[i].ts||rows[i].time);
-        const prev=Number(rows[i-5].close),cur=Number(rows[i].close);
-        if(!Number.isFinite(ts)||!prev||!Number.isFinite(cur)) continue;
-        const r=(cur-prev)/prev;
-        let a=accum.get(ts);
-        if(!a){ a={up:0,total:0}; accum.set(ts,a); }
-        a.total++;
-        if(r>0) a.up++;
-        if(symbol==="SPY") core.SPY.set(ts,r);
-        if(symbol==="QQQ") core.QQQ.set(ts,r);
+      const m=new Map();
+      if(Array.isArray(rows)&&rows.length>=6){
+        for(let i=5;i<rows.length;i++){
+          const ts=+new Date(rows[i].ts||rows[i].time);
+          const prev=Number(rows[i-5].close),cur=Number(rows[i].close);
+          if(Number.isFinite(ts)&&prev>0&&Number.isFinite(cur)) m.set(ts,(cur-prev)/prev);
+        }
+      }
+      maps.set(symbol,m);
+    }
+    return maps;
+  }
+
+  #sectorAssignments(histories,returnMaps=null){
+    const maps=returnMaps||this.#returnMaps(histories);
+    const sectors=SECTOR_ETFS.filter(s=>maps.get(s)?.size);
+    const assignments=new Map();
+    for(const [symbol,map] of maps.entries()){
+      if(["SPY","QQQ",...SECTOR_ETFS].includes(symbol)) {
+        assignments.set(symbol,symbol);
+        continue;
+      }
+      let best="SPY",bestCorr=-Infinity;
+      for(const sector of sectors){
+        const sm=maps.get(sector);
+        const a=[],b=[];
+        const keys=[...map.keys()].slice(-2200);
+        for(const ts of keys){
+          if(sm.has(ts)){a.push(map.get(ts));b.push(sm.get(ts));}
+        }
+        const c=correlation(a,b);
+        if(c>bestCorr){bestCorr=c;best=sector;}
+      }
+      assignments.set(symbol,bestCorr>=.15?best:"SPY");
+    }
+    return assignments;
+  }
+
+  buildContextMap(histories){
+    const maps=this.#returnMaps(histories);
+    const sectors=this.#sectorAssignments(histories,maps);
+    const byTs=new Map();
+    for(const [symbol,map] of maps.entries()){
+      for(const [ts,r] of map.entries()){
+        let row=byTs.get(ts);
+        if(!row){row={returns:new Map()};byTs.set(ts,row);}
+        row.returns.set(symbol,r);
       }
     }
+
     const out=new Map();
-    for(const [ts,a] of accum.entries()){
-      out.set(ts,{
-        spyRet5:core.SPY.get(ts)||0,
-        qqqRet5:core.QQQ.get(ts)||0,
-        breadth5:a.total?((a.up/a.total)-.5)*2:0
-      });
+    for(const [ts,row] of byTs.entries()){
+      const vals=[...row.returns.values()].filter(Number.isFinite);
+      const breadth=vals.length?((vals.filter(x=>x>0).length/vals.length)-.5)*2:0;
+      const dispersion=stdev(vals);
+      const sorted=[...vals].sort((a,b)=>a-b);
+      const spyRet5=row.returns.get("SPY")||0;
+      const qqqRet5=row.returns.get("QQQ")||0;
+
+      for(const [symbol,r] of row.returns.entries()){
+        let rank=0;
+        if(sorted.length>1){
+          let idx=0;
+          while(idx<sorted.length&&sorted[idx]<r) idx++;
+          rank=(idx/(sorted.length-1))*2-1;
+        }
+        const sector=sectors.get(symbol)||"SPY";
+        out.set(symbol+"|"+ts,{
+          spyRet5,qqqRet5,breadth5:breadth,dispersion5:dispersion,
+          crossRank5:rank,
+          sectorEtf:sector,
+          sectorRet5:row.returns.get(sector)||spyRet5
+        });
+      }
     }
     return out;
   }
 
-  contextAt(histories,ts){
+  contextAt(histories,ts,symbol=null){
     const target=+new Date(ts);
-    let up=0,total=0,spyRet5=0,qqqRet5=0;
-    for(const [symbol,rows] of histories.entries()){
+    const rowsBySymbol=[];
+    let spyRet5=0,qqqRet5=0,ownRet=0;
+    for(const [sym,rows] of histories.entries()){
       if(!rows?.length) continue;
       let idx=rows.length-1;
       while(idx>5 && +new Date(rows[idx].ts||rows[idx].time)>target) idx--;
@@ -172,17 +245,48 @@ export class FeatureFactory {
       const prev=Number(rows[idx-5].close),cur=Number(rows[idx].close);
       if(!prev||!Number.isFinite(cur)) continue;
       const r=(cur-prev)/prev;
-      total++; if(r>0) up++;
-      if(symbol==="SPY") spyRet5=r;
-      if(symbol==="QQQ") qqqRet5=r;
+      rowsBySymbol.push({symbol:sym,r});
+      if(sym==="SPY") spyRet5=r;
+      if(sym==="QQQ") qqqRet5=r;
+      if(sym===symbol) ownRet=r;
     }
-    return {
-      spyRet5,qqqRet5,
-      breadth5:total?((up/total)-.5)*2:0
-    };
-  }
+    const vals=rowsBySymbol.map(x=>x.r);
+    const breadth5=vals.length?((vals.filter(x=>x>0).length/vals.length)-.5)*2:0;
+    const dispersion5=stdev(vals);
+    const sorted=[...vals].sort((a,b)=>a-b);
+    let crossRank5=0;
+    if(symbol&&sorted.length>1){
+      let idx=0;
+      while(idx<sorted.length&&sorted[idx]<ownRet) idx++;
+      crossRank5=(idx/(sorted.length-1))*2-1;
+    }
 
-  vector(features){
+    // Use recent correlation to choose a sector proxy for live inference.
+    let sectorEtf="SPY",best=-Infinity;
+    if(symbol&&histories.has(symbol)){
+      const own=histories.get(symbol)||[];
+      const ownReturns=[];
+      for(let i=Math.max(5,own.length-350);i<own.length;i+=5){
+        const p=Number(own[i-5]?.close),c=Number(own[i]?.close);
+        if(p>0&&Number.isFinite(c)) ownReturns.push({ts:+new Date(own[i].ts),r:(c-p)/p});
+      }
+      for(const sector of SECTOR_ETFS){
+        const sr=histories.get(sector)||[];
+        if(sr.length<20) continue;
+        const sm=new Map();
+        for(let i=Math.max(5,sr.length-350);i<sr.length;i+=5){
+          const p=Number(sr[i-5]?.close),c=Number(sr[i]?.close);
+          if(p>0&&Number.isFinite(c)) sm.set(+new Date(sr[i].ts),(c-p)/p);
+        }
+        const a=[],b=[];
+        for(const x of ownReturns){if(sm.has(x.ts)){a.push(x.r);b.push(sm.get(x.ts));}}
+        const corr=correlation(a,b);
+        if(corr>best){best=corr;sectorEtf=sector;}
+      }
+    }
+    const sectorRet5=rowsBySymbol.find(x=>x.symbol===sectorEtf)?.r||spyRet5;
+    return {spyRet5,qqqRet5,breadth5,dispersion5,crossRank5,sectorEtf,sectorRet5};
+  }  vector(features){
     return MODEL_FEATURES.map(k=>Number(features?.[k])||0);
   }
 
@@ -209,7 +313,7 @@ export class FeatureFactory {
       if(rows.length<100) continue;
       for(let i=40;i<rows.length-horizon-1;i+=step){
         const ts=+new Date(rows[i].ts||rows[i].time);
-        const features=this.extract(rows,i,contextMap.get(ts)||{});
+        const features=this.extract(rows,i,contextMap.get(symbol+"|"+ts)||{});
         const target=this.target(rows,i,horizon);
         if(!features||!target) continue;
         examples.push({
