@@ -142,11 +142,12 @@ function liveMetrics(rows){
 }
 
 export class ModelLab {
-  constructor({db,marketEngine,horizonMinutes=15,enabled=true}){
+  constructor({db,marketEngine,horizonMinutes=15,enabled=true,forceTrainOnStart=false}){
     this.db=db;
     this.marketEngine=marketEngine;
     this.horizonMinutes=horizonMinutes;
     this.enabled=enabled;
+    this.forceTrainOnStart=Boolean(forceTrainOnStart);
     this.factory=new FeatureFactory();
     this.productionRecord=null;
     this.productionModel=null;
@@ -167,7 +168,10 @@ export class ModelLab {
     await this.refreshLiveShadowMetrics();
     this.latestRun=await this.#loadLatestRun();
     this.timer=setInterval(()=>this.tick().catch(err=>this.#capture(err)),5*60*1000);
-    setTimeout(()=>this.tick().catch(err=>this.#capture(err)),12000);
+    setTimeout(()=>{
+      if(this.forceTrainOnStart) this.trainNow("forced_preview_validation").catch(err=>this.#capture(err));
+      else this.tick().catch(err=>this.#capture(err));
+    },12000);
   }
 
   stop(){ clearInterval(this.timer); }
