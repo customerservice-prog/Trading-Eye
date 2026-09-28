@@ -248,7 +248,7 @@ export class Database {
   async findAsset(symbol) {
     if (!this.ready) return null;
     const q=await this.pool.query(`
-      SELECT symbol,name,exchange,status,tradable,fractionable,shortable,easy_to_borrow,
+      SELECT symbol,name,exchange,asset_class,status,tradable,fractionable,shortable,easy_to_borrow,
              marginable,data_supported,scanner_eligible,attributes
       FROM asset_universe WHERE symbol=$1 LIMIT 1
     `,[String(symbol).toUpperCase()]);
@@ -261,7 +261,7 @@ export class Database {
     if (!q) return [];
     const n=Math.max(1,Math.min(100,Number(limit)||25));
     const r=await this.pool.query(`
-      SELECT symbol,name,exchange,status,tradable,fractionable,shortable,data_supported,attributes
+      SELECT symbol,name,exchange,asset_class,status,tradable,fractionable,shortable,data_supported,scanner_eligible,attributes
       FROM asset_universe
       WHERE status='active'
         AND (symbol ILIKE $1 OR name ILIKE $2)
@@ -281,7 +281,7 @@ export class Database {
     if (scannerEligibleOnly) filters.push("scanner_eligible=true");
     const where="WHERE "+filters.join(" AND ");
     const q=await this.pool.query(`
-      SELECT symbol,name,exchange,status,tradable,fractionable,shortable,data_supported,attributes
+      SELECT symbol,name,exchange,asset_class,status,tradable,fractionable,shortable,data_supported,scanner_eligible,attributes
       FROM asset_universe ${where}
       ORDER BY symbol LIMIT ${n}
     `);
