@@ -359,9 +359,22 @@ export class PaperBroker {
     });
   }
 
+  #regularSessionNow(){
+    const parts=Object.fromEntries(
+      new Intl.DateTimeFormat("en-US",{
+        timeZone:"America/New_York",
+        weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"
+      }).formatToParts(new Date()).filter(x=>x.type!=="literal").map(x=>[x.type,x.value])
+    );
+    if(["Sat","Sun"].includes(parts.weekday)) return false;
+    const minute=Number(parts.hour)*60+Number(parts.minute);
+    return minute>=9*60+30 && minute<16*60;
+  }
+
   async handlePrediction(prediction){
     const account=await this.#account();
     if(!account?.autopilot_enabled||!prediction) return;
+    if(!this.#regularSessionNow()) return;
     if(!prediction.modelId) return;
     if(prediction.noTrade) return;
     if(Number(prediction.confidence)<this.autopilotMinConfidence) return;
