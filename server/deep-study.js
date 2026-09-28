@@ -178,6 +178,103 @@ function dailyScanMetric(rows) {
   };
 }
 
+function intradayProfile5m(rawRows) {
+  const rows=(rawRows||[]).map(r=>({
+    ts:new Date(r.t||r.ts),
+    open:Number(r.o??r.open),high:Number(r.h??r.high),low:Number(r.l??r.low),
+    close:Number(r.c??r.close),volume:Number(r.v??r.volume)
+  })).filter(r=>Number.isFinite(r.close)).sort((a,b)=>a.ts-b.ts);
+  if (rows.length<40) return null;
+
+  const grouped=new Map();
+  for (const r of rows) {
+    const m=minuteET(r.ts);
+    if (m<9*60+30 || m>=16*60) continue;
+    const day=etDate(r.ts);
+    if (!grouped.has(day)) grouped.set(day,[]);
+    grouped.get(day).push(r);
+  }
+  const days=[...grouped.entries()]
+    .map(([day,bars])=>({day,bars:bars.sort((a,b)=>a.ts-b.ts)}))
+    .filter(x=>x.bars.length>=30)
+    .slice(-5);
+  if (!days.length) return null;
+
+  const sessions=[];
+  for (const {day,bars} of days) {
+    const first=bars[0],last=bars.at(-1);
+    const segment=(start,end)=>bars.filter(r=>{
+      const m=minuteET(r.ts);
+      return m>=start&&m<end;
+    });
+    const ret=(segmentRows)=>{
+      if (!segmentRows.length) return 0;
+      return pct(segmentRows.at(-1).close,segmentRows[0].open);
+    };
+    const open30=segment(9*60+30,10*60);
+    const midday=segment(11*60+30,14*60);
+    const power=segment(15*60,16*60);
+    const firstHour=segment(9*60+30,10*60+30);
+    const totalVolume=bars.reduce((s,x)=>s+x.volume,0);
+    const openVolume=open30.reduce((s,x)=>s+x.volume,0);
+    const closeVolume=power.reduce((s,x)=>s+x.volume,0);
+    const returns=[];
+    for(let i=1;i<bars.length;i++) returns.push(pct(bars[i].close,bars[i-1].close));
+    const dayReturn=pct(last.close,first.open);
+    const open30Return=ret(open30);
+    sessions.push({
+      day,dayReturn,open30Return,
+      middayReturn:ret(midday),
+      powerHourReturn:ret(power),
+      firstHourRange:firstHour.length
+        ? pct(Math.max(...firstHour.map(x=>x.high)),Math.min(...firstHour.map(x=>x.low)))
+        : 0,
+      realizedVol:Math.sqrt(returns.reduce((s,r)=>s+r*r,0)),
+      openVolumeShare:totalVolume?openVolume/totalVolume:0,
+      closeVolumeShare:totalVolume?closeVolume/totalVolume:0,
+      trendFollow:
+        Math.abs(open30Return)>.0005 && Math.sign(open30Return)===Math.sign(dayReturn) ? 1 : 0,
+      reversal:
+        Math.abs(open30Return)>.0005 && Math.sign(open30Return)!==Math.sign(dayReturn) ? 1 : 0
+    });
+  }
+
+  const last=sessions.at(-1);
+  const realizedVol5d=Math.sqrt(sessions.reduce((s,x)=>s+x.realizedVol*x.realizedVol,0));
+  const trendFollowRate=mean(sessions.map(x=>x.trendFollow));
+  const reversalRate=mean(sessions.map(x=>x.reversal));
+  const openVolumeShare=mean(sessions.map(x=>x.openVolumeShare));
+  const closeVolumeShare=mean(sessions.map(x=>x.closeVolumeShare));
+  const deepScore=
+    Math.abs(last.dayReturn)/.025+
+    Math.abs(last.open30Return)/.012+
+    Math.abs(last.middayReturn)/.015+
+    Math.abs(last.powerHourReturn)/.012+
+    last.firstHourRange/.025+
+    realizedVol5d/.10+
+    Math.max(0,openVolumeShare-.08)*5+
+    Math.max(0,closeVolumeShare-.15)*3+
+    Math.abs(trendFollowRate-.5)*.8+
+    Math.abs(reversalRate-.5)*.8;
+
+  return {
+    bars5m:rows.length,
+    sessions:sessions.length,
+    lastDayReturn:last.dayReturn,
+    open30Return:last.open30Return,
+    middayReturn:last.middayReturn,
+    powerHourReturn:last.powerHourReturn,
+    firstHourRange:last.firstHourRange,
+    realizedVol5d,
+    openVolumeShare,
+    closeVolumeShare,
+    trendFollowRate,
+    reversalRate,
+    deepScore,
+    profile:{sessions}
+  };
+}
+
 function predictionSummary(rows) {
   const scored=rows.filter(x=>x.status==="SCORED");
   const correct=scored.filter(x=>x.correct).length;
@@ -414,15 +511,22 @@ export class DeepStudyEngine extends EventEmitter {
         }
       }
 
+      const deep=await this.runUniverseIntradayScan(scanDate,assets);
       const liveCapacity=Math.max(1,this.marketEngine.liveSymbolLimit-this.marketEngine.pinnedSymbols.size);
       const top=await this.db.topUniverseCandidates(scanDate,{limit:liveCapacity});
       await this.marketEngine.setAutoCandidates(top.map(x=>x.symbol),{backfillDays:3});
       await this.db.completeUniverseScan(scanDate,{
-        assetsScanned:assets.length,dailyBars,candidates:top.length
+        assetsScanned:assets.length,dailyBars,candidates:top.length,
+        deepAssets:deep.deepAssets,deepBars:deep.deepBars
       });
-      this.universeState={state:"COMPLETE",scanDate,scanVersion:this.scanVersion,assetsScanned:assets.length,dailyBars,candidates:top.length,error:null};
+      this.universeState={
+        state:"COMPLETE",scanDate,scanVersion:this.scanVersion,
+        assetsScanned:assets.length,dailyBars,candidates:top.length,
+        deepAssets:deep.deepAssets,deepBars:deep.deepBars,error:null
+      };
       console.log(JSON.stringify({
-        event:"universe_scan_complete",scanDate,assetsScanned:assets.length,dailyBars,candidates:top.length
+        event:"universe_scan_complete",scanDate,assetsScanned:assets.length,dailyBars,
+        deepAssets:deep.deepAssets,deepBars:deep.deepBars,candidates:top.length
       }));
     } catch(err) {
       this.universeState={...this.universeState,state:"ERROR",error:String(err?.message||err)};
@@ -430,6 +534,56 @@ export class DeepStudyEngine extends EventEmitter {
       console.log(JSON.stringify({event:"universe_scan_error",scanDate,message:this.universeState.error}));
     }
     this.emit("status",this.status());
+  }
+
+  async runUniverseIntradayScan(scanDate,assets) {
+    const completed=new Set(await this.db.intradayScannedSymbols(scanDate));
+    const pending=(assets||[]).filter(a=>!completed.has(a.symbol));
+    const start=new Date(addDays(scanDate,-12)+"T00:00:00Z");
+    const end=new Date(addDays(scanDate,1)+"T23:59:59Z");
+    let deepAssets=completed.size;
+    let deepBars=0;
+
+    this.universeState={
+      ...this.universeState,state:"RUNNING",phase:"INTRADAY_5M",
+      deepAssets,deepBars
+    };
+    this.emit("status",this.status());
+
+    for(let offset=0;offset<pending.length;offset+=100) {
+      const chunk=pending.slice(offset,offset+100);
+      const bySymbol=new Map(chunk.map(a=>[a.symbol,[]]));
+      await this.marketEngine.provider.historicalBarsForSymbols({
+        symbols:chunk.map(a=>a.symbol),start,end,timeframe:"5Min",limit:10000,
+        onPage:async barsBySymbol=>{
+          for (const [symbol,rows] of Object.entries(barsBySymbol)) {
+            if (!bySymbol.has(symbol)) bySymbol.set(symbol,[]);
+            bySymbol.get(symbol).push(...rows);
+            deepBars+=rows.length;
+          }
+        }
+      });
+
+      const profiles=[];
+      for (const asset of chunk) {
+        const profile=intradayProfile5m(bySymbol.get(asset.symbol)||[]);
+        if (profile) profiles.push({symbol:asset.symbol,...profile});
+      }
+      await this.db.saveIntradayProfiles(scanDate,profiles);
+      deepAssets+=chunk.length;
+      await this.db.updateUniverseDeepProgress(scanDate,{deepAssets,deepBars});
+      this.universeState={
+        ...this.universeState,state:"RUNNING",phase:"INTRADAY_5M",
+        deepAssets,deepBars
+      };
+      if (offset%500===0) {
+        console.log(JSON.stringify({event:"universe_intraday_progress",scanDate,deepAssets,deepBars}));
+        this.emit("status",this.status());
+      }
+    }
+
+    console.log(JSON.stringify({event:"universe_intraday_complete",scanDate,deepAssets,deepBars}));
+    return {deepAssets,deepBars};
   }
 
   async runStudy(studyDate,stage="regular_close") {
