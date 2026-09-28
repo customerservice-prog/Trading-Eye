@@ -55,6 +55,7 @@ export class Database {
 
       CREATE TABLE IF NOT EXISTS universe_scan_runs (
         scan_date DATE PRIMARY KEY,
+        scan_version INTEGER NOT NULL DEFAULT 1,
         status TEXT NOT NULL DEFAULT 'RUNNING',
         started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         completed_at TIMESTAMPTZ,
@@ -63,6 +64,9 @@ export class Database {
         candidates INTEGER NOT NULL DEFAULT 0,
         error TEXT
       );
+
+      ALTER TABLE universe_scan_runs
+        ADD COLUMN IF NOT EXISTS scan_version INTEGER NOT NULL DEFAULT 1;
 
       CREATE TABLE IF NOT EXISTS universe_scan_results (
         scan_date DATE NOT NULL,
@@ -371,15 +375,22 @@ export class Database {
     return q.rows.map(r=>r.symbol);
   }
 
-  async beginUniverseScan(scanDate) {
+  async beginUniverseScan(scanDate,scanVersion=1) {
     if (!this.ready) return;
+    const current=await this.pool.query(
+      "SELECT scan_version FROM universe_scan_runs WHERE scan_date=$1 LIMIT 1",
+      [scanDate]
+    );
+    if (current.rowCount && Number(current.rows[0].scan_version)!==Number(scanVersion)) {
+      await this.pool.query("DELETE FROM universe_scan_results WHERE scan_date=$1",[scanDate]);
+    }
     await this.pool.query(`
-      INSERT INTO universe_scan_runs(scan_date,status,started_at)
-      VALUES($1,'RUNNING',NOW())
+      INSERT INTO universe_scan_runs(scan_date,scan_version,status,started_at)
+      VALUES($1,$2,'RUNNING',NOW())
       ON CONFLICT(scan_date) DO UPDATE SET
-        status='RUNNING',started_at=NOW(),completed_at=NULL,error=NULL,
-        assets_scanned=0,daily_bars=0,candidates=0
-    `,[scanDate]);
+        scan_version=EXCLUDED.scan_version,status='RUNNING',started_at=NOW(),
+        completed_at=NULL,error=NULL,assets_scanned=0,daily_bars=0,candidates=0
+    `,[scanDate,scanVersion]);
   }
 
   async saveUniverseScanResults(scanDate,rows) {
@@ -427,18 +438,19 @@ export class Database {
     `,[scanDate,String(error).slice(0,2000)]);
   }
 
-  async universeScanComplete(scanDate) {
+  async universeScanComplete(scanDate,scanVersion=1) {
     if (!this.ready) return false;
     const q=await this.pool.query(`
-      SELECT 1 FROM universe_scan_runs WHERE scan_date=$1 AND status='COMPLETE' LIMIT 1
-    `,[scanDate]);
+      SELECT 1 FROM universe_scan_runs
+      WHERE scan_date=$1 AND scan_version=$2 AND status='COMPLETE' LIMIT 1
+    `,[scanDate,scanVersion]);
     return q.rowCount>0;
   }
 
   async latestUniverseScan() {
     if (!this.ready) return null;
     const q=await this.pool.query(`
-      SELECT scan_date,status,started_at,completed_at,assets_scanned,daily_bars,candidates,error
+      SELECT scan_date,scan_version,status,started_at,completed_at,assets_scanned,daily_bars,candidates,error
       FROM universe_scan_runs ORDER BY scan_date DESC LIMIT 1
     `);
     return q.rows[0]||null;
