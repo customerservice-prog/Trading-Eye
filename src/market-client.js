@@ -108,6 +108,19 @@ export class MarketClient {
     return r.json();
   }
 
+  async replay(limit=10) {
+    const r=await fetch("/api/replay?limit="+encodeURIComponent(limit),{cache:"no-store"});
+    if (!r.ok) throw new Error("Replay Arena request failed: "+r.status);
+    return r.json();
+  }
+
+  async runReplay() {
+    const r=await fetch("/api/replay/run",{method:"POST",headers:{"Content-Type":"application/json"}});
+    const body=await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.error||("Replay Arena run failed: "+r.status));
+    return body;
+  }
+
   async setPaperAutopilot(enabled) {
     const r=await fetch("/api/paper/autopilot",{
       method:"POST",
