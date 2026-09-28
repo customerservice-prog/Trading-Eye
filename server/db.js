@@ -479,6 +479,43 @@ export class Database {
     return q.rows;
   }
 
+  async coreSchemaCheck() {
+    if (!this.pool) return {ok:false,tables:[],missingTables:["no_pool"],missingColumns:[]};
+    const requiredTables=[
+      "model_registry","model_lab_runs","model_shadow_predictions",
+      "paper_accounts","paper_positions","paper_orders","paper_fills","paper_equity_snapshots"
+    ];
+    const requiredColumns=[
+      ["model_registry","walk_forward_metrics"],
+      ["model_registry","live_shadow_metrics"],
+      ["model_registry","shadow_started_at"],
+      ["paper_fills","realized_pnl"],
+      ["predictions","model_id"],
+      ["predictions","model_details"]
+    ];
+    const t=await this.pool.query(`
+      SELECT tablename FROM pg_tables
+      WHERE schemaname='public' AND tablename = ANY($1::text[])
+    `,[requiredTables]);
+    const foundTables=t.rows.map(r=>r.tablename);
+    const missingTables=requiredTables.filter(x=>!foundTables.includes(x));
+    const c=await this.pool.query(`
+      SELECT table_name,column_name
+      FROM information_schema.columns
+      WHERE table_schema='public'
+    `);
+    const colSet=new Set(c.rows.map(r=>r.table_name+"."+r.column_name));
+    const missingColumns=requiredColumns
+      .filter(([table,column])=>!colSet.has(table+"."+column))
+      .map(([table,column])=>table+"."+column);
+    return {
+      ok:missingTables.length===0&&missingColumns.length===0,
+      tables:foundTables.sort(),
+      missingTables,
+      missingColumns
+    };
+  }
+
   async ping() {
     if (!this.pool) return false;
     try {
