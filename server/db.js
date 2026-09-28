@@ -241,6 +241,30 @@ export class Database {
       CREATE INDEX IF NOT EXISTS model_lab_runs_recent
         ON model_lab_runs(started_at DESC);
 
+      CREATE TABLE IF NOT EXISTS model_shadow_predictions (
+        model_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        target_at TIMESTAMPTZ NOT NULL,
+        reference_price DOUBLE PRECISION NOT NULL,
+        direction TEXT NOT NULL,
+        confidence DOUBLE PRECISION NOT NULL,
+        p_up DOUBLE PRECISION NOT NULL,
+        p_flat DOUBLE PRECISION NOT NULL,
+        p_down DOUBLE PRECISION NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        result_price DOUBLE PRECISION,
+        result_return DOUBLE PRECISION,
+        actual_direction TEXT,
+        correct BOOLEAN,
+        scored_at TIMESTAMPTZ,
+        PRIMARY KEY(model_id,symbol,created_at)
+      );
+      CREATE INDEX IF NOT EXISTS model_shadow_due
+        ON model_shadow_predictions(status,target_at);
+      CREATE INDEX IF NOT EXISTS model_shadow_scored_model
+        ON model_shadow_predictions(model_id,status,created_at);
+
       CREATE TABLE IF NOT EXISTS paper_accounts (
         account_id TEXT PRIMARY KEY,
         starting_cash DOUBLE PRECISION NOT NULL,
