@@ -311,6 +311,7 @@ export class PaperBroker {
   async handlePrediction(prediction){
     const account=await this.#account();
     if(!account?.autopilot_enabled||!prediction) return;
+    if(!prediction.modelId) return;
     if(prediction.noTrade) return;
     if(Number(prediction.confidence)<this.autopilotMinConfidence) return;
     if(Number(prediction.edge)<this.autopilotMinEdge) return;
