@@ -3,10 +3,12 @@ import WebSocket from "ws";
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
 export class AlpacaProvider {
-  constructor({key,secret,feed="iex",symbols=[],onEvent=()=>{},onStatus=()=>{}}) {
+  constructor({key,secret,feed="auto",historicalFeed="iex",symbols=[],onEvent=()=>{},onStatus=()=>{}}) {
     this.key=key;
     this.secret=secret;
-    this.feed=feed;
+    this.feedMode=feed;
+    this.historicalFeed=historicalFeed;
+    this.feed=this.#desiredFeed();
     this.symbols=symbols;
     this.onEvent=onEvent;
     this.onStatus=onStatus;
@@ -16,6 +18,32 @@ export class AlpacaProvider {
     this.authenticated=false;
     this.lastEventAt=null;
     this.reconnects=0;
+    this.switchTimer=null;
+  }
+
+  #desiredFeed() {
+    if (this.feedMode!=="auto") return this.feedMode;
+    const parts=Object.fromEntries(
+      new Intl.DateTimeFormat("en-US",{
+        timeZone:"America/New_York",
+        weekday:"short",
+        hour:"2-digit",
+        minute:"2-digit",
+        hourCycle:"h23"
+      }).formatToParts(new Date()).filter(p=>p.type!=="literal").map(p=>[p.type,p.value])
+    );
+    const day={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6}[parts.weekday];
+    const minute=Number(parts.hour)*60+Number(parts.minute);
+    const overnight=
+      (day===0 && minute>=20*60) ||
+      (day>=1 && day<=4 && (minute<4*60 || minute>=20*60)) ||
+      (day===5 && minute<4*60);
+    return overnight?"overnight":"iex";
+  }
+
+  #streamUrl(feed) {
+    const version=["overnight","boats"].includes(feed)?"v1beta1":"v2";
+    return `wss://stream.data.alpaca.markets/${version}/${feed}`;
   }
 
   configured() { return Boolean(this.key && this.secret); }
@@ -26,7 +54,17 @@ export class AlpacaProvider {
       return;
     }
     this.stopped=false;
+    clearInterval(this.switchTimer);
+    this.switchTimer=setInterval(()=>{
+      const desired=this.#desiredFeed();
+      if (desired!==this.feed) {
+        this.onStatus({state:"SWITCHING",provider:"alpaca",feed:this.feed,nextFeed:desired});
+        this.feed=desired;
+        try { this.ws?.close(1000,"session switch"); } catch {}
+      }
+    },30000);
     while (!this.stopped) {
+      this.feed=this.#desiredFeed();
       try {
         await this.#connectOnce();
       } catch (err) {
@@ -42,12 +80,14 @@ export class AlpacaProvider {
 
   stop() {
     this.stopped=true;
+    clearInterval(this.switchTimer);
+    this.switchTimer=null;
     try { this.ws?.close(); } catch {}
   }
 
   #connectOnce() {
     return new Promise((resolve,reject)=>{
-      const url=`wss://stream.data.alpaca.markets/v2/${this.feed}`;
+      const url=this.#streamUrl(this.feed);
       const ws=new WebSocket(url,{headers:{"Content-Type":"application/json"}});
       this.ws=ws;
       let settled=false;
@@ -128,7 +168,7 @@ export class AlpacaProvider {
         end:new Date(end).toISOString(),
         limit:String(limit),
         adjustment:"raw",
-        feed:this.feed
+        feed:this.historicalFeed
       });
       if (token) params.set("page_token",token);
       const res=await fetch("https://data.alpaca.markets/v2/stocks/bars?"+params,{
