@@ -685,7 +685,9 @@ export class Database {
     if (!this.pool) return {ok:false,tables:[],missingTables:["no_pool"],missingColumns:[]};
     const requiredTables=[
       "model_registry","model_lab_runs","model_shadow_predictions",
-      "paper_accounts","paper_positions","paper_orders","paper_fills","paper_equity_snapshots"
+      "paper_accounts","paper_positions","paper_orders","paper_fills","paper_equity_snapshots",
+      "asset_lifecycle","corporate_actions","asset_metadata","material_events",
+      "data_quality_incidents","model_drift_snapshots","readiness_snapshots"
     ];
     const requiredColumns=[
       ["model_registry","walk_forward_metrics"],
@@ -693,7 +695,9 @@ export class Database {
       ["model_registry","shadow_started_at"],
       ["paper_fills","realized_pnl"],
       ["predictions","model_id"],
-      ["predictions","model_details"]
+      ["predictions","model_details"],
+      ["research_pattern_findings","validation_metrics"],
+      ["research_pattern_findings","holdout_metrics"]
     ];
     const t=await this.pool.query(`
       SELECT tablename FROM pg_tables
