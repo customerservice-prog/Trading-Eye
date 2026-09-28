@@ -407,6 +407,22 @@ function renderPaper() {
       <span>Mark ${Number(pos.mark).toFixed(2)}</span>
       <strong class="${Number(pos.pnl)>0?"positive":Number(pos.pnl)<0?"negative":"neutral"}">${money(pos.pnl)}</strong>
     </div>`).join(""):`No open server-side paper positions. Fill model: ${p.fillModel||"waiting for broker"}.`;
+
+  if ($("paperFillModel")) $("paperFillModel").textContent=p.fillModel||"Waiting for server broker";
+  if ($("paperFillBody")) {
+    const fills=Array.isArray(p.fills)?p.fills:[];
+    $("paperFillBody").innerHTML=fills.length?fills.slice(0,40).map(fill=>`
+      <tr>
+        <td>${safeTime(fill.createdAt)}</td>
+        <td><strong>${fill.symbol}</strong></td>
+        <td class="${fill.side==="BUY"?"positive":"negative"}">${fill.side}</td>
+        <td>${num(fill.qty)}</td>
+        <td>${Number(fill.fillPrice).toFixed(2)}</td>
+        <td>${fill.marketBid==null?"—":Number(fill.marketBid).toFixed(2)}</td>
+        <td>${fill.marketAsk==null?"—":Number(fill.marketAsk).toFixed(2)}</td>
+        <td class="${Number(fill.realizedPnl)>0?"positive":Number(fill.realizedPnl)<0?"negative":"neutral"}">${money(fill.realizedPnl||0)}</td>
+      </tr>`).join(""):`<tr><td colspan="8">No deterministic server fills yet.</td></tr>`;
+  }
 }
 
 function renderLearning() {
@@ -430,6 +446,27 @@ function renderLearning() {
     $("modelLabSummary").innerHTML=production
       ? `<strong>Production: ${production.modelId}</strong><br>${production.family} · test ${pct(Number(production.testMetrics?.accuracy||0))} · walk-forward ${wf.accuracy==null?"—":pct(Number(wf.accuracy))} · ${num(wf.folds?.length||0)} folds · live shadow challengers ${challengers.length}.<br>${run?.promotionReason||"Production remains locked until a challenger proves better on future paired outcomes."}`
       : `<strong>Model Lab is building the first production model.</strong><br>Predictions stay on the legacy fallback until a challenger passes calibration, unseen-test, walk-forward and final-holdout guards.`;
+  }
+
+  if ($("shadowModelBody")) {
+    const challengers=modelLabData?.shadowModels||predictionData.modelLab?.shadowModels||[];
+    $("shadowProofTitle").textContent=challengers.length
+      ? `${challengers.length} challenger${challengers.length===1?"":"s"} collecting future outcomes`
+      : "No challenger in live shadow";
+    $("shadowModelBody").innerHTML=challengers.length?challengers.map(c=>{
+      const live=c.liveMetrics||{};
+      const test=c.testMetrics||{};
+      return `<tr>
+        <td><strong>${c.modelId||"—"}</strong></td>
+        <td>${c.family||"—"}</td>
+        <td>${num(live.samples||0)}</td>
+        <td>${Number(live.samples)>0?pct(Number(live.accuracy||0)):"—"}</td>
+        <td>${Number(live.samples)>0?Number(live.brier||0).toFixed(4):"—"}</td>
+        <td>${Number(live.samples)>0?Number(live.ece||0).toFixed(4):"—"}</td>
+        <td>${test.accuracy==null?"—":pct(Number(test.accuracy))}</td>
+        <td>LIVE SHADOW</td>
+      </tr>`;
+    }).join(""):`<tr><td colspan="8">No challenger is currently eligible for live shadow.</td></tr>`;
   }
 
   const rows=predictionData.rows||[];
