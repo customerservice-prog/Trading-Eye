@@ -75,6 +75,18 @@ const paperBroker=new PaperBroker({
   autopilotEnabled:PAPER_AUTOPILOT_ENABLED
 });
 await paperBroker.init();
+const paperStartup=await paperBroker.snapshot();
+console.log(JSON.stringify({
+  event:"paper_account_startup",
+  accountId:paperStartup.accountId,
+  autopilotEnabled:paperStartup.autopilotEnabled,
+  startingCash:paperStartup.startingCash,
+  equity:paperStartup.equity,
+  cash:paperStartup.cash,
+  realizedPnl:paperStartup.realizedPnl,
+  openPositions:(paperStartup.positions||[]).length,
+  fillCount:paperStartup.fillCount
+}));
 
 engine.attachIntelligence({modelLab,paperBroker});
 
