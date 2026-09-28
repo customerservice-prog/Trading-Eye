@@ -229,6 +229,12 @@ function renderBeginnerCommandCenter() {
   const running=jobs.filter(j=>j.status==="RUNNING");
   $("beginnerResearchState").textContent=running.length?"WORKING":"MONITORING";
 
+  if ($("beginnerMistakeState")) {
+    const mistakeLevel=String(mistakeData?.lastAnalysis?.guard?.level||modelLabData?.mistakeGuard?.level||"LEARNING").toUpperCase();
+    $("beginnerMistakeState").textContent=mistakeLevel==="ALERT"?"BLOCKING":mistakeLevel;
+    $("beginnerMistakeState").className=mistakeLevel==="ALERT"?"negative":mistakeLevel==="WARN"?"neutral":"positive";
+  }
+
   const ready=readinessSummary();
   $("beginnerReadiness").textContent=ready.review?"REVIEW ELIGIBLE":"LOCKED";
   $("beginnerReadiness").className=ready.review?"positive":"";
