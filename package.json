@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "check": "for f in $(find server src -name '*.js'); do node --check \"$f\" || exit 1; done"
   },
   "engines": {
     "node": ">=20"
