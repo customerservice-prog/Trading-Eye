@@ -27,6 +27,7 @@ export class RealMarketEngine extends EventEmitter {
     this.barCounters=new Map(this.symbols.map(s=>[s,0]));
     this.latestPatternInsight=new Map();
     this.focusSymbols=new Set(this.symbols.slice(0,1));
+    this.symbolDeepHistory=new Set();
     this.rawQueue=[];
     this.providerStatus={state:"STARTING",provider:"alpaca",feed:provider.feed};
     this.lastEventAt=null;
@@ -112,7 +113,7 @@ export class RealMarketEngine extends EventEmitter {
     if (focus) this.focusSymbol(symbol);
 
     const existing=this.histories.get(symbol)||[];
-    if (backfill && existing.length<120) {
+    if (backfill && !this.symbolDeepHistory.has(symbol)) {
       this.#backfillSymbol(symbol).catch(err=>this.#recordError("symbol_backfill",err));
     }
     return {symbol,hotSymbols:this.hotSymbols(),pinned:[...this.pinnedSymbols]};
@@ -190,8 +191,78 @@ export class RealMarketEngine extends EventEmitter {
     if (collected.length) {
       collected.sort((a,b)=>+a.ts-+b.ts);
       this.histories.set(symbol,collected.slice(-this.historyRetention));
+      this.symbolDeepHistory.add(symbol);
+      await this.#buildPatternMemoryForSymbol(symbol);
       console.log(JSON.stringify({event:"symbol_backfill_complete",symbol,bars:collected.length}));
     }
+  }
+
+  async #buildPatternMemoryForSymbol(symbol) {
+    const rows=this.histories.get(symbol)||[];
+    if (rows.length<1200) return;
+
+    const aggregates=new Map();
+    for (let i=30;i<rows.length-61;i+=5) {
+      const features=this.#historicalFeatures(rows,i);
+      if (!features) continue;
+      const fingerprint=fingerprintFromFeatures(features,rows[i].ts);
+      if (!fingerprint) continue;
+
+      for (const horizon of [15,30,60]) {
+        const future=rows[i+horizon];
+        if (!future) continue;
+        const elapsed=(+new Date(future.ts)-+new Date(rows[i].ts))/60000;
+        if (elapsed<horizon-1 || elapsed>horizon+5) continue;
+
+        const reference=rows[i].close;
+        const ret=(future.close-reference)/reference;
+        const path=rows.slice(i+1,i+horizon+1);
+        const mfe=path.length?Math.max(...path.map(x=>(x.high-reference)/reference)):0;
+        const mae=path.length?Math.min(...path.map(x=>(x.low-reference)/reference)):0;
+        const direction=ret>.001?"UP":ret<-.001?"DOWN":"FLAT";
+        const key=`${fingerprint}::${horizon}`;
+        const agg=aggregates.get(key)||{
+          symbol,fingerprint,horizonMinutes:horizon,sampleCount:0,
+          upCount:0,flatCount:0,downCount:0,sumReturn:0,sumAbsReturn:0,
+          sumMfe:0,sumMae:0,lastSeen:null
+        };
+        agg.sampleCount++;
+        if (direction==="UP") agg.upCount++;
+        else if (direction==="DOWN") agg.downCount++;
+        else agg.flatCount++;
+        agg.sumReturn+=ret;
+        agg.sumAbsReturn+=Math.abs(ret);
+        agg.sumMfe+=mfe;
+        agg.sumMae+=mae;
+        agg.lastSeen=rows[i].ts;
+        aggregates.set(key,agg);
+      }
+    }
+
+    const rowsToSave=[...aggregates.values()].filter(x=>x.sampleCount>=6);
+    for (const agg of rowsToSave) {
+      await this.db.upsertPatternAggregate({
+        symbol:agg.symbol,
+        fingerprint:agg.fingerprint,
+        horizonMinutes:agg.horizonMinutes,
+        sampleCount:agg.sampleCount,
+        upCount:agg.upCount,
+        flatCount:agg.flatCount,
+        downCount:agg.downCount,
+        avgReturn:agg.sumReturn/agg.sampleCount,
+        avgAbsReturn:agg.sumAbsReturn/agg.sampleCount,
+        avgMfe:agg.sumMfe/agg.sampleCount,
+        avgMae:agg.sumMae/agg.sampleCount,
+        lastSeen:agg.lastSeen,
+        context:{source:"on_demand_90d_1m"}
+      });
+    }
+    console.log(JSON.stringify({
+      event:"symbol_pattern_memory_built",
+      symbol,
+      patterns:rowsToSave.length,
+      bars:rows.length
+    }));
   }
 
   #rowToBar(r) {
@@ -252,6 +323,7 @@ export class RealMarketEngine extends EventEmitter {
       const historyLimit=Math.min(100000,Math.max(5000,this.backfillDays*600));
       const rows=await this.db.getBars(symbol,{limit:historyLimit});
       this.histories.set(symbol,rows.map(r=>this.#rowToBar(r)));
+      if (rows.length>=1200) this.symbolDeepHistory.add(symbol);
     }
     this.backfill.state="COMPLETE";
     this.backfill.finishedAt=new Date().toISOString();
@@ -532,6 +604,7 @@ export class RealMarketEngine extends EventEmitter {
       coreSymbols:this.coreSymbols,
       pinnedSymbols:[...this.pinnedSymbols],
       focusSymbols:[...this.focusSymbols],
+      deepHistorySymbols:[...this.symbolDeepHistory],
       liveSymbolLimit:this.liveSymbolLimit,
       lastEventAt:this.lastEventAt,
       lastBarAt:this.lastBarAt,
