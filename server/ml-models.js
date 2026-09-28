@@ -42,7 +42,7 @@ export class SoftmaxModel {
     let lr=learningRate;
     for(let epoch=0;epoch<epochs;epoch++){
       for(let n=0;n<data.length;n++){
-        const e=data[(n*15485863+epoch*32452843)%data.length];
+        const e=data[(n+epoch*7919)%data.length];
         const x=this.featureIndices.map(i=>Number(e.x[i])||0);
         const logits=this.weights.map((w,c)=>
           this.bias[c]+w.reduce((s,v,j)=>s+v*x[j],0)
