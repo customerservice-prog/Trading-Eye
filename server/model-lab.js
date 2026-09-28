@@ -468,13 +468,34 @@ export class ModelLab {
     return null;
   }
 
+  async #trainingHistories(){
+    const meta=await this.db.listSymbolsWithMinuteHistory({minBars:1500,limit:48});
+    const histories=new Map();
+    for(const row of meta){
+      const live=this.marketEngine.histories.get(row.symbol);
+      if(live?.length>=1500){
+        histories.set(row.symbol,live);
+        continue;
+      }
+      const bars=await this.db.getBars(row.symbol,{limit:26000});
+      if(bars.length>=1500) histories.set(row.symbol,bars);
+      await sleepTick();
+    }
+
+    for(const symbol of ["SPY","QQQ"]){
+      if(histories.has(symbol)) continue;
+      const bars=await this.db.getBars(symbol,{limit:26000});
+      if(bars.length>=1500) histories.set(symbol,bars);
+    }
+    return histories;
+  }
+
   async tick(){
     if(!this.enabled||this.training) return;
     await this.refreshLiveShadowMetrics();
     if(this.shadowModels.length){
       await this.evaluateShadowPromotion();
     }
-    if(this.marketEngine.backfill.state!=="COMPLETE") return;
     const now=etParts();
     const minute=Number(now.hour)*60+Number(now.minute);
     const weekday=!["Sat","Sun"].includes(now.weekday);
@@ -620,10 +641,9 @@ export class ModelLab {
     `,[runId,this.horizonMinutes]);
 
     try{
-      const usableSymbols=[...this.marketEngine.histories.entries()]
-        .filter(([,rows])=>rows.length>=1500)
-        .map(([symbol])=>symbol);
-      const dataset=this.factory.buildDataset(this.marketEngine.histories,{
+      const trainingHistories=await this.#trainingHistories();
+      const usableSymbols=[...trainingHistories.keys()];
+      const dataset=this.factory.buildDataset(trainingHistories,{
         symbols:usableSymbols,horizon:this.horizonMinutes,step:5,maxSamples:160000
       });
       if(dataset.length<3000) throw new Error(`Model Lab needs at least 3000 chronological examples; found ${dataset.length}`);
