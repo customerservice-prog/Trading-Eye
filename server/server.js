@@ -89,16 +89,22 @@ const explorationBroker=PAPER_EXPLORATION_ENABLED
       accountId:PAPER_EXPLORATION_ACCOUNT_ID,
       startingCash:100000,
       fillBufferBps:Math.max(PAPER_FILL_BUFFER_BPS,2.0),
-      maxPositionPct:.03,
-      maxGrossPct:.15,
-      maxPositions:5,
-      dailyLossPct:.02,
-      autopilotMinConfidence:.40,
-      autopilotMinEdge:.025,
+      maxPositionPct:.18,
+      maxGrossPct:.85,
+      maxPositions:8,
+      dailyLossPct:.08,
+      autopilotMinConfidence:.34,
+      autopilotMinEdge:.008,
       autopilotEnabled:true,
       respectNoTrade:false,
-      entryPositionPct:.015,
-      sourceTag:"AI_EXPLORE"
+      entryPositionPct:.14,
+      sourceTag:"AI_EXPLORE",
+      allowFlatProbes:true,
+      flatProbePositionPct:.08,
+      flatProbeMinDirectionalDiff:.006,
+      stopPct:.0045,
+      targetPct:.0075,
+      timeExitMinutes:30
     })
   : null;
 if(explorationBroker) await explorationBroker.init();
