@@ -109,7 +109,8 @@ export class RealMarketEngine extends EventEmitter {
       event:"provider_status",
       provider:status.provider,
       feed:status.feed,
-      state:status.state
+      state:status.state,
+      code:status.code ?? null
     }));
     this.emit("status",this.status());
   }
