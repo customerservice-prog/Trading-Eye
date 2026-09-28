@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { FeatureFactory, MODEL_FEATURES } from "./feature-factory.js";
 import {
   CLASS_NAMES,SoftmaxModel,GaussianNBModel,EnsembleModel,
-  metricsFor,chooseTemperature,buildEnsembleWeight,splitChronologically
+  metricsFor,chooseTemperature,buildEnsembleWeight,splitChronologically,applyTemperature
 } from "./ml-models.js";
 
 const sleepTick=()=>new Promise(r=>setImmediate(r));
@@ -34,6 +34,41 @@ function edgeFromProbs(p){
   const s=[...p].sort((a,b)=>b-a);
   return (s[0]||0)-(s[1]||0);
 }
+function classIndex(name){
+  return name==="UP"?0:name==="DOWN"?2:1;
+}
+function liveMetrics(rows){
+  if(!rows.length) return {samples:0,accuracy:0,brier:1,logLoss:10,ece:1};
+  let correct=0,brier=0,logLoss=0;
+  const buckets=Array.from({length:10},()=>({n:0,conf:0,correct:0}));
+  for(const r of rows){
+    const p=[Number(r.p_up)||0,Number(r.p_flat)||0,Number(r.p_down)||0];
+    const yi=classIndex(r.actual_direction);
+    const pi=p.indexOf(Math.max(...p));
+    if(pi===yi) correct++;
+    for(let c=0;c<3;c++){
+      const d=p[c]-(c===yi?1:0);
+      brier+=d*d/3;
+    }
+    logLoss+=-Math.log(Math.max(1e-9,p[yi]));
+    const conf=Math.max(...p);
+    const b=Math.min(9,Math.floor(conf*10));
+    buckets[b].n++;buckets[b].conf+=conf;if(pi===yi)buckets[b].correct++;
+  }
+  let ece=0;
+  for(const b of buckets){
+    if(!b.n) continue;
+    const avg=b.conf/b.n,acc=b.correct/b.n;
+    ece+=(b.n/rows.length)*Math.abs(avg-acc);
+  }
+  return {
+    samples:rows.length,
+    accuracy:correct/rows.length,
+    brier:brier/rows.length,
+    logLoss:logLoss/rows.length,
+    ece
+  };
+}
 
 export class ModelLab {
   constructor({db,marketEngine,horizonMinutes=15,enabled=true}){
@@ -45,6 +80,10 @@ export class ModelLab {
     this.productionRecord=null;
     this.productionModel=null;
     this.latestRun=null;
+    this.shadowModels=[];
+    this.liveShadowMetrics={};
+    this.shadowMinSamples=300;
+    this.shadowScoreCounter=0;
     this.training=false;
     this.lastError=null;
     this.timer=null;
@@ -52,6 +91,8 @@ export class ModelLab {
 
   async init(){
     await this.loadProduction();
+    await this.loadShadowModels();
+    await this.refreshLiveShadowMetrics();
     this.latestRun=await this.#loadLatestRun();
     this.timer=setInterval(()=>this.tick().catch(err=>this.#capture(err)),5*60*1000);
     setTimeout(()=>this.tick().catch(err=>this.#capture(err)),12000);
@@ -70,6 +111,20 @@ export class ModelLab {
     this.productionModel=this.productionRecord
       ? modelFromRegistryArtifact(this.productionRecord.artifact)
       : null;
+  }
+
+  async loadShadowModels(){
+    const q=await this.db.pool.query(`
+      SELECT * FROM model_registry
+      WHERE horizon_minutes=$1 AND status='SHADOW'
+      ORDER BY shadow_started_at DESC NULLS LAST,trained_at DESC
+      LIMIT 4
+    `,[this.horizonMinutes]);
+    this.shadowModels=q.rows.map(row=>({
+      record:row,
+      model:modelFromRegistryArtifact(row.artifact),
+      temperature:Number(row.calibration?.temperature)||1
+    })).filter(x=>x.model);
   }
 
   async #loadLatestRun(){
@@ -95,9 +150,18 @@ export class ModelLab {
         validationMetrics:p.validation_metrics,
         testMetrics:p.test_metrics,
         shadowMetrics:p.shadow_metrics,
+        liveShadowMetrics:p.live_shadow_metrics,
         dataset:p.dataset,
         calibration:p.calibration
       }:null,
+      shadowModels:this.shadowModels.map(x=>({
+        modelId:x.record.model_id,
+        family:x.record.family,
+        shadowStartedAt:x.record.shadow_started_at,
+        liveMetrics:this.liveShadowMetrics[x.record.model_id]||x.record.live_shadow_metrics||{},
+        testMetrics:x.record.test_metrics,
+        historicalShadowMetrics:x.record.shadow_metrics
+      })),
       latestRun:this.latestRun?{
         runId:this.latestRun.run_id,
         status:this.latestRun.status,
