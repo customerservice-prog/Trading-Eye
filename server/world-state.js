@@ -32,6 +32,14 @@ const SHOCK_WORDS=[
   "ceo resigns","default","going concern","restatement","emergency","recall","offering","dilution"
 ];
 
+const SEC_CIK_SEEDS={
+  AAPL:"0000320193",MSFT:"0000789019",NVDA:"0001045810",AMZN:"0001018724",
+  META:"0001326801",GOOGL:"0001652044",GOOG:"0001652044",TSLA:"0001318605",
+  AMD:"0000002488",AVGO:"0001730168",NFLX:"0001065280",PLTR:"0001321655",
+  COIN:"0001679788",JPM:"0000019617",BAC:"0000070858",INTC:"0000050863",
+  MU:"0000723125",UBER:"0001543151",HOOD:"0001783879"
+};
+
 const SEC_FORM_RISK={
   "8-K":.62,"8-K/A":.65,"10-Q":.55,"10-Q/A":.60,"10-K":.60,"10-K/A":.65,
   "4":.32,"4/A":.35,"SC 13D":.68,"SC 13D/A":.60,"SC 13G":.45,"SC 13G/A":.42,
@@ -306,6 +314,10 @@ export class WorldStateEngine extends EventEmitter {
       dataAt:dataAt?new Date(dataAt).toISOString():null,
       detail,meta
     };
+    console.log(JSON.stringify({
+      event:"world_source_status",source:name,state,
+      dataAt:this.sourceStatus[name].dataAt,detail,meta
+    }));
     this.#persistSource(name).catch(()=>{});
   }
 
@@ -550,17 +562,67 @@ export class WorldStateEngine extends EventEmitter {
   }
 
   async #loadSecTickerMap(){
-    const res=await fetchWithTimeout("https://www.sec.gov/files/company_tickers.json",{
-      headers:{"User-Agent":this.secUserAgent,Accept:"application/json"}
-    });
-    if(!res.ok) throw new Error("SEC ticker map HTTP "+res.status);
-    const body=await res.json();
+    const headers={
+      "User-Agent":this.secUserAgent,
+      "Accept":"application/json,text/plain,*/*",
+      "Accept-Language":"en-US,en;q=0.9",
+      "Accept-Encoding":"gzip, deflate"
+    };
     this.secTickerMap.clear();
-    for(const row of Object.values(body||{})){
-      if(row?.ticker&&row?.cik_str!=null){
-        this.secTickerMap.set(String(row.ticker).toUpperCase(),String(row.cik_str).padStart(10,"0"));
+    for(const [ticker,cik] of Object.entries(SEC_CIK_SEEDS)) this.secTickerMap.set(ticker,cik);
+
+    const attempts=[
+      {url:"https://www.sec.gov/files/company_tickers.json",kind:"json"},
+      {url:"https://www.sec.gov/files/company_tickers_exchange.json",kind:"exchange"},
+      {url:"https://www.sec.gov/include/ticker.txt",kind:"text"}
+    ];
+
+    const errors=[];
+    for(const attempt of attempts){
+      try{
+        const res=await fetchWithTimeout(attempt.url,{headers},15000);
+        if(!res.ok){
+          errors.push(attempt.kind+":"+res.status);
+          continue;
+        }
+        if(attempt.kind==="json"){
+          const body=await res.json();
+          for(const row of Object.values(body||{})){
+            if(row?.ticker&&row?.cik_str!=null){
+              this.secTickerMap.set(String(row.ticker).toUpperCase(),String(row.cik_str).padStart(10,"0"));
+            }
+          }
+        }else if(attempt.kind==="exchange"){
+          const body=await res.json();
+          const fields=body.fields||[];
+          const ti=fields.indexOf("ticker"),ci=fields.indexOf("cik");
+          for(const row of body.data||[]){
+            if(ti>=0&&ci>=0&&row[ti]&&row[ci]!=null){
+              this.secTickerMap.set(String(row[ti]).toUpperCase(),String(row[ci]).padStart(10,"0"));
+            }
+          }
+        }else{
+          const text=await res.text();
+          for(const line of text.split(/\r?\n/)){
+            const [ticker,cik]=line.trim().split(/\s+/);
+            if(ticker&&cik) this.secTickerMap.set(ticker.toUpperCase(),String(cik).padStart(10,"0"));
+          }
+        }
+        if(this.secTickerMap.size>Object.keys(SEC_CIK_SEEDS).length) return;
+      }catch(err){
+        errors.push(attempt.kind+":"+String(err?.message||err));
       }
     }
+
+    if(this.secTickerMap.size){
+      console.log(JSON.stringify({
+        event:"sec_ticker_map_fallback",
+        seeded:this.secTickerMap.size,
+        errors
+      }));
+      return;
+    }
+    throw new Error("SEC ticker map unavailable: "+errors.join(", "));
   }
 
   async refreshSec(){
@@ -577,7 +639,12 @@ export class WorldStateEngine extends EventEmitter {
       if(!cik) continue;
       try{
         const res=await fetchWithTimeout("https://data.sec.gov/submissions/CIK"+cik+".json",{
-          headers:{"User-Agent":this.secUserAgent,Accept:"application/json"}
+          headers:{
+            "User-Agent":this.secUserAgent,
+            "Accept":"application/json",
+            "Accept-Language":"en-US,en;q=0.9",
+            "Accept-Encoding":"gzip, deflate"
+          }
         });
         if(!res.ok) continue;
         const body=await res.json();
