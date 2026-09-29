@@ -59,7 +59,7 @@ export class ReplayArena {
   constructor({
     db,modelLab,marketEngine,enabled=true,
     intervalMs=90*1000,
-    historyBarsPerSymbol=14000,
+    historyBarsPerSymbol=30000,
     maxSymbols=16
   }={}){
     this.db=db;
@@ -67,7 +67,7 @@ export class ReplayArena {
     this.marketEngine=marketEngine;
     this.enabled=Boolean(enabled);
     this.intervalMs=Math.max(30*1000,Number(intervalMs)||90*1000);
-    this.historyBarsPerSymbol=Math.max(4000,Math.min(30000,Number(historyBarsPerSymbol)||14000));
+    this.historyBarsPerSymbol=Math.max(4000,Math.min(45000,Number(historyBarsPerSymbol)||30000));
     this.maxSymbols=Math.max(6,Math.min(24,Number(maxSymbols)||16));
     this.factory=new FeatureFactory();
     this.timer=null;
