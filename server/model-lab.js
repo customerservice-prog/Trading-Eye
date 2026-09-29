@@ -185,9 +185,10 @@ function driftState(baseline,recent){
 }
 
 export class ModelLab {
-  constructor({db,marketEngine,horizonMinutes=15,enabled=true,forceTrainOnStart=false}){
+  constructor({db,marketEngine,worldState=null,horizonMinutes=15,enabled=true,forceTrainOnStart=false}){
     this.db=db;
     this.marketEngine=marketEngine;
+    this.worldState=worldState;
     this.horizonMinutes=horizonMinutes;
     this.enabled=enabled;
     this.forceTrainOnStart=Boolean(forceTrainOnStart);
@@ -444,7 +445,8 @@ export class ModelLab {
       }:null,
       drift:this.drift,
       mistakeGuard:this.mistakeGuard,
-      replayFocus:this.replayFocus
+      replayFocus:this.replayFocus,
+      worldState:this.worldState?.status?.()||null
     };
   }
 
@@ -467,6 +469,8 @@ export class ModelLab {
     const edge=edgeFromProbs(probs);
     const classIdx=classIndex(direction);
     const contributions=localContributions(this.productionModel,x,classIdx);
+    const world=this.worldState?.contextFor?.(symbol)||null;
+    const worldBlocked=Boolean(world?.blockProof);
     return {
       direction,
       confidence,
@@ -476,7 +480,9 @@ export class ModelLab {
       pDown:probs[2],
       driftBlocked:Boolean(this.drift?.blocked),
       mistakeBlocked:Boolean(this.mistakeGuard?.blockStrictEntries),
-      noTrade:Boolean(this.drift?.blocked)||Boolean(this.mistakeGuard?.blockStrictEntries)||confidence<.46||edge<.055,
+      worldBlocked,
+      worldContext:world,
+      noTrade:Boolean(this.drift?.blocked)||Boolean(this.mistakeGuard?.blockStrictEntries)||worldBlocked||confidence<.46||edge<.055,
       modelId:this.productionRecord.model_id,
       modelVersion:Math.floor(new Date(this.productionRecord.trained_at).getTime()/1000),
       family:this.productionRecord.family,
@@ -490,7 +496,8 @@ export class ModelLab {
         live:this.productionLiveMetrics,
         recentLive:this.productionRecentLiveMetrics,
         drift:this.drift,
-        mistakeGuard:this.mistakeGuard
+        mistakeGuard:this.mistakeGuard,
+        worldState:world
       }
     };
   }
