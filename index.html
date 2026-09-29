@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#050810" />
   <title>Trading Eye — AI Market Terminal</title>
-  <link rel="stylesheet" href="./styles.css?v=20260928-2300" />
+  <link rel="stylesheet" href="./styles.css?v=20260929-0130" />
 </head>
 <body>
   <div id="app" class="terminal-shell">
@@ -134,6 +134,11 @@
           <strong id="heroReplayState">STARTING</strong>
           <small id="heroReplayMeta">Keeps learning with the browser closed</small>
         </div>
+        <div class="aggressive-learning-stat century-top-stat">
+          <span>100-Year AI Sim</span>
+          <strong id="heroCenturyState">STARTING</strong>
+          <small id="heroCenturyMeta">Synthetic stress century · research only</small>
+        </div>
         <div class="aggressive-learning-stat world-top-stat">
           <span>Real-world factors</span>
           <strong id="heroWorldState">STARTING</strong>
@@ -147,6 +152,7 @@
         <span><b>AI research</b><strong id="beginnerResearchState">—</strong></span>
         <span><b>Mistake Lab</b><strong id="beginnerMistakeState">LEARNING</strong></span>
         <span><b>World State</b><strong id="beginnerWorldState">STARTING</strong></span>
+        <span><b>Century Sim</b><strong id="beginnerCenturyState">STARTING</strong></span>
         <span><b>Real money</b><strong id="beginnerReadiness">LOCKED</strong></span>
         <button id="beginnerResearchBtn" class="paper-research-link" type="button">Research details</button>
       </div>
@@ -359,6 +365,7 @@
           <button data-tab="learning" type="button"><span class="tab-icon">◎</span><span>AI Learning</span></button>
           <button data-tab="mistakes" type="button"><span class="tab-icon">!</span><span>Mistake Lab</span></button>
           <button data-tab="replay" type="button"><span class="tab-icon">↻</span><span>Replay Arena</span><span class="tab-live-dot"></span></button>
+          <button data-tab="century" type="button"><span class="tab-icon">100</span><span>Century Sim</span><span class="tab-live-dot"></span></button>
           <button data-tab="world" type="button"><span class="tab-icon">◎</span><span>World State</span><span class="tab-live-dot"></span></button>
           <button data-tab="research" type="button"><span class="tab-icon">∞</span><span>Research Brain</span><span class="tab-live-dot"></span></button>
           <button data-tab="patterns" type="button"><span class="tab-icon">⌘</span><span>Pattern Lab</span></button>
@@ -605,6 +612,102 @@
                   <table>
                     <thead><tr><th>Started</th><th>Replay day</th><th>Model</th><th>Decisions</th><th>Trades</th><th>Best policy</th><th>Status</th></tr></thead>
                     <tbody id="replayRunBody"></tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="tab-pane" id="tab-century">
+            <div class="century-layout">
+              <section class="century-hero">
+                <div>
+                  <span class="eyebrow">AI CENTURY SIMULATOR</span>
+                  <div class="century-title-line">
+                    <span class="century-live-dot"></span>
+                    <strong id="centuryTitle">Building 100-year synthetic market worlds…</strong>
+                  </div>
+                  <p id="centuryDetail">Trading Eye resamples real no-hindsight replay days, switches market regimes, injects liquidity failures, macro/news shocks, crash clusters and unknown-event stress, then reruns every policy through the same century.</p>
+                </div>
+                <div class="century-actions">
+                  <span id="centuryLastRun">Waiting for first century</span>
+                  <button id="runCenturyBtn" type="button">Run another century now</button>
+                </div>
+              </section>
+
+              <section class="century-warning">
+                <strong>Synthetic 100-year equivalent — not literal historical data</strong>
+                <span>The simulator is grounded in real Replay Arena outcomes and World State risk, but synthetic worlds cannot make future market outcomes certain. Century results never count directly toward real-money readiness.</span>
+              </section>
+
+              <section class="century-metrics">
+                <div><span>Core years / run</span><strong id="centuryYears">100</strong></div>
+                <div><span>Trading days / run</span><strong id="centuryDays">25,200</strong></div>
+                <div><span>Stress universes</span><strong id="centuryWorlds">6</strong></div>
+                <div><span>Stress-years / run</span><strong id="centuryStressYears">600</strong></div>
+                <div><span>Monte Carlo account paths</span><strong id="centuryPaths">0</strong></div>
+                <div><span>Real replay days sampled</span><strong id="centurySourceDays">0</strong></div>
+              </section>
+
+              <section class="century-candidate">
+                <div>
+                  <span class="eyebrow">Most robust research candidate</span>
+                  <strong id="centuryCandidate">Waiting for simulation</strong>
+                  <p id="centuryCandidateMeta">No policy is promoted by this simulator. It only identifies what deserves harder proof.</p>
+                </div>
+                <div class="century-tail-grid">
+                  <div><span>Worst-world 5% ending $100</span><strong id="centuryWorstP05">—</strong></div>
+                  <div><span>Worst chance below $100</span><strong id="centuryBelowStart">—</strong></div>
+                  <div><span>Worst chance of 50% drawdown</span><strong id="centuryDd50">—</strong></div>
+                  <div><span>Worst sequential drawdown</span><strong id="centuryWorstDd">—</strong></div>
+                </div>
+              </section>
+
+              <section class="century-grid">
+                <div class="century-panel">
+                  <div class="century-panel-head">
+                    <div><span class="eyebrow">Policy stress table</span><strong>How every strategy survived all simulated worlds</strong></div>
+                    <span id="centuryPolicyCount">0 policies</span>
+                  </div>
+                  <div class="table-wrap">
+                    <table>
+                      <thead><tr><th>Policy</th><th>Positive worlds</th><th>Worst world</th><th>Worst 5% ending</th><th>Below start</th><th>50% drawdown</th><th>Worst DD</th></tr></thead>
+                      <tbody id="centuryPolicyBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="century-panel">
+                  <div class="century-panel-head">
+                    <div><span class="eyebrow">Century failure zones</span><strong>What gets fed back into Model Lab</strong></div>
+                    <span id="centuryFocusCount">0 focus zones</span>
+                  </div>
+                  <div id="centuryFocusList" class="century-focus-list"></div>
+                </div>
+              </section>
+
+              <section class="century-panel">
+                <div class="century-panel-head">
+                  <div><span class="eyebrow">Stress universe detail</span><strong id="centuryScenarioTitle">Research candidate across all worlds</strong></div>
+                  <span>Each universe spans 100 synthetic market years</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead><tr><th>World</th><th>Avg year</th><th>5% year</th><th>Worst year</th><th>Positive years</th><th>$100 sequential end</th><th>Max drawdown</th></tr></thead>
+                    <tbody id="centuryScenarioBody"></tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section class="century-panel century-history-panel">
+                <div class="century-panel-head">
+                  <div><span class="eyebrow">Continuous century log</span><strong>Stored 100-year simulation runs</strong></div>
+                  <span>Runs server-side with this page closed</span>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead><tr><th>Completed</th><th>Core years</th><th>Stress years</th><th>Paths</th><th>Replay days</th><th>Research candidate</th><th>Status</th></tr></thead>
+                    <tbody id="centuryRunBody"></tbody>
                   </table>
                 </div>
               </section>
@@ -953,6 +1056,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./src/app.js?v=20260928-2300"></script>
+  <script type="module" src="./src/app.js?v=20260929-0130"></script>
 </body>
 </html>
