@@ -857,7 +857,9 @@ function renderWorldState() {
 
   const sourceNames={
     market:"Live market",news:"Market news",sec:"SEC EDGAR",corporate:"Corporate actions",
-    options:"Options chain",macro:"Macro / rates",fed:"Fed calendar",finra:"FINRA short volume"
+    options:"Options chain",macro:"Macro / rates",fed:"Fed calendar",finra:"FINRA short volume",
+    economic_calendar:"Economic calendar",earnings:"Earnings calendar",
+    halts:"Trading halts",cross_asset:"Cross-asset stress"
   };
   const sources=ws.sources||{};
   $("worldSourceGrid").innerHTML=Object.entries(sourceNames).map(([key,label])=>{
@@ -915,6 +917,43 @@ function renderWorldState() {
   $("worldMarketMeta").textContent=market.volumeShock
     ? `Volume ${Number(market.volumeShock).toFixed(2)}× recent average · RV20 ${(Number(market.rv20||0)*100).toFixed(2)}%`
     :"Waiting for live quote/bar microstructure.";
+
+  const earnings=factors.earnings||{};
+  $("worldEarningsFactor").textContent=earnings.scheduled
+    ? `${Math.round(Number(earnings.risk||0)*100)}% EVENT RISK`
+    :"No 7-day event";
+  $("worldEarningsFactor").className=Number(earnings.risk)>=.9?"negative":Number(earnings.risk)>=.5?"neutral":"positive";
+  $("worldEarningsMeta").textContent=earnings.scheduled
+    ? `${earnings.nextAt?new Date(earnings.nextAt).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"scheduled"} · ${earnings.session||"time unknown"} · estimated calendar`
+    :"No upcoming earnings date found for this symbol.";
+
+  const economic=global.economicCalendar||{};
+  $("worldEconomicFactor").textContent=`${Math.round(Number(economic.risk||0)*100)}% SCHEDULE RISK`;
+  $("worldEconomicFactor").className=Number(economic.risk)>=.9?"negative":Number(economic.risk)>=.5?"neutral":"positive";
+  $("worldEconomicMeta").textContent=economic.nextEvent
+    ? `${economic.nextEvent.source}: ${economic.nextEvent.title} · ${new Date(economic.nextEvent.at).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}`
+    :"No major scheduled release in the current window.";
+
+  const cross=global.crossAsset||{};
+  $("worldCrossAssetFactor").textContent=`${Math.round(Number(cross.riskOff||0)*100)}% STRESS`;
+  $("worldCrossAssetFactor").className=Number(cross.riskOff)>=.7?"negative":Number(cross.riskOff)>=.4?"neutral":"positive";
+  const cr=cross.returns||{};
+  $("worldCrossAssetMeta").textContent=Object.keys(cr).length
+    ? `SPY ${(Number(cr.SPY||0)*100).toFixed(2)}% · TLT ${(Number(cr.TLT||0)*100).toFixed(2)}% · HYG ${(Number(cr.HYG||0)*100).toFixed(2)}% · GLD ${(Number(cr.GLD||0)*100).toFixed(2)}%`
+    :"Cross-asset snapshots are loading.";
+
+  const halt=factors.halt||{};
+  $("worldHaltFactor").textContent=halt.active?"ACTIVE HALT":"CLEAR";
+  $("worldHaltFactor").className=halt.active?"negative":"positive";
+  $("worldHaltMeta").textContent=halt.active
+    ? (halt.detail||"Nasdaq Trader reports this symbol halted/paused.")
+    :"No current Nasdaq Trader halt/pause matched this symbol.";
+
+  const unknown=factors.unknownShock||{};
+  const reserve=Number(unknown.reserve??global.unobservableShockReserve)||0;
+  $("worldUnknownShockFactor").textContent=`${Math.round(reserve*100)}% RESERVE`;
+  $("worldUnknownShockFactor").className=reserve>=.4?"negative":reserve>=.25?"neutral":"positive";
+  $("worldUnknownShockMeta").textContent="Not a direction prediction. This forces simulations to reserve probability for private decisions, surprise news, outages and other unknowable events.";
 
   const events=Array.isArray(data.events)?data.events:[];
   $("worldEventsTitle").textContent=`Latest events for ${activeSymbol} + global market`;
