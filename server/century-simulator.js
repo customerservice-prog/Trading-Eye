@@ -187,7 +187,7 @@ export class CenturySimulator {
       WHERE status='RUNNING'
     `);
     await this.#loadState();
-    setTimeout(()=>this.runCentury().catch(err=>this.#capture(err)),45000);
+    setTimeout(()=>this.runCentury().catch(err=>this.#capture(err)),10000);
     this.timer=setInterval(()=>this.runCentury().catch(err=>this.#capture(err)),this.intervalMs);
   }
 
@@ -259,7 +259,7 @@ export class CenturySimulator {
   async #loadReplayBlocks(){
     const q=await this.db.pool.query(`
       WITH recent_runs AS (
-        SELECT run_id,replay_day
+        SELECT DISTINCT ON (replay_day) run_id,replay_day
         FROM replay_arena_runs
         WHERE status='COMPLETE' AND replay_day IS NOT NULL
         ORDER BY replay_day DESC,completed_at DESC
@@ -378,13 +378,18 @@ export class CenturySimulator {
         ret=clamp(ret,-.50,.35);
         daily.push(ret);
 
-        if(ret<0){
-          for(const tr of block.rows){
-            const sm=lossBySymbol.get(tr.symbol)||{symbol:tr.symbol,samples:0,losses:0,sum:0};
-            sm.samples++; sm.losses++; sm.sum+=ret; lossBySymbol.set(tr.symbol,sm);
-            const tm=lossByTime.get(tr.timeBucket)||{bucket:tr.timeBucket,samples:0,losses:0,sum:0};
-            tm.samples++; tm.losses++; tm.sum+=ret; lossByTime.set(tr.timeBucket,tm);
-          }
+        for(const tr of block.rows){
+          const sm=lossBySymbol.get(tr.symbol)||{symbol:tr.symbol,samples:0,losses:0,sum:0};
+          sm.samples++;
+          if(ret<0) sm.losses++;
+          sm.sum+=ret;
+          lossBySymbol.set(tr.symbol,sm);
+
+          const tm=lossByTime.get(tr.timeBucket)||{bucket:tr.timeBucket,samples:0,losses:0,sum:0};
+          tm.samples++;
+          if(ret<0) tm.losses++;
+          tm.sum+=ret;
+          lossByTime.set(tr.timeBucket,tm);
         }
       }
 
@@ -454,6 +459,11 @@ export class CenturySimulator {
     const startedAt=new Date();
 
     try{
+      console.log(JSON.stringify({
+        event:"century_sim_started",runId,
+        coreYears:this.years,tradingDays:this.years*this.daysPerYear,
+        scenarios:SCENARIOS.length,monteCarloPathsPerWorld:this.monteCarloPaths
+      }));
       const source=await this.#loadReplayBlocks();
       if(source.days.length<5) throw new Error("Century Simulator needs at least 5 completed Replay Arena days.");
       if(source.strategies.length<2) throw new Error("Century Simulator needs at least 2 replay-tested policies.");
@@ -610,7 +620,8 @@ export class CenturySimulator {
         candidateWorstDrawdown50:candidate?.worstChanceDrawdown50??null,
         focusSymbols:focusSymbols.map(x=>x.symbol),
         focusTimeBuckets:focusTimeBuckets.map(x=>x.bucket),
-        countsTowardRealMoneyReadiness:false
+        countsTowardRealMoneyReadiness:false,
+        durationMs:Date.now()-startedAt.getTime()
       }));
 
       return this.lastRun;
