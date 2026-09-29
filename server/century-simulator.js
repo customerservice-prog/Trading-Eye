@@ -156,6 +156,7 @@ export class CenturySimulator {
     this.timer=null;
     this.lastError=null;
     this.lastRun=null;
+    this.lastRetrainRequestedAt=0;
     this.totals={runs:0,coreYears:0,stressYears:0,days:0,paths:0};
     this.startedAt=new Date();
   }
@@ -509,7 +510,22 @@ export class CenturySimulator {
       }
 
       const ranked=Object.values(strategySummary).sort((a,b)=>b.robustScore-a.robustScore);
-      const candidate=ranked[0]||null;
+      const survivalGates={
+        requireAllWorldsPositive:true,
+        minWorstP05Ending100:100,
+        maxWorstChanceBelowStart:.05,
+        maxChanceDrawdown50:.005,
+        maxWorstSequentialDrawdown:-.25
+      };
+      const survivors=ranked.filter(x=>
+        x.positiveWorlds===x.worlds &&
+        Number(x.worstP05Final)>=survivalGates.minWorstP05Ending100 &&
+        Number(x.worstChanceBelowStart)<=survivalGates.maxWorstChanceBelowStart &&
+        Number(x.worstChanceDrawdown50)<=survivalGates.maxChanceDrawdown50 &&
+        Number(x.worstSequentialDrawdown)>=survivalGates.maxWorstSequentialDrawdown
+      );
+      const candidate=survivors[0]||null;
+      const leastFragile=ranked[0]||null;
 
       const adverseRows=[];
       for(const scenario of SCENARIOS){
@@ -560,7 +576,11 @@ export class CenturySimulator {
         sourceReplayDays:source.days.length,
         strategies:strategySummary,
         rankedStrategies:ranked,
+        survivalGates,
+        survivors:survivors.map(x=>x.strategy),
+        centuryVerdict:candidate?"SURVIVOR_FOUND":"NO_POLICY_SURVIVED",
         robustResearchCandidate:candidate,
+        leastFragilePolicy:leastFragile,
         focusSymbols,focusTimeBuckets,
         scenarioResults,
         worldInputs:{
@@ -614,7 +634,9 @@ export class CenturySimulator {
         sourceReplayDays:source.days.length,
         strategies:source.strategies,
         totalMonteCarloPaths:summary.totalMonteCarloPaths,
+        centuryVerdict:summary.centuryVerdict,
         robustResearchCandidate:candidate?.strategy||null,
+        leastFragilePolicy:leastFragile?.strategy||null,
         candidateWorstP05Final:candidate?.worstP05Final??null,
         candidateWorstChanceBelowStart:candidate?.worstChanceBelowStart??null,
         candidateWorstDrawdown50:candidate?.worstChanceDrawdown50??null,
@@ -623,6 +645,8 @@ export class CenturySimulator {
         countsTowardRealMoneyReadiness:false,
         durationMs:Date.now()-startedAt.getTime()
       }));
+
+      if(!candidate) await this.#requestFailureRetrain(summary);
 
       return this.lastRun;
     }catch(err){
@@ -641,6 +665,35 @@ export class CenturySimulator {
     }finally{
       this.running=false;
     }
+  }
+
+  async #requestFailureRetrain(summary){
+    if(!this.modelLab||this.modelLab.training) return;
+    const latest=this.modelLab.status?.().latestRun;
+    const latestReason=String(latest?.dataset?.reason||"");
+    const latestAt=latest?.startedAt?+new Date(latest.startedAt):0;
+    const priorCentury=latestReason==="century_stress_failure";
+    const last=Math.max(
+      priorCentury?(latestAt||0):0,
+      this.lastRetrainRequestedAt||0
+    );
+    const cooldown=3*60*60*1000;
+    if(priorCentury&&Date.now()-last<cooldown) return;
+    if(!priorCentury&&this.lastRetrainRequestedAt&&Date.now()-this.lastRetrainRequestedAt<cooldown) return;
+
+    this.lastRetrainRequestedAt=Date.now();
+    console.log(JSON.stringify({
+      event:"century_retrain_requested",
+      reason:"century_stress_failure",
+      verdict:summary?.centuryVerdict,
+      leastFragilePolicy:summary?.leastFragilePolicy?.strategy||null,
+      focusSymbols:(summary?.focusSymbols||[]).map(x=>x.symbol),
+      focusTimeBuckets:(summary?.focusTimeBuckets||[]).map(x=>x.bucket)
+    }));
+    setTimeout(()=>{
+      this.modelLab.trainNow("century_stress_failure")
+        .catch(err=>this.#capture(err));
+    },1000);
   }
 
   #capture(err){
