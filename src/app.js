@@ -879,20 +879,27 @@ function renderCenturySimulator() {
   $("centuryWorlds").textContent=num(last.scenarioCount||cs.policy?.scenarios?.length||6);
   $("centuryStressYears").textContent=num(summary.stressEquivalentYears||((last.coreYears||cs.policy?.coreYears||100)*(last.scenarioCount||cs.policy?.scenarios?.length||6)));
   $("centuryPaths").textContent=num(summary.totalMonteCarloPaths||0);
-  $("centurySourceDays").textContent=num(last.sourceReplayDays||summary.sourceReplayDays||0);
+  $("centurySourceDays").textContent=summary.sourceDiversity?.minimumForSurvivalVerdict
+    ? `${num(last.sourceReplayDays||summary.sourceReplayDays||0)} / ${num(summary.sourceDiversity.minimumForSurvivalVerdict)}`
+    : num(last.sourceReplayDays||summary.sourceReplayDays||0);
 
   const shownPolicy=candidate||leastFragile;
+  const diversity=summary.sourceDiversity||{};
   $("centuryCandidate").textContent=candidate?.strategy
     ? String(candidate.strategy).replaceAll("_"," ").toUpperCase()+" — SURVIVOR"
     : verdict==="NO_POLICY_SURVIVED"
       ? "NO POLICY SURVIVED"
-      : "Waiting for completed century";
+      : verdict==="INSUFFICIENT_SOURCE_DIVERSITY"
+        ? "BUILDING REPLAY DIVERSITY"
+        : "Waiting for completed century";
   $("centuryCandidate").className=candidate?"positive":verdict==="NO_POLICY_SURVIVED"?"negative":"neutral";
   $("centuryCandidateMeta").textContent=candidate
     ? `Research-only survivor · passed all six synthetic-world downside gates. It still must pass real future proof before any live use.`
     : verdict==="NO_POLICY_SURVIVED"&&leastFragile
       ? `Least fragile was ${String(leastFragile.strategy).replaceAll("_"," ")}, but it FAILED the century survival gates. Trading Eye has fed the failure zones into Model Lab and requested harder retraining.`
-      :"No policy is promoted by Century Simulator. It only identifies what deserves harder testing.";
+      : verdict==="INSUFFICIENT_SOURCE_DIVERSITY"
+        ? `Century stress is running, but only ${num(diversity.uniqueReplayDays||summary.sourceReplayDays||0)} unique no-hindsight replay days are available. Survival verdicts stay disabled until at least ${num(diversity.minimumForSurvivalVerdict||25)} unique days exist.`
+        :"No policy is promoted by Century Simulator. It only identifies what deserves harder testing.";
 
   $("centuryWorstP05").textContent=shownPolicy?.worstP05Final==null?"—":money(shownPolicy.worstP05Final);
   $("centuryBelowStart").textContent=shownPolicy?.worstChanceBelowStart==null?"—":pct(shownPolicy.worstChanceBelowStart);
