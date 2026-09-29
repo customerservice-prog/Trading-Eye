@@ -114,6 +114,19 @@ export class MarketClient {
     return r.json();
   }
 
+  async century(limit=8) {
+    const r=await fetch("/api/century?limit="+encodeURIComponent(limit),{cache:"no-store"});
+    if (!r.ok) throw new Error("Century Simulator request failed: "+r.status);
+    return r.json();
+  }
+
+  async runCentury() {
+    const r=await fetch("/api/century/run",{method:"POST",headers:{"Content-Type":"application/json"}});
+    const body=await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(body.error||("Century Simulator run failed: "+r.status));
+    return body;
+  }
+
   async worldState(symbol=null,limit=80) {
     const qs=new URLSearchParams({limit:String(limit)});
     if(symbol) qs.set("symbol",symbol);
