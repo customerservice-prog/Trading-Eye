@@ -102,6 +102,66 @@ function etNowParts(){
   );
 }
 
+function zonedNyToUtc({year,month,day,hour=0,minute=0,second=0}){
+  const desired=Date.UTC(year,month-1,day,hour,minute,second);
+  let guess=desired;
+  const fmt=new Intl.DateTimeFormat("en-US",{
+    timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",
+    hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"
+  });
+  for(let i=0;i<3;i++){
+    const p=Object.fromEntries(fmt.formatToParts(new Date(guess))
+      .filter(x=>x.type!=="literal").map(x=>[x.type,x.value]));
+    const actual=Date.UTC(Number(p.year),Number(p.month)-1,Number(p.day),Number(p.hour),Number(p.minute),Number(p.second));
+    guess+=desired-actual;
+  }
+  return new Date(guess);
+}
+
+function parseIcsDate(line){
+  const value=String(line||"").split(":").at(-1)||"";
+  const m=value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
+  if(!m) return null;
+  const parts={year:Number(m[1]),month:Number(m[2]),day:Number(m[3]),hour:Number(m[4]||0),minute:Number(m[5]||0),second:Number(m[6]||0)};
+  return m[7]?new Date(Date.UTC(parts.year,parts.month-1,parts.day,parts.hour,parts.minute,parts.second)):zonedNyToUtc(parts);
+}
+
+function parseIcsEvents(text=""){
+  const unfolded=String(text).replace(/\r?\n[ \t]/g,"");
+  const blocks=unfolded.split("BEGIN:VEVENT").slice(1);
+  return blocks.map(block=>{
+    const lines=block.split(/\r?\n/);
+    const dt=lines.find(x=>x.startsWith("DTSTART"));
+    const summary=lines.find(x=>x.startsWith("SUMMARY"));
+    const uid=lines.find(x=>x.startsWith("UID"));
+    return {
+      at:parseIcsDate(dt),
+      title:summary?summary.slice(summary.indexOf(":")+1).replace(/\\,/g,",").replace(/\\n/g," "):"",
+      uid:uid?uid.slice(uid.indexOf(":")+1):null
+    };
+  }).filter(x=>x.at&&x.title);
+}
+
+function proximityRisk(at,{maxDays=7}={}){
+  const hours=(+new Date(at)-Date.now())/3600000;
+  if(hours<-.5) return 0;
+  if(hours<=1) return 1;
+  if(hours<=4) return .90;
+  if(hours<=24) return .75;
+  if(hours<=72) return .55;
+  if(hours<=maxDays*24) return .30;
+  return .08;
+}
+
+function cleanXml(value=""){
+  return String(value)
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1")
+    .replace(/<[^>]+>/g," ")
+    .replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">")
+    .replace(/&#39;/g,"'").replace(/&quot;/g,'"')
+    .replace(/\s+/g," ").trim();
+}
+
 export class WorldStateEngine extends EventEmitter {
   constructor({
     db,marketEngine,alpacaKey,alpacaSecret,enabled=true,
@@ -117,7 +177,7 @@ export class WorldStateEngine extends EventEmitter {
     this.sourceStatus={};
     this.symbols={};
     this.global={
-      updatedAt:null,macro:{},fed:{},sourceCoverage:0,eventRisk:0,uncertainty:1
+      updatedAt:null,macro:{},fed:{},economicCalendar:{},crossAsset:{},sourceCoverage:0,eventRisk:0,uncertainty:1,unobservableShockReserve:.15
     };
     this.newsSeen=new Set();
     this.secTickerMap=new Map();
@@ -179,8 +239,12 @@ export class WorldStateEngine extends EventEmitter {
     await this.#loadPersisted();
     await this.#safe("market",()=>this.refreshMarketFactors());
     await this.#safe("fed",()=>this.refreshFedRisk());
+    await this.#safe("economic_calendar",()=>this.refreshEconomicCalendar());
     await this.#safe("macro",()=>this.refreshMacro());
+    await this.#safe("cross_asset",()=>this.refreshCrossAsset());
     await this.#safe("news",()=>this.refreshNews());
+    await this.#safe("earnings",()=>this.refreshEarningsCalendar());
+    await this.#safe("halts",()=>this.refreshTradingHalts());
     await this.#safe("corporate",()=>this.refreshCorporateActions());
     await this.#safe("finra",()=>this.refreshFinraShortVolume());
     await this.#safe("sec",()=>this.refreshSec());
@@ -189,10 +253,14 @@ export class WorldStateEngine extends EventEmitter {
 
     this.timers.push(setInterval(()=>this.#safe("market",()=>this.refreshMarketFactors()),15000));
     this.timers.push(setInterval(()=>this.#safe("news",()=>this.refreshNews()),45000));
+    this.timers.push(setInterval(()=>this.#safe("halts",()=>this.refreshTradingHalts()),60*1000));
     this.timers.push(setInterval(()=>this.#safe("sec",()=>this.refreshSec()),5*60*1000));
     this.timers.push(setInterval(()=>this.#safe("options",()=>this.refreshOptions()),4*60*1000));
+    this.timers.push(setInterval(()=>this.#safe("cross_asset",()=>this.refreshCrossAsset()),5*60*1000));
+    this.timers.push(setInterval(()=>this.#safe("earnings",()=>this.refreshEarningsCalendar()),30*60*1000));
     this.timers.push(setInterval(()=>this.#safe("corporate",()=>this.refreshCorporateActions()),15*60*1000));
     this.timers.push(setInterval(()=>this.#safe("macro",()=>this.refreshMacro()),15*60*1000));
+    this.timers.push(setInterval(()=>this.#safe("economic_calendar",()=>this.refreshEconomicCalendar()),60*60*1000));
     this.timers.push(setInterval(()=>this.#safe("finra",()=>this.refreshFinraShortVolume()),30*60*1000));
     this.timers.push(setInterval(()=>this.#safe("fed",()=>this.refreshFedRisk()),10*60*1000));
     this.timers.push(setInterval(()=>this.recompute().catch(err=>this.#capture(err)),30000));
@@ -253,8 +321,11 @@ export class WorldStateEngine extends EventEmitter {
       global:{
         macro:this.global.macro||{},
         fed:this.global.fed||{},
+        economicCalendar:this.global.economicCalendar||{},
+        crossAsset:this.global.crossAsset||{},
         eventRisk:Number(this.global.eventRisk)||0,
-        sourceCoverage:Number(this.global.sourceCoverage)||0
+        sourceCoverage:Number(this.global.sourceCoverage)||0,
+        unobservableShockReserve:Number(this.global.unobservableShockReserve)||0
       }
     };
   }
