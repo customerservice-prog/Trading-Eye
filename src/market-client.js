@@ -114,6 +114,14 @@ export class MarketClient {
     return r.json();
   }
 
+  async worldState(symbol=null,limit=80) {
+    const qs=new URLSearchParams({limit:String(limit)});
+    if(symbol) qs.set("symbol",symbol);
+    const r=await fetch("/api/world-state?"+qs.toString(),{cache:"no-store"});
+    if (!r.ok) throw new Error("World State request failed: "+r.status);
+    return r.json();
+  }
+
   async runReplay() {
     const r=await fetch("/api/replay/run",{method:"POST",headers:{"Content-Type":"application/json"}});
     const body=await r.json().catch(()=>({}));
