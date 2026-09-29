@@ -510,20 +510,27 @@ export class CenturySimulator {
       }
 
       const ranked=Object.values(strategySummary).sort((a,b)=>b.robustScore-a.robustScore);
+      const sourceDiversity={
+        uniqueReplayDays:source.days.length,
+        minimumForSurvivalVerdict:25,
+        level:source.days.length>=40?"HIGH":source.days.length>=25?"MEDIUM":"LOW"
+      };
       const survivalGates={
         requireAllWorldsPositive:true,
+        minSourceReplayDays:sourceDiversity.minimumForSurvivalVerdict,
         minWorstP05Ending100:100,
         maxWorstChanceBelowStart:.05,
         maxChanceDrawdown50:.005,
         maxWorstSequentialDrawdown:-.25
       };
-      const survivors=ranked.filter(x=>
+      const diversityReady=source.days.length>=survivalGates.minSourceReplayDays;
+      const survivors=diversityReady?ranked.filter(x=>
         x.positiveWorlds===x.worlds &&
         Number(x.worstP05Final)>=survivalGates.minWorstP05Ending100 &&
         Number(x.worstChanceBelowStart)<=survivalGates.maxWorstChanceBelowStart &&
         Number(x.worstChanceDrawdown50)<=survivalGates.maxChanceDrawdown50 &&
         Number(x.worstSequentialDrawdown)>=survivalGates.maxWorstSequentialDrawdown
-      );
+      ):[];
       const candidate=survivors[0]||null;
       const leastFragile=ranked[0]||null;
 
@@ -576,9 +583,12 @@ export class CenturySimulator {
         sourceReplayDays:source.days.length,
         strategies:strategySummary,
         rankedStrategies:ranked,
+        sourceDiversity,
         survivalGates,
         survivors:survivors.map(x=>x.strategy),
-        centuryVerdict:candidate?"SURVIVOR_FOUND":"NO_POLICY_SURVIVED",
+        centuryVerdict:!diversityReady
+          ?"INSUFFICIENT_SOURCE_DIVERSITY"
+          :candidate?"SURVIVOR_FOUND":"NO_POLICY_SURVIVED",
         robustResearchCandidate:candidate,
         leastFragilePolicy:leastFragile,
         focusSymbols,focusTimeBuckets,
@@ -632,6 +642,7 @@ export class CenturySimulator {
         tradingDays:this.years*this.daysPerYear,
         stressEquivalentYears:this.years*SCENARIOS.length,
         sourceReplayDays:source.days.length,
+        sourceDiversityLevel:sourceDiversity.level,
         strategies:source.strategies,
         totalMonteCarloPaths:summary.totalMonteCarloPaths,
         centuryVerdict:summary.centuryVerdict,
@@ -646,7 +657,9 @@ export class CenturySimulator {
         durationMs:Date.now()-startedAt.getTime()
       }));
 
-      if(!candidate) await this.#requestFailureRetrain(summary);
+      if(!candidate && summary.centuryVerdict!=="INSUFFICIENT_SOURCE_DIVERSITY") {
+        await this.#requestFailureRetrain(summary);
+      }
 
       return this.lastRun;
     }catch(err){
