@@ -473,7 +473,18 @@ export class WorldStateEngine extends EventEmitter {
       };
       newest=[newest,q?.ts,bar?.ts].filter(Boolean).sort((a,b)=>+new Date(b)-+new Date(a))[0]||newest;
     }
-    this.#source("market","OK",newest,"Live quote/bar microstructure from Alpaca");
+    const marketAgeMs=newest?Date.now()-+new Date(newest):Infinity;
+    const providerState=String(this.marketEngine?.status?.()?.provider?.state||"UNKNOWN");
+    const marketState=marketAgeMs<=2*60*1000&&["LIVE","CONNECTED"].includes(providerState)
+      ?"OK"
+      :"DEGRADED";
+    this.#source(
+      "market",marketState,newest,
+      marketState==="OK"
+        ?"Live quote/bar microstructure from Alpaca"
+        :"Market source reachable but latest quote/bar is stale or stream is reconnecting",
+      {ageSeconds:Number.isFinite(marketAgeMs)?Math.round(marketAgeMs/1000):null,providerState}
+    );
     await this.recompute();
   }
 
