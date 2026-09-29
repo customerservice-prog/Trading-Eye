@@ -15,6 +15,7 @@ import { ReadinessEvaluator } from "./readiness.js";
 import { MistakeLab } from "./mistake-lab.js";
 import { ReplayArena } from "./replay-arena.js";
 import { WorldStateEngine } from "./world-state.js";
+import { CenturySimulator } from "./century-simulator.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -39,6 +40,10 @@ const REPLAY_ARENA_ENABLED=String(process.env.REPLAY_ARENA_ENABLED ?? "true").to
 const REPLAY_ARENA_INTERVAL_MS=Math.max(30000,Number(process.env.REPLAY_ARENA_INTERVAL_MS || 90000));
 const REPLAY_ARENA_MAX_SYMBOLS=Math.max(6,Math.min(24,Number(process.env.REPLAY_ARENA_MAX_SYMBOLS || 16)));
 const WORLD_STATE_ENABLED=String(process.env.WORLD_STATE_ENABLED ?? "true").toLowerCase()==="true";
+const CENTURY_SIM_ENABLED=String(process.env.CENTURY_SIM_ENABLED ?? "true").toLowerCase()==="true";
+const CENTURY_SIM_YEARS=Math.max(10,Math.min(200,Number(process.env.CENTURY_SIM_YEARS || 100)));
+const CENTURY_SIM_PATHS=Math.max(250,Math.min(5000,Number(process.env.CENTURY_SIM_PATHS || 1500)));
+const CENTURY_SIM_INTERVAL_MS=Math.max(5*60*1000,Number(process.env.CENTURY_SIM_INTERVAL_MS || 15*60*1000));
 const SEC_USER_AGENT=String(process.env.SEC_USER_AGENT || "TradingEye/1.0 (research; github.com/customerservice-prog/Trading-Eye)");
 const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
 const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
@@ -214,6 +219,15 @@ worldState.init().catch(err=>{
   console.log(JSON.stringify({event:"world_state_start_error",message:String(err?.message||err)}));
 });
 
+const centurySimulator=new CenturySimulator({
+  db,modelLab,worldState,
+  enabled:CENTURY_SIM_ENABLED,
+  years:CENTURY_SIM_YEARS,
+  monteCarloPaths:CENTURY_SIM_PATHS,
+  intervalMs:CENTURY_SIM_INTERVAL_MS
+});
+await centurySimulator.init();
+
 engine.attachIntelligence({
   modelLab,
   paperBroker,
@@ -305,6 +319,7 @@ app.get("/health",async(req,res)=>{
     modelLab:modelLab.status(),
     mistakeLab:mistakeLab.status(),
     replayArena:replayArena.status(),
+    centurySimulator:centurySimulator.status(),
     worldState:worldState.status(),
     paperBroker:true,
     paperExploration:Boolean(explorationBroker),
@@ -327,6 +342,7 @@ app.get("/api/status",async(req,res)=>{
     database:await db.ping(),
     modelLab:modelLab.status(),
     replayArena:replayArena.status(),
+    centurySimulator:centurySimulator.status(),
     worldState:worldState.status()
   });
 });
@@ -382,6 +398,22 @@ app.post("/api/replay/run",async(req,res)=>{
     res.json({ok:true,result,status:replayArena.status()});
   }catch(err){
     res.status(400).json({ok:false,error:String(err?.message||err),status:replayArena.status()});
+  }
+});
+
+app.get("/api/century",async(req,res)=>{
+  res.json({
+    status:centurySimulator.status(),
+    runs:await centurySimulator.recentRuns(Number(req.query.limit)||8)
+  });
+});
+
+app.post("/api/century/run",async(req,res)=>{
+  try{
+    const result=await centurySimulator.runCentury();
+    res.json({ok:true,result,status:centurySimulator.status()});
+  }catch(err){
+    res.status(400).json({ok:false,error:String(err?.message||err),status:centurySimulator.status()});
   }
 });
 
@@ -609,7 +641,11 @@ server.listen(PORT,"0.0.0.0",()=>{
     replayArenaEnabled:REPLAY_ARENA_ENABLED,
     replayArenaIntervalMs:REPLAY_ARENA_INTERVAL_MS,
     replayArenaMaxSymbols:REPLAY_ARENA_MAX_SYMBOLS,
-    worldStateEnabled:WORLD_STATE_ENABLED
+    worldStateEnabled:WORLD_STATE_ENABLED,
+    centurySimEnabled:CENTURY_SIM_ENABLED,
+    centurySimYears:CENTURY_SIM_YEARS,
+    centurySimPaths:CENTURY_SIM_PATHS,
+    centurySimIntervalMs:CENTURY_SIM_INTERVAL_MS
   }));
 });
 
@@ -624,6 +660,7 @@ const shutdown=async()=>{
   explorationBroker?.stop();
   mistakeLab.stop();
   replayArena.stop();
+  centurySimulator.stop();
   worldState.stop();
   researchBrain.stop();
   server.close(()=>process.exit(0));
