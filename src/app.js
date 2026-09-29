@@ -1,12 +1,13 @@
-import { MarketClient } from "./market-client.js?v=20260928-2230";
-import { MarketChart } from "./chart.js?v=20260928-2230";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-2230";
+import { MarketClient } from "./market-client.js?v=20260928-2300";
+import { MarketChart } from "./chart.js?v=20260928-2300";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-2300";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
 const num=v=>Number(v||0).toLocaleString();
 const pct=v=>(Number(v||0)*100).toFixed(2)+"%";
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const esc=v=>String(v??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
 
 const NAMES={
   SPY:"S&P 500 ETF",QQQ:"Nasdaq 100 ETF",NVDA:"NVIDIA",AAPL:"Apple",AMD:"AMD",TSLA:"Tesla"
@@ -29,6 +30,7 @@ let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedP
 let explorationData={enabled:true,startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:true,positions:[],fills:[]};
 let mistakeData={enabled:true,running:false,lastError:null,lastAnalysis:null};
 let replayData={status:{enabled:true,running:false,totals:{runs:0,decisions:0,trades:0,wins:0,losses:0}},runs:[],leaderboard:[]};
+let worldData={status:{enabled:true,global:{sourceCoverage:0,eventRisk:0,uncertainty:1},sources:{},symbols:{}},symbol:null,events:[]};
 let modelLabData={enabled:true,training:false,production:null,latestRun:null};
 let readinessData={
   status:"LOCKED",reviewEligible:false,liveTradingEnabled:false,
@@ -251,6 +253,22 @@ function renderBeginnerCommandCenter() {
     $("heroReplayMeta").textContent=Number(totals.runs)
       ? `${num(totals.runs)} runs · ${num(totals.trades)} simulated trades${last.replayDay?" · last "+last.replayDay:""}`
       :"Server replay worker is starting; it keeps running with this page closed.";
+  }
+
+  if ($("heroWorldState")) {
+    const ws=worldData?.status||{};
+    const g=ws.global||{};
+    const sym=worldData?.symbol||ws.symbols?.[activeSymbol]||{};
+    const risk=Number(sym.riskScore)||0;
+    const coverage=Number(g.sourceCoverage)||0;
+    const label=risk>=.90?"BLOCKING PROOF":risk>=.65?"HIGH RISK":risk>=.40?"ELEVATED":"MONITORING";
+    $("heroWorldState").textContent=label;
+    $("heroWorldState").className=risk>=.65?"negative":risk>=.40?"neutral":"positive";
+    $("heroWorldMeta").textContent=`${Math.round(coverage*100)}% sources · ${Math.round(risk*100)}% ${activeSymbol} event risk`;
+    if ($("beginnerWorldState")) {
+      $("beginnerWorldState").textContent=label;
+      $("beginnerWorldState").className=risk>=.65?"negative":risk>=.40?"neutral":"positive";
+    }
   }
 
   const jobs=Array.isArray(researchData.jobs)?researchData.jobs:[];
@@ -816,6 +834,107 @@ function renderReplayArena() {
 }
 
 
+function renderWorldState() {
+  if (!$("worldStateTitle")) return;
+  const data=worldData||{};
+  const ws=data.status||{};
+  const global=ws.global||{};
+  const sym=data.symbol||ws.symbols?.[activeSymbol]||{};
+  const factors=sym.factors||{};
+  const risk=Number(sym.riskScore)||0;
+  const coverage=Number(global.sourceCoverage)||0;
+  const riskLabel=risk>=.90?"BLOCKED":risk>=.65?"HIGH":risk>=.40?"ELEVATED":"NORMAL";
+
+  $("worldStateTitle").textContent=`${activeSymbol} WORLD STATE — ${riskLabel}`;
+  $("worldStateTitle").className=risk>=.65?"negative":risk>=.40?"neutral":"positive";
+  $("worldStateDetail").textContent=sym.blockProof
+    ?"Severe real-world event risk is blocking strict proof-account entries. Exploration can still test this situation with fake money."
+    :"Trading Eye is combining observable external factors with the live market before strict entries are allowed.";
+  $("worldRiskScore").textContent=`${Math.round(risk*100)}%`;
+  $("worldRiskScore").className=risk>=.65?"negative":risk>=.40?"neutral":"positive";
+  $("worldCoverage").textContent=`${Math.round(coverage*100)}% source coverage · uncertainty ${Math.round(Number(sym.uncertainty||global.uncertainty||0)*100)}%`;
+  $("worldUpdatedAt").textContent=global.updatedAt?"updated "+ageText(global.updatedAt):"waiting for first update";
+
+  const sourceNames={
+    market:"Live market",news:"Market news",sec:"SEC EDGAR",corporate:"Corporate actions",
+    options:"Options chain",macro:"Macro / rates",fed:"Fed calendar",finra:"FINRA short volume"
+  };
+  const sources=ws.sources||{};
+  $("worldSourceGrid").innerHTML=Object.entries(sourceNames).map(([key,label])=>{
+    const x=sources[key]||{state:"STARTING"};
+    const state=String(x.state||"STARTING").toUpperCase();
+    const cls=state==="OK"?"positive":state==="ERROR"?"negative":"neutral";
+    return `<div class="world-source-card">
+      <span>${esc(label)}</span>
+      <strong class="${cls}">${esc(state)}</strong>
+      <small>${esc(x.detail||"Waiting for source")}${x.dataAt?" · "+esc(ageText(x.dataAt)):""}</small>
+    </div>`;
+  }).join("");
+
+  const news=factors.news||{};
+  $("worldNewsFactor").textContent=news.count6h!=null
+    ? `${news.count6h} stories · sentiment ${Math.round(Number(news.sentiment||0)*100)}`
+    :"—";
+  $("worldNewsMeta").textContent=news.latestHeadline||"No recent symbol-specific news loaded.";
+
+  const sec=factors.sec||{};
+  $("worldSecFactor").textContent=sec.filings21d!=null
+    ? `${sec.filings21d} filings · risk ${Math.round(Number(sec.filingRisk||0)*100)}%`
+    :"—";
+  $("worldSecMeta").textContent=sec.offeringRisk
+    ? `Offering/dilution risk ${Math.round(Number(sec.offeringRisk)*100)}% · insider-form activity ${sec.insiderActivity||0}`
+    : `Insider-form activity ${sec.insiderActivity||0} · no high offering risk detected`;
+
+  const opt=factors.options||{};
+  $("worldOptionsFactor").textContent=opt.impliedVol
+    ? `IV ${(Number(opt.impliedVol)*100).toFixed(1)}% · stress ${Math.round(Number(opt.stress||0)*100)}%`
+    : (opt.state||"—");
+  $("worldOptionsMeta").textContent=Number.isFinite(Number(opt.putCallIvSkew))
+    ? `Put-call IV skew ${(Number(opt.putCallIvSkew)*100).toFixed(1)} pts · ${opt.contracts||0} near-money contracts`
+    :"Options skew not available yet.";
+
+  const macro=global.macro||{};
+  const fed=global.fed||{};
+  $("worldMacroFactor").textContent=`Macro stress ${Math.round(Number(macro.stress||0)*100)}% · Fed ${Math.round(Number(fed.risk||0)*100)}%`;
+  $("worldMacroMeta").textContent=fed.nextFomcDate
+    ? `Next FOMC ${fed.nextFomcDate} · ${Number(fed.daysToFomc).toFixed(0)} days`
+    :"FOMC schedule loading.";
+
+  const short=factors.short||{};
+  $("worldShortFactor").textContent=Number.isFinite(Number(short.shortVolumeRatio))
+    ? `${(Number(short.shortVolumeRatio)*100).toFixed(1)}% short-sale volume`
+    :"—";
+  $("worldShortMeta").textContent=short.date
+    ? `FINRA consolidated NMS · ${short.date}`
+    :"Daily FINRA file not loaded yet.";
+
+  const market=factors.market||{};
+  $("worldMarketFactor").textContent=Number.isFinite(Number(market.spreadBps))
+    ? `${Number(market.spreadBps).toFixed(1)} bps spread · imbalance ${Math.round(Number(market.quoteImbalance||0)*100)}`
+    :"—";
+  $("worldMarketMeta").textContent=market.volumeShock
+    ? `Volume ${Number(market.volumeShock).toFixed(2)}× recent average · RV20 ${(Number(market.rv20||0)*100).toFixed(2)}%`
+    :"Waiting for live quote/bar microstructure.";
+
+  const events=Array.isArray(data.events)?data.events:[];
+  $("worldEventsTitle").textContent=`Latest events for ${activeSymbol} + global market`;
+  $("worldEventsBody").innerHTML=events.length
+    ? events.slice(0,80).map(ev=>{
+      const severity=Number(ev.severity)||0;
+      const when=ev.event_at?new Date(ev.event_at).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"—";
+      return `<tr>
+        <td>${esc(when)}</td>
+        <td>${esc(ev.source||"—")}</td>
+        <td><strong>${esc(ev.symbol||"MARKET")}</strong></td>
+        <td>${esc(ev.category||"—")}</td>
+        <td>${esc(ev.headline||"—")}</td>
+        <td class="${severity>=.7?"negative":severity>=.4?"neutral":"positive"}">${Math.round(severity*100)}%</td>
+      </tr>`;
+    }).join("")
+    : '<tr><td colspan="6">No external events stored for this symbol yet.</td></tr>';
+}
+
+
 function renderLearning() {
   const s=predictionData.stats;
   const production=modelLabData?.production||predictionData.modelLab?.production||null;
@@ -1172,6 +1291,7 @@ function renderAll() {
   renderExploration();
   renderMistakeLab();
   renderReplayArena();
+  renderWorldState();
   renderLearning();
   renderPatternLab();
   renderScanner();
@@ -1181,13 +1301,13 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,replay,lab,research,readiness]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,replay,world,lab,research,readiness]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
       client.studies(10),client.scanner(50),client.paper(),client.explorationPaper(),client.mistakes(),client.replay(10),
-      client.modelLab(),client.research(),client.readiness()
+      client.worldState(activeSymbol,80),client.modelLab(),client.research(),client.readiness()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; explorationData=exploreState; mistakeData=mistakes; replayData=replay;
+    paperData=paperState; explorationData=exploreState; mistakeData=mistakes; replayData=replay; worldData=world;
     modelLabData=lab; researchData=research; readinessData=readiness;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
@@ -1214,7 +1334,10 @@ async function selectSymbol(symbol,{activate=true}={}) {
     activeSymbol=symbol;
     $("symbolInput").value=symbol;
     $("symbolResults").classList.add("hidden");
-    snapshot=await client.snapshot(symbol);
+    [snapshot,worldData]=await Promise.all([
+      client.snapshot(symbol),
+      client.worldState(symbol,80)
+    ]);
     patternLabData={symbol,status:"BUILDING_HISTORY",statsByHorizon:{},analogs:[]};
     renderAll();
     client.patternLab(symbol,40)
@@ -1305,6 +1428,13 @@ function applyRealtime(event) {
     mistakeData={...mistakeData,lastAnalysis:event.data};
     renderMistakeLab();
     renderLearning();
+    return;
+  }
+  if (event.type==="world_state") {
+    worldData={...worldData,status:event.data};
+    worldData.symbol=event.data?.symbols?.[activeSymbol]||worldData.symbol;
+    renderWorldState();
+    renderBeginnerCommandCenter();
     return;
   }
   renderChart(); renderTapeAndBook(); renderPaper();
@@ -1484,14 +1614,16 @@ clearInterval(refreshTimer);
 refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
 clearInterval(researchTimer);
 researchTimer=setInterval(()=>{
-  Promise.all([client.research(),client.mistakes(),client.replay(10)])
-    .then(([r,m,replay])=>{
+  Promise.all([client.research(),client.mistakes(),client.replay(10),client.worldState(activeSymbol,80)])
+    .then(([r,m,replay,world])=>{
       researchData=r;
       mistakeData=m;
       replayData=replay;
+      worldData=world;
       renderResearchBrain();
       renderMistakeLab();
       renderReplayArena();
+      renderWorldState();
       renderBeginnerCommandCenter();
     })
     .catch(()=>{});
@@ -1525,5 +1657,6 @@ window.TradingEye=Object.freeze({
   explorationAccount:()=>explorationData,
   mistakes:()=>mistakeData,
   replay:()=>replayData,
+  worldState:()=>worldData,
   modelLab:()=>modelLabData
 });
