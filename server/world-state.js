@@ -358,7 +358,7 @@ export class WorldStateEngine extends EventEmitter {
       const avgVol=mean(vols.slice(-20));
       const volumeShock=avgVol?curVol/avgVol:1;
       state.factors.market={
-        price:mid??Number(bar?.close)||null,
+        price:mid ?? (Number(bar?.close)||null),
         spreadBps:Number.isFinite(spreadBps)?spreadBps:null,
         quoteImbalance:imbalance,
         rv20:stdev(rets),
