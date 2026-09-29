@@ -315,7 +315,13 @@ export class WorldStateEngine extends EventEmitter {
       riskScore:Number(state.riskScore)||0,
       uncertainty:Number(state.uncertainty??this.global.uncertainty)||0,
       catalystScore:Number(state.catalystScore)||0,
-      blockProof:Boolean((Number(state.riskScore)||0)>=.90),
+      blockProof:Boolean(
+        (Number(state.riskScore)||0)>=.90 ||
+        Boolean(state.factors?.halt?.active) ||
+        (Number(state.factors?.earnings?.risk)||0)>=.90 ||
+        (Number(this.global.economicCalendar?.risk)||0)>=.95 ||
+        (Number(this.global.fed?.risk)||0)>=.98
+      ),
       factors:state.factors||{},
       updatedAt:state.updatedAt||null,
       global:{
@@ -808,6 +814,253 @@ export class WorldStateEngine extends EventEmitter {
     await this.recompute();
   }
 
+  async refreshEconomicCalendar(){
+    const now=Date.now();
+    const horizon=now+14*24*60*60*1000;
+    const events=[];
+    let blsOk=false,beaOk=false;
+
+    try{
+      const res=await fetchWithTimeout("https://www.bls.gov/schedule/news_release/bls.ics",{
+        headers:{"User-Agent":this.secUserAgent,Accept:"text/calendar,text/plain,*/*"}
+      },15000);
+      if(res.ok){
+        const text=await res.text();
+        for(const ev of parseIcsEvents(text)){
+          const t=+new Date(ev.at);
+          if(t<now-60*60*1000||t>horizon) continue;
+          const title=ev.title;
+          let severity=.35;
+          if(/Consumer Price Index|Employment Situation/i.test(title)) severity=.98;
+          else if(/Producer Price Index|Employment Cost Index/i.test(title)) severity=.86;
+          else if(/Job Openings|JOLTS|Productivity and Costs/i.test(title)) severity=.70;
+          else if(/Import and Export Price|Real Earnings/i.test(title)) severity=.58;
+          else continue;
+          events.push({source:"BLS",id:ev.uid||("BLS-"+title+"-"+ev.at.toISOString()),title,at:ev.at,severity});
+        }
+        blsOk=true;
+      }
+    }catch{}
+
+    try{
+      const res=await fetchWithTimeout("https://apps.bea.gov/API/signup/release_dates.json",{
+        headers:{"User-Agent":this.secUserAgent,Accept:"application/json"}
+      },15000);
+      if(res.ok){
+        const body=await res.json();
+        for(const [title,obj] of Object.entries(body||{})){
+          if(title==="file_last_updated"||!obj?.release_dates) continue;
+          let severity=.35;
+          if(/Gross Domestic Product$|Personal Income and Outlays|Corporate Profits/i.test(title)) severity=.92;
+          else if(/International Trade in Goods and Services/i.test(title)) severity=.62;
+          else if(/International Transactions|Investment Position/i.test(title)) severity=.48;
+          else continue;
+          for(const raw of obj.release_dates||[]){
+            const at=new Date(raw);
+            const t=+at;
+            if(!Number.isFinite(t)||t<now-60*60*1000||t>horizon) continue;
+            events.push({source:"BEA",id:"BEA-"+title+"-"+raw,title,at,severity});
+          }
+        }
+        beaOk=true;
+      }
+    }catch{}
+
+    events.sort((a,b)=>+a.at-+b.at);
+    const dedup=[];
+    const seen=new Set();
+    for(const ev of events){
+      const key=ev.source+"|"+ev.title+"|"+ev.at.toISOString();
+      if(seen.has(key)) continue;
+      seen.add(key);dedup.push(ev);
+    }
+
+    for(const ev of dedup.slice(0,40)){
+      await this.#event({
+        source:ev.source.toLowerCase()+"_calendar",externalId:ev.id,symbol:"",
+        category:"ECONOMIC_CALENDAR",eventAt:ev.at,headline:ev.title,
+        sentiment:0,severity:ev.severity,
+        payload:{scheduled:true,official:true}
+      });
+    }
+
+    const next=dedup[0]||null;
+    const risk=dedup.reduce((m,ev)=>Math.max(m,ev.severity*proximityRisk(ev.at)),0);
+    this.global.economicCalendar={
+      risk,
+      nextEvent:next?{source:next.source,title:next.title,at:next.at,severity:next.severity}:null,
+      upcoming:dedup.slice(0,15).map(x=>({source:x.source,title:x.title,at:x.at,severity:x.severity})),
+      updatedAt:new Date().toISOString()
+    };
+    this.#source(
+      "economic_calendar",
+      blsOk&&beaOk?"OK":(blsOk||beaOk?"DEGRADED":"ERROR"),
+      next?.at||new Date(),
+      "Official BLS + BEA scheduled economic releases",
+      {bls:blsOk,bea:beaOk,upcoming:dedup.length,risk}
+    );
+    await this.recompute();
+  }
+
+  async refreshEarningsCalendar(){
+    const hot=new Set(this.marketEngine?.hotSymbols?.()||[]);
+    if(!hot.size) return;
+    const bySymbol=new Map([...hot].map(s=>[s,[]]));
+    let success=0,totalRows=0,newest=null;
+
+    for(let offset=0;offset<=7;offset++){
+      const day=addDays(new Date(),offset);
+      const date=utcDay(day);
+      try{
+        const res=await fetchWithTimeout(
+          "https://api.nasdaq.com/api/calendar/earnings?date="+encodeURIComponent(date),
+          {headers:{
+            "User-Agent":"Mozilla/5.0 (compatible; TradingEye/1.0)",
+            "Accept":"application/json, text/plain, */*",
+            "Referer":"https://www.nasdaq.com/",
+            "Origin":"https://www.nasdaq.com"
+          }},12000
+        );
+        if(!res.ok) continue;
+        const body=await res.json();
+        const rows=body?.data?.rows||[];
+        success++;totalRows+=rows.length;
+        for(const row of rows){
+          const symbol=String(row.symbol||"").replace(/[^A-Z.]/g,"").toUpperCase();
+          if(!hot.has(symbol)) continue;
+          const ymd=date.split("-").map(Number);
+          const timeLabel=String(row.time||row.timeStatus||row.marketTime||"").toLowerCase();
+          const hour=timeLabel.includes("pre")?8:timeLabel.includes("after")?16:12;
+          const minute=timeLabel.includes("after")?5:0;
+          const at=zonedNyToUtc({year:ymd[0],month:ymd[1],day:ymd[2],hour,minute});
+          const risk=clamp(proximityRisk(at,{maxDays:7})*(timeLabel.includes("not")?.85:1),0,1);
+          const ev={
+            at,risk,date,session:timeLabel||"unknown",
+            epsForecast:row.epsForecast||row.eps_forecast||null,
+            lastYearEps:row.lastYearEPS||row.last_year_eps||null,
+            name:row.name||null
+          };
+          bySymbol.get(symbol).push(ev);
+          newest=!newest||+at>+newest?at:newest;
+          await this.#event({
+            source:"nasdaq_earnings",externalId:"NASDAQ-EARN-"+symbol+"-"+date,
+            symbol,category:"EARNINGS_CALENDAR",eventAt:at,
+            headline:(row.name||symbol)+" earnings (estimated calendar)",
+            sentiment:0,severity:risk,
+            payload:{...ev,estimated:true,calendarProvider:"Nasdaq/Zacks-derived"}
+          });
+        }
+      }catch{}
+      await sleep(80);
+    }
+
+    for(const symbol of hot){
+      const state=this.#ensure(symbol);
+      const rows=(bySymbol.get(symbol)||[]).sort((a,b)=>+a.at-+b.at);
+      const next=rows[0]||null;
+      state.factors.earnings={
+        scheduled:Boolean(next),
+        risk:next?.risk||0,
+        nextAt:next?.at||null,
+        session:next?.session||null,
+        epsForecast:next?.epsForecast||null,
+        estimated:true,
+        source:"Nasdaq earnings calendar"
+      };
+    }
+
+    this.#source(
+      "earnings",
+      success?"OK":"DEGRADED",
+      newest||new Date(),
+      "Nasdaq earnings calendar (dates may be estimates)",
+      {daysQueried:8,daysSucceeded:success,rows:totalRows,hotSymbols:hot.size}
+    );
+    await this.recompute();
+  }
+
+  async refreshCrossAsset(){
+    if(!this.alpacaKey||!this.alpacaSecret) throw new Error("Alpaca credentials unavailable for cross-asset proxies");
+    const proxies=["SPY","QQQ","IWM","TLT","GLD","USO","UUP","HYG","XLF","XLK","SMH"];
+    const params=new URLSearchParams({symbols:proxies.join(","),feed:"iex"});
+    const res=await fetchWithTimeout("https://data.alpaca.markets/v2/stocks/snapshots?"+params,{
+      headers:{
+        "APCA-API-KEY-ID":this.alpacaKey,
+        "APCA-API-SECRET-KEY":this.alpacaSecret,
+        accept:"application/json"
+      }
+    },15000);
+    if(!res.ok) throw new Error("Alpaca cross-asset snapshots HTTP "+res.status);
+    const body=await res.json();
+    const snapshots=body.snapshots||body||{};
+    const returns={};
+    let newest=null;
+    for(const symbol of proxies){
+      const snap=snapshots[symbol]||{};
+      const cur=Number(snap.dailyBar?.c??snap.daily_bar?.c??snap.latestTrade?.p??snap.latest_trade?.p);
+      const prev=Number(snap.prevDailyBar?.c??snap.prev_daily_bar?.c);
+      if(cur>0&&prev>0) returns[symbol]=(cur-prev)/prev;
+      const ts=snap.latestTrade?.t||snap.latest_trade?.t||snap.minuteBar?.t||snap.minute_bar?.t;
+      if(ts&&(!newest||+new Date(ts)>+new Date(newest))) newest=ts;
+    }
+    const riskOff=clamp(
+      .32*clamp(-(returns.SPY||0)/.025,0,1)+
+      .18*clamp(-(returns.HYG||0)/.012,0,1)+
+      .15*clamp(Math.abs(returns.TLT||0)/.018,0,1)+
+      .12*clamp(Math.abs(returns.UUP||0)/.012,0,1)+
+      .10*clamp(Math.abs(returns.USO||0)/.035,0,1)+
+      .08*clamp(Math.abs(returns.GLD||0)/.025,0,1)+
+      .05*clamp(Math.abs((returns.QQQ||0)-(returns.SPY||0))/.02,0,1),
+      0,1
+    );
+    this.global.crossAsset={
+      returns,riskOff,updatedAt:new Date().toISOString(),
+      proxies:"Equity/bond/gold/oil/dollar/credit ETF proxies"
+    };
+    this.#source("cross_asset",Object.keys(returns).length>=6?"OK":"DEGRADED",newest||new Date(),
+      "Alpaca cross-asset ETF stress proxies",{symbols:Object.keys(returns),riskOff});
+    await this.recompute();
+  }
+
+  async refreshTradingHalts(){
+    const hot=this.marketEngine?.hotSymbols?.()||[];
+    const res=await fetchWithTimeout("https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts",{
+      headers:{"User-Agent":"Mozilla/5.0 (compatible; TradingEye/1.0)",Accept:"application/rss+xml,text/xml,*/*"}
+    },12000);
+    if(!res.ok) throw new Error("Nasdaq Trader halt RSS HTTP "+res.status);
+    const xml=await res.text();
+    const items=[...xml.matchAll(/<item[\s\S]*?<\/item>/gi)].map(m=>m[0]);
+    const parsed=items.map(item=>{
+      const title=cleanXml(item.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||"");
+      const desc=cleanXml(item.match(/<description[^>]*>([\s\S]*?)<\/description>/i)?.[1]||"");
+      const pub=cleanXml(item.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i)?.[1]||"");
+      return {title,desc,pub,text:(title+" "+desc).trim()};
+    });
+    const halted=[];
+    for(const symbol of hot){
+      const state=this.#ensure(symbol);
+      const match=parsed.find(x=>new RegExp("\\b"+symbol.replace(".","\\.")+"\\b","i").test(x.text));
+      state.factors.halt={
+        active:Boolean(match),
+        risk:match?1:0,
+        detail:match?.text||null,
+        updatedAt:new Date().toISOString()
+      };
+      if(match){
+        halted.push(symbol);
+        await this.#event({
+          source:"nasdaq_halts",externalId:"HALT-"+symbol+"-"+(match.pub||utcDay(new Date())),
+          symbol,category:"TRADING_HALT",eventAt:match.pub?new Date(match.pub):new Date(),
+          headline:match.text||("Trading halt "+symbol),sentiment:0,severity:1,
+          payload:{officialNasdaqTrader:true}
+        });
+      }
+    }
+    this.#source("halts","OK",new Date(),"Nasdaq Trader current halt/pause RSS",
+      {items:parsed.length,haltedHotSymbols:halted});
+    await this.recompute();
+  }
+
   async refreshFedRisk(){
     const today=utcDay(new Date());
     const next=FOMC_DATES.find(d=>d>=today)||null;
@@ -853,19 +1106,32 @@ export class WorldStateEngine extends EventEmitter {
 
   async recompute(){
     if(!this.enabled) return;
-    const sources=["market","news","sec","corporate","options","macro","fed","finra"];
+    const sources=[
+      "market","news","sec","corporate","options","macro","fed","finra",
+      "economic_calendar","earnings","halts","cross_asset"
+    ];
     const now=Date.now();
+    const quality={};
     const fresh=sources.filter(name=>{
-      const s=this.sourceStatus[name];
-      if(!s||s.state==="ERROR") return false;
-      const checked=+new Date(s.checkedAt||0);
-      const ttl=name==="market"?2*60*1000:name==="news"?10*60*1000:name==="sec"?30*60*1000:name==="options"?30*60*1000:2*60*60*1000;
-      return checked&&now-checked<ttl;
+      const src=this.sourceStatus[name];
+      if(!src||src.state==="ERROR") { quality[name]=0; return false; }
+      const checked=+new Date(src.checkedAt||0);
+      const ttl=name==="market"?2*60*1000:
+        name==="news"?10*60*1000:
+        name==="halts"?3*60*1000:
+        ["sec","options","cross_asset"].includes(name)?30*60*1000:
+        name==="earnings"?2*60*60*1000:
+        3*60*60*1000;
+      const valid=Boolean(checked&&now-checked<ttl);
+      quality[name]=valid?(src.state==="OK"?1:.5):0;
+      return valid;
     });
-    const coverage=fresh.length/sources.length;
+    const coverage=sources.reduce((sum,name)=>sum+(quality[name]||0),0)/sources.length;
     const macroStress=Number(this.global.macro?.stress)||0;
     const fedRisk=Number(this.global.fed?.risk)||0;
-    let globalEventRisk=Math.max(macroStress*.75,fedRisk);
+    const economicRisk=Number(this.global.economicCalendar?.risk)||0;
+    const crossAssetRisk=Number(this.global.crossAsset?.riskOff)||0;
+    let globalEventRisk=Math.max(macroStress*.75,fedRisk,economicRisk,crossAssetRisk*.70);
 
     for(const symbol of this.marketEngine?.hotSymbols?.()||[]){
       const state=this.#ensure(symbol);
@@ -879,23 +1145,44 @@ export class WorldStateEngine extends EventEmitter {
       const volumeShock=clamp(((Number(f.market?.volumeShock)||1)-1)/4,0,1);
       const shortRatio=Number(f.short?.shortVolumeRatio);
       const shortPressure=Number.isFinite(shortRatio)?clamp((shortRatio-.45)/.35,0,1):0;
-      const risk=clamp(
-        .20*newsShock+
-        .14*filingRisk+
-        .12*offeringRisk+
-        .08*corpRisk+
-        .12*optionStress+
-        .10*macroStress+
-        .08*fedRisk+
-        .07*spreadRisk+
-        .04*volumeShock+
-        .05*shortPressure,
+      const earningsRisk=Number(f.earnings?.risk)||0;
+      const haltRisk=Number(f.halt?.risk)||0;
+      const unobservableShockReserve=clamp(
+        .08+
+        .18*macroStress+
+        .12*crossAssetRisk+
+        .10*newsShock+
+        .10*optionStress+
+        .10*spreadRisk+
+        .25*(1-coverage),
+        .08,.60
+      );
+      const weighted=clamp(
+        .14*newsShock+
+        .10*filingRisk+
+        .09*offeringRisk+
+        .06*corpRisk+
+        .10*optionStress+
+        .08*macroStress+
+        .05*fedRisk+
+        .09*economicRisk+
+        .12*earningsRisk+
+        .06*crossAssetRisk+
+        .04*spreadRisk+
+        .03*volumeShock+
+        .04*shortPressure+
+        .05*unobservableShockReserve,
         0,1
       );
+      const risk=haltRisk>=1?1:weighted;
       const catalyst=clamp(Number(f.news?.sentiment)||0,-1,1);
-      const symbolCoverage=["market","news","sec","corporate","macro","fed","finra"]
-        .filter(name=>fresh.includes(name)).length/7;
-      const uncertainty=clamp(1-symbolCoverage+.20*(f.options?.state==="UNAVAILABLE" ? .5 : 0),0,1);
+      const symbolSources=["market","news","sec","corporate","options","macro","fed","finra","economic_calendar","earnings","halts","cross_asset"];
+      const symbolCoverage=symbolSources.reduce((sum,name)=>sum+(quality[name]||0),0)/symbolSources.length;
+      const uncertainty=clamp(1-symbolCoverage+.10*unobservableShockReserve,0,1);
+      state.factors.unknownShock={
+        reserve:unobservableShockReserve,
+        meaning:"Explicit reserve for unobservable/private/surprise events; not a directional forecast."
+      };
       state.riskScore=risk;
       state.uncertainty=uncertainty;
       state.catalystScore=catalyst;
@@ -911,13 +1198,20 @@ export class WorldStateEngine extends EventEmitter {
       `,[symbol,risk,uncertainty,catalyst,JSON.stringify(f)]);
     }
 
+    const hotStates=(this.marketEngine?.hotSymbols?.()||[]).map(sym=>this.symbols[sym]).filter(Boolean);
+    const shockReserve=hotStates.length
+      ? Math.max(...hotStates.map(x=>Number(x.factors?.unknownShock?.reserve)||.08))
+      : clamp(.08+.25*(1-coverage)+.18*macroStress+.12*crossAssetRisk,.08,.60);
     this.global={
       ...this.global,
       updatedAt:new Date().toISOString(),
       sourceCoverage:coverage,
+      sourceQuality:quality,
       eventRisk:globalEventRisk,
-      uncertainty:clamp(1-coverage,0,1),
-      missingSources:sources.filter(x=>!fresh.includes(x))
+      uncertainty:clamp(1-coverage+.10*shockReserve,0,1),
+      unobservableShockReserve:shockReserve,
+      missingSources:sources.filter(x=>(quality[x]||0)===0),
+      degradedSources:sources.filter(x=>(quality[x]||0)>0&&(quality[x]||0)<1)
     };
     await this.db.pool.query(`
       INSERT INTO world_global_state(id,updated_at,state)
