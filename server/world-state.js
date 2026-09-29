@@ -463,7 +463,7 @@ export class WorldStateEngine extends EventEmitter {
         const t=String(x.type||"");
         const high=/merger|spin_off|reverse_split|redemption|worthless|rights/.test(t);
         const medium=/split|dividend|name_change|symbol_change/.test(t);
-        return Math.max(m,high?.75:medium?.38:.25);
+        return Math.max(m,high ? .75 : (medium ? .38 : .25));
       },0);
       state.factors.corporate={
         count:rows.length,risk,
@@ -674,7 +674,7 @@ export class WorldStateEngine extends EventEmitter {
     const today=utcDay(new Date());
     const next=FOMC_DATES.find(d=>d>=today)||null;
     const days=next==null?null:daysBetween(today,next);
-    const risk=days==null?0:days<=0?1:days<=1?.92:days<=3?.72:days<=7?.42:.10;
+    const risk=days==null ? 0 : (days<=0 ? 1 : (days<=1 ? .92 : (days<=3 ? .72 : (days<=7 ? .42 : .10))));
     this.global.fed={
       nextFomcDate:next,daysToFomc:days,risk,
       calendarSource:"Federal Reserve published FOMC schedule"
@@ -689,7 +689,6 @@ export class WorldStateEngine extends EventEmitter {
     let text=null,dataDate=null;
     for(let back=0;back<7;back++){
       const d=addDays(new Date(),-back);
-      const p=etNowParts();
       if(["Sat","Sun"].includes(new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",weekday:"short"}).format(d))) continue;
       const day=ymdCompact(d);
       const res=await fetchWithTimeout("https://cdn.finra.org/equity/regsho/daily/CNMSshvol"+day+".txt",{},12000).catch(()=>null);
@@ -758,7 +757,7 @@ export class WorldStateEngine extends EventEmitter {
       const catalyst=clamp(Number(f.news?.sentiment)||0,-1,1);
       const symbolCoverage=["market","news","sec","corporate","macro","fed","finra"]
         .filter(name=>fresh.includes(name)).length/7;
-      const uncertainty=clamp(1-symbolCoverage+.20*(f.options?.state==="UNAVAILABLE"?.5:0),0,1);
+      const uncertainty=clamp(1-symbolCoverage+.20*(f.options?.state==="UNAVAILABLE" ? .5 : 0),0,1);
       state.riskScore=risk;
       state.uncertainty=uncertainty;
       state.catalystScore=catalyst;
