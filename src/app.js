@@ -1,6 +1,6 @@
-import { MarketClient } from "./market-client.js?v=20260928-2300";
-import { MarketChart } from "./chart.js?v=20260928-2300";
-import { FEATURE_LABELS } from "./ui-labels.js?v=20260928-2300";
+import { MarketClient } from "./market-client.js?v=20260929-0130";
+import { MarketChart } from "./chart.js?v=20260929-0130";
+import { FEATURE_LABELS } from "./ui-labels.js?v=20260929-0130";
 
 const $=id=>document.getElementById(id);
 const money=v=>Number(v||0).toLocaleString(undefined,{style:"currency",currency:"USD"});
@@ -30,6 +30,7 @@ let paperData={startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedP
 let explorationData={enabled:true,startingCash:100000,cash:100000,equity:100000,openPnl:0,realizedPnl:0,fillCount:0,autopilotEnabled:true,positions:[],fills:[]};
 let mistakeData={enabled:true,running:false,lastError:null,lastAnalysis:null};
 let replayData={status:{enabled:true,running:false,totals:{runs:0,decisions:0,trades:0,wins:0,losses:0}},runs:[],leaderboard:[]};
+let centuryData={status:{enabled:true,running:false,totals:{runs:0,coreYears:0,stressYears:0,days:0,paths:0}},runs:[]};
 let worldData={status:{enabled:true,global:{sourceCoverage:0,eventRisk:0,uncertainty:1},sources:{},symbols:{}},symbol:null,events:[]};
 let modelLabData={enabled:true,training:false,production:null,latestRun:null};
 let readinessData={
@@ -253,6 +254,21 @@ function renderBeginnerCommandCenter() {
     $("heroReplayMeta").textContent=Number(totals.runs)
       ? `${num(totals.runs)} runs · ${num(totals.trades)} simulated trades${last.replayDay?" · last "+last.replayDay:""}`
       :"Server replay worker is starting; it keeps running with this page closed.";
+  }
+
+  if ($("heroCenturyState")) {
+    const cs=centuryData?.status||{};
+    const ct=cs.totals||{};
+    const last=cs.lastRun||{};
+    $("heroCenturyState").textContent=cs.running?"RUNNING 100 YEARS":"CENTURY ACTIVE";
+    $("heroCenturyState").className=cs.running?"positive":"";
+    $("heroCenturyMeta").textContent=Number(ct.runs)
+      ? `${num(ct.runs)} runs · ${num(ct.stressYears)} stress-years · ${num(ct.paths)} paths${last.summary?.robustResearchCandidate?.strategy?" · "+String(last.summary.robustResearchCandidate.strategy).replaceAll("_"," "):""}`
+      :"Building the first 100-year synthetic stress run.";
+    if ($("beginnerCenturyState")) {
+      $("beginnerCenturyState").textContent=cs.running?"RUNNING":"ACTIVE";
+      $("beginnerCenturyState").className=cs.running?"positive":"";
+    }
   }
 
   if ($("heroWorldState")) {
@@ -834,6 +850,115 @@ function renderReplayArena() {
 }
 
 
+function renderCenturySimulator() {
+  if (!$("centuryTitle")) return;
+  const data=centuryData||{};
+  const cs=data.status||{};
+  const totals=cs.totals||{};
+  const last=cs.lastRun||{};
+  const summary=last.summary||{};
+  const candidate=summary.robustResearchCandidate||null;
+  const runs=Array.isArray(data.runs)?data.runs:[];
+
+  $("centuryTitle").textContent=cs.running
+    ?"AI CENTURY SIMULATOR RUNNING NOW"
+    : Number(totals.runs)
+      ?"AI CENTURY SIMULATOR ACTIVE"
+      :"AI CENTURY SIMULATOR STARTING";
+  $("centuryDetail").textContent=cs.running
+    ?"Trading Eye is currently generating a new 25,200-day synthetic century and rerunning every policy through all stress universes."
+    :"Each run creates a 100-market-year synthetic tape from real Replay Arena blocks, then applies six different stress universes and Monte Carlo account resampling.";
+  $("centuryLastRun").textContent=last.completedAt
+    ? "last completed "+ageText(last.completedAt)
+    : cs.running?"running now":"waiting for first century";
+
+  $("centuryYears").textContent=num(last.coreYears||cs.policy?.coreYears||100);
+  $("centuryDays").textContent=num(last.tradingDays||((cs.policy?.coreYears||100)*(cs.policy?.tradingDaysPerYear||252)));
+  $("centuryWorlds").textContent=num(last.scenarioCount||cs.policy?.scenarios?.length||6);
+  $("centuryStressYears").textContent=num(summary.stressEquivalentYears||((last.coreYears||cs.policy?.coreYears||100)*(last.scenarioCount||cs.policy?.scenarios?.length||6)));
+  $("centuryPaths").textContent=num(summary.totalMonteCarloPaths||0);
+  $("centurySourceDays").textContent=num(last.sourceReplayDays||summary.sourceReplayDays||0);
+
+  $("centuryCandidate").textContent=candidate?.strategy
+    ? String(candidate.strategy).replaceAll("_"," ").toUpperCase()
+    : "Waiting for completed century";
+  $("centuryCandidateMeta").textContent=candidate
+    ? `Research only · survived ${candidate.positiveWorlds||0}/${candidate.worlds||0} worlds with the highest robustness score. It still must pass real future proof.`
+    :"No policy is promoted by Century Simulator. It only identifies what deserves harder testing.";
+
+  $("centuryWorstP05").textContent=candidate?.worstP05Final==null?"—":money(candidate.worstP05Final);
+  $("centuryBelowStart").textContent=candidate?.worstChanceBelowStart==null?"—":pct(candidate.worstChanceBelowStart);
+  $("centuryDd50").textContent=candidate?.worstChanceDrawdown50==null?"—":pct(candidate.worstChanceDrawdown50);
+  $("centuryWorstDd").textContent=candidate?.worstSequentialDrawdown==null?"—":pct(candidate.worstSequentialDrawdown);
+
+  const ranked=Array.isArray(summary.rankedStrategies)?summary.rankedStrategies:[];
+  $("centuryPolicyCount").textContent=`${ranked.length} polic${ranked.length===1?"y":"ies"}`;
+  $("centuryPolicyBody").innerHTML=ranked.length
+    ? ranked.map(x=>`
+      <tr>
+        <td><strong>${esc(String(x.strategy||"").replaceAll("_"," "))}</strong></td>
+        <td>${num(x.positiveWorlds||0)} / ${num(x.worlds||0)}</td>
+        <td>${esc(String(x.worstWorld||"—").replaceAll("_"," "))}</td>
+        <td class="${Number(x.worstP05Final)>=100?"positive":"negative"}">${x.worstP05Final==null?"—":money(x.worstP05Final)}</td>
+        <td class="${Number(x.worstChanceBelowStart)>.25?"negative":Number(x.worstChanceBelowStart)>.10?"neutral":"positive"}">${pct(x.worstChanceBelowStart||0)}</td>
+        <td class="${Number(x.worstChanceDrawdown50)>.10?"negative":Number(x.worstChanceDrawdown50)>.02?"neutral":"positive"}">${pct(x.worstChanceDrawdown50||0)}</td>
+        <td class="${Number(x.worstSequentialDrawdown)<-.50?"negative":Number(x.worstSequentialDrawdown)<-.25?"neutral":"positive"}">${pct(x.worstSequentialDrawdown||0)}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="7">Century policy results will appear after the first completed run.</td></tr>';
+
+  const focusSymbols=Array.isArray(summary.focusSymbols)?summary.focusSymbols:[];
+  const focusTimes=Array.isArray(summary.focusTimeBuckets)?summary.focusTimeBuckets:[];
+  const focus=[
+    ...focusSymbols.map(x=>({type:"SYMBOL",name:x.symbol||x,detail:`${num(x.samples||0)} stressed examples · ${Math.round(Number(x.errorRate||0)*100)}% loss/error rate`})),
+    ...focusTimes.map(x=>({type:"TIME",name:String(x.bucket||x).replaceAll("_"," "),detail:`${num(x.samples||0)} stressed examples · ${Math.round(Number(x.errorRate||0)*100)}% loss/error rate`}))
+  ];
+  $("centuryFocusCount").textContent=`${focus.length} focus zone${focus.length===1?"":"s"}`;
+  $("centuryFocusList").innerHTML=focus.length
+    ? focus.map(x=>`
+      <div class="century-focus-item">
+        <span>${esc(x.type)}</span>
+        <div><strong>${esc(x.name)}</strong><small>${esc(x.detail)}</small></div>
+      </div>`).join("")
+    : '<div class="century-focus-empty">The first century run has not produced hard-example focus zones yet.</div>';
+
+  const scenarioRows=[];
+  if(candidate?.strategy){
+    for(const [world,byPolicy] of Object.entries(summary.scenarioResults||{})){
+      const x=byPolicy?.[candidate.strategy];
+      if(x) scenarioRows.push({world,...x});
+    }
+  }
+  $("centuryScenarioTitle").textContent=candidate?.strategy
+    ? `${String(candidate.strategy).replaceAll("_"," ")} across all stress worlds`
+    :"Research candidate across all worlds";
+  $("centuryScenarioBody").innerHTML=scenarioRows.length
+    ? scenarioRows.map(x=>`
+      <tr>
+        <td><strong>${esc(String(x.world).replaceAll("_"," "))}</strong></td>
+        <td class="${Number(x.avgYear)>0?"positive":"negative"}">${pct(x.avgYear||0)}</td>
+        <td class="${Number(x.p05Year)>0?"positive":"negative"}">${pct(x.p05Year||0)}</td>
+        <td class="negative">${pct(x.worstYear||0)}</td>
+        <td>${pct(x.positiveYearRate||0)}</td>
+        <td class="${Number(x.sequentialFinal100)>=100?"positive":"negative"}">${money(x.sequentialFinal100||0)}</td>
+        <td class="${Number(x.sequentialMaxDrawdown)<-.50?"negative":Number(x.sequentialMaxDrawdown)<-.25?"neutral":"positive"}">${pct(x.sequentialMaxDrawdown||0)}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="7">Stress-universe details will appear after the first completed century.</td></tr>';
+
+  $("centuryRunBody").innerHTML=runs.length
+    ? runs.map(r=>`
+      <tr>
+        <td>${r.completedAt?safeTime(r.completedAt):safeTime(r.startedAt)}</td>
+        <td>${num(r.coreYears||0)}</td>
+        <td>${num((r.summary?.stressEquivalentYears)||((r.coreYears||0)*(r.scenarioCount||0)))}</td>
+        <td>${num(r.summary?.totalMonteCarloPaths||0)}</td>
+        <td>${num(r.sourceReplayDays||0)}</td>
+        <td>${esc(String(r.summary?.robustResearchCandidate?.strategy||"—").replaceAll("_"," "))}</td>
+        <td class="${r.status==="COMPLETE"?"positive":r.status==="ERROR"?"negative":"neutral"}">${esc(r.status||"—")}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="7">No stored century runs yet.</td></tr>';
+}
+
+
 function renderWorldState() {
   if (!$("worldStateTitle")) return;
   const data=worldData||{};
@@ -1330,6 +1455,7 @@ function renderAll() {
   renderExploration();
   renderMistakeLab();
   renderReplayArena();
+  renderCenturySimulator();
   renderWorldState();
   renderLearning();
   renderPatternLab();
@@ -1340,13 +1466,13 @@ function renderAll() {
 
 async function refreshAll({quiet=false}={}) {
   try {
-    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,replay,world,lab,research,readiness]=await Promise.all([
+    const [st,wl,snap,preds,studies,scanner,paperState,exploreState,mistakes,replay,century,world,lab,research,readiness]=await Promise.all([
       client.status(),client.watchlist(),client.snapshot(activeSymbol),client.predictions(),
-      client.studies(10),client.scanner(50),client.paper(),client.explorationPaper(),client.mistakes(),client.replay(10),
+      client.studies(10),client.scanner(50),client.paper(),client.explorationPaper(),client.mistakes(),client.replay(10),client.century(8),
       client.worldState(activeSymbol,80),client.modelLab(),client.research(),client.readiness()
     ]);
     status=st; watchlist=wl; snapshot=snap; predictionData=preds; studyData=studies; scannerData=scanner;
-    paperData=paperState; explorationData=exploreState; mistakeData=mistakes; replayData=replay; worldData=world;
+    paperData=paperState; explorationData=exploreState; mistakeData=mistakes; replayData=replay; centuryData=century; worldData=world;
     modelLabData=lab; researchData=research; readinessData=readiness;
     monitoredSymbols=(wl.rows||[]).map(x=>x.symbol);
     if (!monitoredSymbols.length) monitoredSymbols=st.symbols||monitoredSymbols;
@@ -1486,6 +1612,24 @@ function setTour(open,markSeen=false) {
   document.body.style.overflow=open?"hidden":"";
   if (markSeen) try { localStorage.setItem("trading-eye-tour-seen-real","1"); } catch {}
 }
+
+$("runCenturyBtn")?.addEventListener("click",async()=>{
+  const btn=$("runCenturyBtn");
+  try{
+    btn.disabled=true;
+    btn.textContent="Running 100-year simulation…";
+    await client.runCentury();
+    centuryData=await client.century(8);
+    renderCenturySimulator();
+    renderBeginnerCommandCenter();
+    toast("Century Simulator completed another 100-year synthetic stress run.");
+  }catch(err){
+    toast(String(err.message||err));
+  }finally{
+    btn.disabled=false;
+    btn.textContent="Run another century now";
+  }
+});
 
 $("runReplayBtn")?.addEventListener("click",async()=>{
   const btn=$("runReplayBtn");
@@ -1653,15 +1797,17 @@ clearInterval(refreshTimer);
 refreshTimer=setInterval(()=>refreshAll({quiet:true}),30000);
 clearInterval(researchTimer);
 researchTimer=setInterval(()=>{
-  Promise.all([client.research(),client.mistakes(),client.replay(10),client.worldState(activeSymbol,80)])
-    .then(([r,m,replay,world])=>{
+  Promise.all([client.research(),client.mistakes(),client.replay(10),client.century(8),client.worldState(activeSymbol,80)])
+    .then(([r,m,replay,century,world])=>{
       researchData=r;
       mistakeData=m;
       replayData=replay;
+      centuryData=century;
       worldData=world;
       renderResearchBrain();
       renderMistakeLab();
       renderReplayArena();
+      renderCenturySimulator();
       renderWorldState();
       renderBeginnerCommandCenter();
     })
@@ -1696,6 +1842,7 @@ window.TradingEye=Object.freeze({
   explorationAccount:()=>explorationData,
   mistakes:()=>mistakeData,
   replay:()=>replayData,
+  century:()=>centuryData,
   worldState:()=>worldData,
   modelLab:()=>modelLabData
 });
