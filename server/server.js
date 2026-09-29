@@ -14,6 +14,7 @@ import { ResearchBrain } from "./research-brain.js";
 import { ReadinessEvaluator } from "./readiness.js";
 import { MistakeLab } from "./mistake-lab.js";
 import { ReplayArena } from "./replay-arena.js";
+import { WorldStateEngine } from "./world-state.js";
 
 const PORT=Number(process.env.PORT || 8080);
 const SYMBOLS=(process.env.TRADING_SYMBOLS || "SPY,QQQ,NVDA,AAPL,AMD,TSLA")
@@ -37,6 +38,8 @@ const MISTAKE_LAB_ENABLED=String(process.env.MISTAKE_LAB_ENABLED ?? "true").toLo
 const REPLAY_ARENA_ENABLED=String(process.env.REPLAY_ARENA_ENABLED ?? "true").toLowerCase()==="true";
 const REPLAY_ARENA_INTERVAL_MS=Math.max(30000,Number(process.env.REPLAY_ARENA_INTERVAL_MS || 90000));
 const REPLAY_ARENA_MAX_SYMBOLS=Math.max(6,Math.min(24,Number(process.env.REPLAY_ARENA_MAX_SYMBOLS || 16)));
+const WORLD_STATE_ENABLED=String(process.env.WORLD_STATE_ENABLED ?? "true").toLowerCase()==="true";
+const SEC_USER_AGENT=String(process.env.SEC_USER_AGENT || "TradingEye/1.0 (research; github.com/customerservice-prog/Trading-Eye)");
 const LONG_HISTORY_ENABLED=String(process.env.LONG_HISTORY_ENABLED ?? "false").toLowerCase()==="true";
 const LONG_HISTORY_PROVIDER=String(process.env.LONG_HISTORY_PROVIDER || "stooq_bulk");
 const LONG_HISTORY_START=String(process.env.LONG_HISTORY_START || "1999-01-01");
@@ -68,6 +71,14 @@ const provider=new AlpacaProvider({
 });
 const engine=new RealMarketEngine({db,provider,symbols:SYMBOLS,backfillDays:BACKFILL_DAYS,enabled:ENGINE_ENABLED});
 await engine.init();
+
+const worldState=new WorldStateEngine({
+  db,marketEngine:engine,
+  alpacaKey:process.env.ALPACA_API_KEY_ID,
+  alpacaSecret:process.env.ALPACA_API_SECRET_KEY,
+  enabled:WORLD_STATE_ENABLED,
+  secUserAgent:SEC_USER_AGENT
+});
 
 let learningHotSetTimer=null;
 async function refreshLearningHotSet(){
@@ -121,7 +132,7 @@ setTimeout(()=>refreshLearningHotSet(),20000);
 learningHotSetTimer=setInterval(()=>refreshLearningHotSet(),15*60*1000);
 
 const modelLab=new ModelLab({
-  db,marketEngine:engine,horizonMinutes:15,enabled:MODEL_LAB_ENABLED,
+  db,marketEngine:engine,worldState,horizonMinutes:15,enabled:MODEL_LAB_ENABLED,
   forceTrainOnStart:MODEL_LAB_FORCE_TRAIN_ON_START
 });
 await modelLab.init();
@@ -198,6 +209,10 @@ const replayArena=new ReplayArena({
   maxSymbols:REPLAY_ARENA_MAX_SYMBOLS
 });
 await replayArena.init();
+
+worldState.init().catch(err=>{
+  console.log(JSON.stringify({event:"world_state_start_error",message:String(err?.message||err)}));
+});
 
 engine.attachIntelligence({
   modelLab,
@@ -290,6 +305,7 @@ app.get("/health",async(req,res)=>{
     modelLab:modelLab.status(),
     mistakeLab:mistakeLab.status(),
     replayArena:replayArena.status(),
+    worldState:worldState.status(),
     paperBroker:true,
     paperExploration:Boolean(explorationBroker),
     researchBrain:{
@@ -310,7 +326,8 @@ app.get("/api/status",async(req,res)=>{
     ...engine.status(),
     database:await db.ping(),
     modelLab:modelLab.status(),
-    replayArena:replayArena.status()
+    replayArena:replayArena.status(),
+    worldState:worldState.status()
   });
 });
 
@@ -366,6 +383,16 @@ app.post("/api/replay/run",async(req,res)=>{
   }catch(err){
     res.status(400).json({ok:false,error:String(err?.message||err),status:replayArena.status()});
   }
+});
+
+app.get("/api/world-state",async(req,res)=>{
+  const symbol=req.query.symbol?String(req.query.symbol).toUpperCase():null;
+  const events=await worldState.recentEvents({symbol,limit:Number(req.query.limit)||80});
+  res.json({
+    status:worldState.status(),
+    symbol:symbol?worldState.contextFor(symbol):null,
+    events
+  });
 });
 
 app.post("/api/paper/autopilot",async(req,res)=>{
@@ -561,6 +588,7 @@ deepStudy.on("study",study=>broadcast({type:"deep_study_complete",data:study}));
 researchBrain.on("event",event=>broadcast({type:"research_event",data:event}));
 researchBrain.on("status",status=>broadcast({type:"research_status",data:status}));
 mistakeLab.on("analysis",analysis=>broadcast({type:"mistake_lab",data:analysis}));
+worldState.on("update",state=>broadcast({type:"world_state",data:state}));
 
 wss.on("connection",ws=>{
   ws.send(JSON.stringify({type:"status",data:engine.status()}));
@@ -580,7 +608,8 @@ server.listen(PORT,"0.0.0.0",()=>{
     mistakeLabEnabled:MISTAKE_LAB_ENABLED,
     replayArenaEnabled:REPLAY_ARENA_ENABLED,
     replayArenaIntervalMs:REPLAY_ARENA_INTERVAL_MS,
-    replayArenaMaxSymbols:REPLAY_ARENA_MAX_SYMBOLS
+    replayArenaMaxSymbols:REPLAY_ARENA_MAX_SYMBOLS,
+    worldStateEnabled:WORLD_STATE_ENABLED
   }));
 });
 
@@ -595,6 +624,7 @@ const shutdown=async()=>{
   explorationBroker?.stop();
   mistakeLab.stop();
   replayArena.stop();
+  worldState.stop();
   researchBrain.stop();
   server.close(()=>process.exit(0));
   setTimeout(()=>process.exit(1),8000).unref();
