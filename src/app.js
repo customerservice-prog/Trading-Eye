@@ -858,6 +858,8 @@ function renderCenturySimulator() {
   const last=cs.lastRun||{};
   const summary=last.summary||{};
   const candidate=summary.robustResearchCandidate||null;
+  const leastFragile=summary.leastFragilePolicy||null;
+  const verdict=String(summary.centuryVerdict||"WAITING");
   const runs=Array.isArray(data.runs)?data.runs:[];
 
   $("centuryTitle").textContent=cs.running
@@ -879,17 +881,23 @@ function renderCenturySimulator() {
   $("centuryPaths").textContent=num(summary.totalMonteCarloPaths||0);
   $("centurySourceDays").textContent=num(last.sourceReplayDays||summary.sourceReplayDays||0);
 
+  const shownPolicy=candidate||leastFragile;
   $("centuryCandidate").textContent=candidate?.strategy
-    ? String(candidate.strategy).replaceAll("_"," ").toUpperCase()
-    : "Waiting for completed century";
+    ? String(candidate.strategy).replaceAll("_"," ").toUpperCase()+" — SURVIVOR"
+    : verdict==="NO_POLICY_SURVIVED"
+      ? "NO POLICY SURVIVED"
+      : "Waiting for completed century";
+  $("centuryCandidate").className=candidate?"positive":verdict==="NO_POLICY_SURVIVED"?"negative":"neutral";
   $("centuryCandidateMeta").textContent=candidate
-    ? `Research only · survived ${candidate.positiveWorlds||0}/${candidate.worlds||0} worlds with the highest robustness score. It still must pass real future proof.`
-    :"No policy is promoted by Century Simulator. It only identifies what deserves harder testing.";
+    ? `Research-only survivor · passed all six synthetic-world downside gates. It still must pass real future proof before any live use.`
+    : verdict==="NO_POLICY_SURVIVED"&&leastFragile
+      ? `Least fragile was ${String(leastFragile.strategy).replaceAll("_"," ")}, but it FAILED the century survival gates. Trading Eye has fed the failure zones into Model Lab and requested harder retraining.`
+      :"No policy is promoted by Century Simulator. It only identifies what deserves harder testing.";
 
-  $("centuryWorstP05").textContent=candidate?.worstP05Final==null?"—":money(candidate.worstP05Final);
-  $("centuryBelowStart").textContent=candidate?.worstChanceBelowStart==null?"—":pct(candidate.worstChanceBelowStart);
-  $("centuryDd50").textContent=candidate?.worstChanceDrawdown50==null?"—":pct(candidate.worstChanceDrawdown50);
-  $("centuryWorstDd").textContent=candidate?.worstSequentialDrawdown==null?"—":pct(candidate.worstSequentialDrawdown);
+  $("centuryWorstP05").textContent=shownPolicy?.worstP05Final==null?"—":money(shownPolicy.worstP05Final);
+  $("centuryBelowStart").textContent=shownPolicy?.worstChanceBelowStart==null?"—":pct(shownPolicy.worstChanceBelowStart);
+  $("centuryDd50").textContent=shownPolicy?.worstChanceDrawdown50==null?"—":pct(shownPolicy.worstChanceDrawdown50);
+  $("centuryWorstDd").textContent=shownPolicy?.worstSequentialDrawdown==null?"—":pct(shownPolicy.worstSequentialDrawdown);
 
   const ranked=Array.isArray(summary.rankedStrategies)?summary.rankedStrategies:[];
   $("centuryPolicyCount").textContent=`${ranked.length} polic${ranked.length===1?"y":"ies"}`;
@@ -922,14 +930,14 @@ function renderCenturySimulator() {
     : '<div class="century-focus-empty">The first century run has not produced hard-example focus zones yet.</div>';
 
   const scenarioRows=[];
-  if(candidate?.strategy){
+  if(shownPolicy?.strategy){
     for(const [world,byPolicy] of Object.entries(summary.scenarioResults||{})){
-      const x=byPolicy?.[candidate.strategy];
+      const x=byPolicy?.[shownPolicy.strategy];
       if(x) scenarioRows.push({world,...x});
     }
   }
-  $("centuryScenarioTitle").textContent=candidate?.strategy
-    ? `${String(candidate.strategy).replaceAll("_"," ")} across all stress worlds`
+  $("centuryScenarioTitle").textContent=shownPolicy?.strategy
+    ? `${candidate?"survivor":"least-fragile failed policy"}: ${String(shownPolicy.strategy).replaceAll("_"," ")} across all stress worlds`
     :"Research candidate across all worlds";
   $("centuryScenarioBody").innerHTML=scenarioRows.length
     ? scenarioRows.map(x=>`
@@ -952,7 +960,7 @@ function renderCenturySimulator() {
         <td>${num((r.summary?.stressEquivalentYears)||((r.coreYears||0)*(r.scenarioCount||0)))}</td>
         <td>${num(r.summary?.totalMonteCarloPaths||0)}</td>
         <td>${num(r.sourceReplayDays||0)}</td>
-        <td>${esc(String(r.summary?.robustResearchCandidate?.strategy||"—").replaceAll("_"," "))}</td>
+        <td>${esc(String(r.summary?.robustResearchCandidate?.strategy||r.summary?.leastFragilePolicy?.strategy||"—").replaceAll("_"," "))}${r.summary?.centuryVerdict==="NO_POLICY_SURVIVED"?" (failed)":""}</td>
         <td class="${r.status==="COMPLETE"?"positive":r.status==="ERROR"?"negative":"neutral"}">${esc(r.status||"—")}</td>
       </tr>`).join("")
     : '<tr><td colspan="7">No stored century runs yet.</td></tr>';
