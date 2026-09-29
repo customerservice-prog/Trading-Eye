@@ -40,6 +40,22 @@ const SEC_CIK_SEEDS={
   MU:"0000723125",UBER:"0001543151",HOOD:"0001783879"
 };
 
+const BLS_2026_FALLBACK=[
+  ["2026-09-29",10,0,"Job Openings and Labor Turnover Survey",.70],
+  ["2026-10-02",8,30,"Employment Situation",.98],
+  ["2026-10-14",8,30,"Consumer Price Index",.98],
+  ["2026-10-15",8,30,"Producer Price Index",.86],
+  ["2026-10-30",8,30,"Employment Cost Index",.86],
+  ["2026-11-03",10,0,"Job Openings and Labor Turnover Survey",.70],
+  ["2026-11-06",8,30,"Employment Situation",.98],
+  ["2026-11-10",8,30,"Consumer Price Index",.98],
+  ["2026-11-13",8,30,"Producer Price Index",.86],
+  ["2026-12-01",10,0,"Job Openings and Labor Turnover Survey",.70],
+  ["2026-12-04",8,30,"Employment Situation",.98],
+  ["2026-12-10",8,30,"Consumer Price Index",.98],
+  ["2026-12-15",8,30,"Producer Price Index",.86]
+];
+
 const SEC_FORM_RISK={
   "8-K":.62,"8-K/A":.65,"10-Q":.55,"10-Q/A":.60,"10-K":.60,"10-K/A":.65,
   "4":.32,"4/A":.35,"SC 13D":.68,"SC 13D/A":.60,"SC 13G":.45,"SC 13G/A":.42,
@@ -842,6 +858,20 @@ export class WorldStateEngine extends EventEmitter {
       }
     }catch{}
 
+    if(!blsOk){
+      for(const [date,hour,minute,title,severity] of BLS_2026_FALLBACK){
+        const [year,month,day]=date.split("-").map(Number);
+        const at=zonedNyToUtc({year,month,day,hour,minute});
+        const t=+at;
+        if(t<now-60*60*1000||t>horizon) continue;
+        events.push({
+          source:"BLS-FALLBACK",
+          id:"BLS-PUBLISHED-"+date+"-"+title.replace(/\W+/g,"-"),
+          title,at,severity
+        });
+      }
+    }
+
     try{
       const res=await fetchWithTimeout("https://apps.bea.gov/API/signup/release_dates.json",{
         headers:{"User-Agent":this.secUserAgent,Accept:"application/json"}
@@ -894,10 +924,12 @@ export class WorldStateEngine extends EventEmitter {
     };
     this.#source(
       "economic_calendar",
-      blsOk&&beaOk?"OK":(blsOk||beaOk?"DEGRADED":"ERROR"),
+      (blsOk&&beaOk)?"OK":(beaOk?"DEGRADED":"ERROR"),
       next?.at||new Date(),
-      "Official BLS + BEA scheduled economic releases",
-      {bls:blsOk,bea:beaOk,upcoming:dedup.length,risk}
+      blsOk
+        ?"Official BLS + BEA scheduled economic releases"
+        :"BEA live + official published BLS 2026 fallback schedule",
+      {blsLive:blsOk,blsPublishedFallback:!blsOk,bea:beaOk,upcoming:dedup.length,risk}
     );
     await this.recompute();
   }
